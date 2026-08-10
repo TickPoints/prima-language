@@ -347,6 +347,13 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 - 模块系统（§4.7）+ `pub`/`import`/冲突检测 + 预导入 core。
 - **验收**：§19.1 里程碑 4/5/7 的三个样例逐字通过；`prima check` 报 §16.4 格式的类型错误。
 
+> **Phase 2 落地记录（2026-08）**：全部完成，验收样例见 `examples/config_fraction.pra`（里程碑 4）、`examples/loop_optimization.pra`（里程碑 5）、`examples/try_catch.pra`（里程碑 7）。与本文档的偏差/定稿：
+> - 作用域实现为 `Rc<RefCell<Env>>` 共享链（`EnvRef`），块级 `let` 遮蔽 + 跨作用域赋值并存（本文档 §4.8 未明示，落地为共享引用）。
+> - `Value::Result`/`Value::Error` 以消息字符串承载错误（§16.1 结构化 `Error` 枚举留待后续阶段补齐）。
+> - `to_bigfloat` 为退化实现（原样返回数值，任意精度浮点留待后续）；`print_format` 仅 latex 渲染器可用；`num_to_big` 因数值层全程 BigInt 而无实际分支。
+> - `prima check` 先做字面量-注解级静态检查（§6.3 示例可判定）；完整表达式/函数类型推断（§6.3）留待后续阶段。
+> - 循环优化先覆盖 `0..n` 与 `1..n` 两种等差模式（§4.8 既定范围）；`for i in 1..100` 按规范 §19.1 示例闭合为 `100*101/2`。
+
 ### Phase 3：并行与符号微分（对应里程碑 6 + §19.4 MVP）
 
 - `@parallel` 注解 + `parfor`（rayon，Config 快照传播，§4.6）；副作用静态检查。
