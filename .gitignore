@@ -1,1 +1,6 @@
 /target
+/outputs/
+*.snap.new
+.idea/
+.vscode/
+.DS_Store

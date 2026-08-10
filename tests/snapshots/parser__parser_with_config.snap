@@ -1,0 +1,271 @@
+---
+source: tests/parser.rs
+expression: parse(src).unwrap()
+---
+Program {
+    config: Some(
+        ConfigBlock {
+            entries: [
+                ConfigEntry {
+                    name: Spanned {
+                        value: "domain",
+                        span: Span {
+                            start: 10,
+                            end: 16,
+                        },
+                    },
+                    type_ann: None,
+                    value: Expr {
+                        kind: Path {
+                            segments: [
+                                Spanned {
+                                    value: "complex",
+                                    span: Span {
+                                        start: 20,
+                                        end: 27,
+                                    },
+                                },
+                            ],
+                        },
+                        span: Span {
+                            start: 20,
+                            end: 27,
+                        },
+                    },
+                    span: Span {
+                        start: 10,
+                        end: 27,
+                    },
+                },
+            ],
+            span: Span {
+                start: 1,
+                end: 29,
+            },
+        },
+    ),
+    imports: [],
+    stmts: [
+        MathDef {
+            name: Spanned {
+                value: "f",
+                span: Span {
+                    start: 34,
+                    end: 35,
+                },
+            },
+            params: [
+                Param {
+                    name: Spanned {
+                        value: "x",
+                        span: Span {
+                            start: 36,
+                            end: 37,
+                        },
+                    },
+                    type_ann: None,
+                },
+            ],
+            ret: None,
+            annotations: [],
+            body: Expr {
+                kind: Binary {
+                    op: Pow,
+                    lhs: Expr {
+                        kind: Path {
+                            segments: [
+                                Spanned {
+                                    value: "x",
+                                    span: Span {
+                                        start: 41,
+                                        end: 42,
+                                    },
+                                },
+                            ],
+                        },
+                        span: Span {
+                            start: 41,
+                            end: 42,
+                        },
+                    },
+                    rhs: Expr {
+                        kind: Literal(
+                            Integer(
+                                "2",
+                            ),
+                        ),
+                        span: Span {
+                            start: 43,
+                            end: 44,
+                        },
+                    },
+                },
+                span: Span {
+                    start: 41,
+                    end: 44,
+                },
+            },
+            span: Span {
+                start: 30,
+                end: 44,
+            },
+        },
+        WithConfig {
+            entries: [
+                ConfigEntry {
+                    name: Spanned {
+                        value: "domain",
+                        span: Span {
+                            start: 59,
+                            end: 65,
+                        },
+                    },
+                    type_ann: None,
+                    value: Expr {
+                        kind: Path {
+                            segments: [
+                                Spanned {
+                                    value: "real",
+                                    span: Span {
+                                        start: 69,
+                                        end: 73,
+                                    },
+                                },
+                            ],
+                        },
+                        span: Span {
+                            start: 69,
+                            end: 73,
+                        },
+                    },
+                    span: Span {
+                        start: 59,
+                        end: 73,
+                    },
+                },
+            ],
+            body: Block {
+                stmts: [
+                    Let {
+                        name: Spanned {
+                            value: "y",
+                            span: Span {
+                                start: 86,
+                                end: 87,
+                            },
+                        },
+                        mut_: false,
+                        type_ann: None,
+                        value: Expr {
+                            kind: Binary {
+                                op: Pow,
+                                lhs: Expr {
+                                    kind: Unary {
+                                        op: Neg,
+                                        operand: Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "1",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 92,
+                                                end: 93,
+                                            },
+                                        },
+                                    },
+                                    span: Span {
+                                        start: 90,
+                                        end: 94,
+                                    },
+                                },
+                                rhs: Expr {
+                                    kind: Literal(
+                                        Float(
+                                            "0.5",
+                                        ),
+                                    ),
+                                    span: Span {
+                                        start: 95,
+                                        end: 98,
+                                    },
+                                },
+                            },
+                            span: Span {
+                                start: 90,
+                                end: 98,
+                            },
+                        },
+                        span: Span {
+                            start: 82,
+                            end: 98,
+                        },
+                    },
+                ],
+                span: Span {
+                    start: 76,
+                    end: 100,
+                },
+            },
+            span: Span {
+                start: 45,
+                end: 100,
+            },
+        },
+        Let {
+            name: Spanned {
+                value: "z",
+                span: Span {
+                    start: 105,
+                    end: 106,
+                },
+            },
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Binary {
+                    op: Pow,
+                    lhs: Expr {
+                        kind: Unary {
+                            op: Neg,
+                            operand: Expr {
+                                kind: Literal(
+                                    Integer(
+                                        "1",
+                                    ),
+                                ),
+                                span: Span {
+                                    start: 111,
+                                    end: 112,
+                                },
+                            },
+                        },
+                        span: Span {
+                            start: 109,
+                            end: 113,
+                        },
+                    },
+                    rhs: Expr {
+                        kind: Literal(
+                            Float(
+                                "0.5",
+                            ),
+                        ),
+                        span: Span {
+                            start: 114,
+                            end: 117,
+                        },
+                    },
+                },
+                span: Span {
+                    start: 109,
+                    end: 117,
+                },
+            },
+            span: Span {
+                start: 101,
+                end: 117,
+            },
+        },
+    ],
+}

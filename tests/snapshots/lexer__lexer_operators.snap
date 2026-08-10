@@ -1,0 +1,272 @@
+---
+source: tests/lexer.rs
+expression: lex(src).unwrap()
+---
+[
+    Token {
+        kind: Plus,
+        span: Span {
+            start: 0,
+            end: 1,
+        },
+    },
+    Token {
+        kind: Minus,
+        span: Span {
+            start: 2,
+            end: 3,
+        },
+    },
+    Token {
+        kind: Star,
+        span: Span {
+            start: 4,
+            end: 5,
+        },
+    },
+    Token {
+        kind: Slash,
+        span: Span {
+            start: 6,
+            end: 7,
+        },
+    },
+    Token {
+        kind: Caret,
+        span: Span {
+            start: 8,
+            end: 9,
+        },
+    },
+    Token {
+        kind: DoubleStar,
+        span: Span {
+            start: 10,
+            end: 12,
+        },
+    },
+    Token {
+        kind: Percent,
+        span: Span {
+            start: 13,
+            end: 14,
+        },
+    },
+    Token {
+        kind: At,
+        span: Span {
+            start: 15,
+            end: 16,
+        },
+    },
+    Token {
+        kind: EqEq,
+        span: Span {
+            start: 17,
+            end: 19,
+        },
+    },
+    Token {
+        kind: BangEq,
+        span: Span {
+            start: 20,
+            end: 22,
+        },
+    },
+    Token {
+        kind: Lt,
+        span: Span {
+            start: 23,
+            end: 24,
+        },
+    },
+    Token {
+        kind: LtEq,
+        span: Span {
+            start: 25,
+            end: 27,
+        },
+    },
+    Token {
+        kind: Gt,
+        span: Span {
+            start: 28,
+            end: 29,
+        },
+    },
+    Token {
+        kind: GtEq,
+        span: Span {
+            start: 30,
+            end: 32,
+        },
+    },
+    Token {
+        kind: AmpAmp,
+        span: Span {
+            start: 33,
+            end: 35,
+        },
+    },
+    Token {
+        kind: PipePipe,
+        span: Span {
+            start: 36,
+            end: 38,
+        },
+    },
+    Token {
+        kind: Bang,
+        span: Span {
+            start: 39,
+            end: 40,
+        },
+    },
+    Token {
+        kind: Eq,
+        span: Span {
+            start: 41,
+            end: 42,
+        },
+    },
+    Token {
+        kind: PlusEq,
+        span: Span {
+            start: 43,
+            end: 45,
+        },
+    },
+    Token {
+        kind: MinusEq,
+        span: Span {
+            start: 46,
+            end: 48,
+        },
+    },
+    Token {
+        kind: PipeArrow,
+        span: Span {
+            start: 49,
+            end: 51,
+        },
+    },
+    Token {
+        kind: AtDot,
+        span: Span {
+            start: 52,
+            end: 54,
+        },
+    },
+    Token {
+        kind: ColonColon,
+        span: Span {
+            start: 55,
+            end: 57,
+        },
+    },
+    Token {
+        kind: Arrow,
+        span: Span {
+            start: 58,
+            end: 60,
+        },
+    },
+    Token {
+        kind: FatArrow,
+        span: Span {
+            start: 61,
+            end: 63,
+        },
+    },
+    Token {
+        kind: DotDot,
+        span: Span {
+            start: 64,
+            end: 66,
+        },
+    },
+    Token {
+        kind: ColonEq,
+        span: Span {
+            start: 67,
+            end: 69,
+        },
+    },
+    Token {
+        kind: LParen,
+        span: Span {
+            start: 70,
+            end: 71,
+        },
+    },
+    Token {
+        kind: RParen,
+        span: Span {
+            start: 72,
+            end: 73,
+        },
+    },
+    Token {
+        kind: LBracket,
+        span: Span {
+            start: 74,
+            end: 75,
+        },
+    },
+    Token {
+        kind: RBracket,
+        span: Span {
+            start: 76,
+            end: 77,
+        },
+    },
+    Token {
+        kind: LBrace,
+        span: Span {
+            start: 78,
+            end: 79,
+        },
+    },
+    Token {
+        kind: RBrace,
+        span: Span {
+            start: 80,
+            end: 81,
+        },
+    },
+    Token {
+        kind: Comma,
+        span: Span {
+            start: 82,
+            end: 83,
+        },
+    },
+    Token {
+        kind: Semicolon,
+        span: Span {
+            start: 84,
+            end: 85,
+        },
+    },
+    Token {
+        kind: Pipe,
+        span: Span {
+            start: 86,
+            end: 87,
+        },
+    },
+    Token {
+        kind: Underscore,
+        span: Span {
+            start: 88,
+            end: 89,
+        },
+    },
+    Token {
+        kind: Eof,
+        span: Span {
+            start: 89,
+            end: 89,
+        },
+    },
+]

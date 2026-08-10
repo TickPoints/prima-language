@@ -1,0 +1,11 @@
+[package]
+name = "prima-syntax"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Prima lexer, parser, AST and diagnostics"
+
+[dependencies]
+unicode-ident = { workspace = true }
+thiserror = { workspace = true }

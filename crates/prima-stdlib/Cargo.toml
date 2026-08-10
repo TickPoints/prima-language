@@ -1,0 +1,10 @@
+[package]
+name = "prima-stdlib"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Prima standard library modules (linalg, stats, io, physics, plot)"
+
+[dependencies]
+prima-runtime = { path = "../prima-runtime" }

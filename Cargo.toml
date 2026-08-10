@@ -1,9 +1,48 @@
 [package]
 name = "prima-language"
 version = "0.1.0"
-authors = ["TickPoints <tickpoints@outlook.com>"]
 edition = "2024"
+authors = ["TickPoints <tickpoints@outlook.com>"]
 repository = "https://github.com/TickPoints/prima-language"
-readme = "README.md"
+description = "Prima - symbol-first scientific computing language toolchain"
+
+[[bin]]
+name = "prima"
+path = "src/main.rs"
+
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["TickPoints <tickpoints@outlook.com>"]
+repository = "https://github.com/TickPoints/prima-language"
+
+[workspace.dependencies]
+unicode-ident = "1.0"
+dashmap = "6"
+num-bigint = "0.4"
+num-rational = "0.4"
+num-traits = "0.2"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+insta = "1.48"
+assert_cmd = "2"
+predicates = "3"
+proptest = "1"
 
 [dependencies]
+prima-syntax = { path = "crates/prima-syntax" }
+prima-core = { path = "crates/prima-core" }
+prima-runtime = { path = "crates/prima-runtime" }
+prima-stdlib = { path = "crates/prima-stdlib" }
+clap = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+proptest = { workspace = true }
+num-bigint = { workspace = true }

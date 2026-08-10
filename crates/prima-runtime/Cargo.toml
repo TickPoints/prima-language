@@ -1,0 +1,11 @@
+[package]
+name = "prima-runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Prima interpreter, module system and config policies"
+
+[dependencies]
+prima-syntax = { path = "../prima-syntax" }
+prima-core = { path = "../prima-core" }
