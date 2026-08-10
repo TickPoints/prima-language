@@ -1,0 +1,9 @@
+[package]
+name = "prima-language"
+version = "0.1.0"
+authors = ["TickPoints <tickpoints@outlook.com>"]
+edition = "2024"
+repository = "https://github.com/TickPoints/prima-language"
+readme = "README.md"
+
+[dependencies]
