@@ -4,13 +4,16 @@ use crate::lexer::lex;
 use crate::span::Span;
 use crate::token::{describe, Token, TokenKind};
 
+// Unary operator binding power: lower than power `^` (8), higher than mul/div (6/7), implementing `-x^2 == -(x^2)` (same as Julia, spec §2.2).
 const UNARY_BP: u8 = 7;
 
+/// Hand-written recursive-descent + Pratt climbing parser (implementation plan §2.2), covering all appendix A BNF productions.
 pub fn parse(src: &str) -> Result<Program, Vec<SyntaxError>> {
     let tokens = lex(src)?;
     Parser::new(tokens).parse_program()
 }
 
+// Parser: errors use panic-mode recovery with sync tokens (`;`, `}`, `)`, end of file), collecting all syntax errors in one compilation (spec §2.2).
 pub(crate) struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -169,6 +172,7 @@ impl Parser {
         Ok(entries)
     }
 
+    // config entries accept both forms: `ident := value` (spec §4.1 examples) and `ident : type? = value` (appendix BNF).
     fn parse_config_entry(&mut self) -> Result<ConfigEntry, SyntaxError> {
         self.skip_newlines();
         let name = self.parse_ident("config key")?;
@@ -660,6 +664,7 @@ impl Parser {
         self.parse_expr_bp(0)
     }
 
+    // Pratt climbing (implementation plan §2.2 precedence table): `|>` lowest, `^`/`**` highest and right-associative.
     fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr, SyntaxError> {
         let mut lhs = self.parse_prefix()?;
         loop {

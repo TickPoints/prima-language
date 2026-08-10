@@ -1,5 +1,6 @@
 use crate::span::Span;
 
+/// Token: `kind` + source range (spec §3). Statements are separated by newlines; the lexer emits `Newline` for the parser to consume at statement boundaries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,

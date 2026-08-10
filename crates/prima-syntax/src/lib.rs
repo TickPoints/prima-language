@@ -11,6 +11,7 @@ pub use error::SyntaxError;
 pub use span::{SourceLocation, Span};
 pub use token::{Token, TokenKind};
 
+/// Parse `.pra` source into a `Program` (spec §4). Returns all collected syntax errors.
 pub fn parse(src: &str) -> Result<Program, Vec<SyntaxError>> {
     parser::parse(src)
 }

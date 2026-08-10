@@ -1,5 +1,6 @@
 use std::fmt;
 
+/// Source range (byte offsets, compact u32, spec §4.1) carried by lexical and syntax nodes, used for diagnostics (§16.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start: u32,

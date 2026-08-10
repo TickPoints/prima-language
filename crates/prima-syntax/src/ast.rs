@@ -6,6 +6,8 @@ pub struct Spanned<T> {
     pub span: Span,
 }
 
+/// A single AST covers the entire grammar (spec §4). The three-section order `config → import → statement`
+/// is validated at parse time (spec §4.1, appendix A BNF `program` production).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub config: Option<ConfigBlock>,
@@ -181,6 +183,8 @@ pub enum Type {
     User(Spanned<String>),
 }
 
+/// Math and host expressions **share the same AST** (spec §4.2: `math_expr := expr`).
+/// The "symbol world / numeric world" distinction lives not at the parse layer but in the runtime demotion layer (implementation plan §4.8).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expr {
     pub kind: ExprKind,

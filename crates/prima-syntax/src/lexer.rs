@@ -2,10 +2,13 @@ use crate::error::SyntaxError;
 use crate::span::Span;
 use crate::token::{describe, Token, TokenKind};
 
+/// Lexing (spec §3): produces a token stream including `Newline`; errors are returned in collection form.
+/// Numeric literals keep their **raw text** (`TokenKind::Integer("0x1F")`); numeric parsing happens in the core layer.
 pub fn lex(src: &str) -> Result<Vec<Token>, Vec<SyntaxError>> {
     Lexer { src: src.as_bytes(), pos: 0 }.run()
 }
 
+// Hand-written lexer (implementation plan §2.1): advances by character class, giving exact token-level errors and spans per literal kind.
 struct Lexer<'a> {
     src: &'a [u8],
     pos: usize,
@@ -202,6 +205,7 @@ impl<'a> Lexer<'a> {
         s
     }
 
+    // Numeric literals (spec §3): decimal integer/float, hexadecimal, binary; `..` in `1..10` is not confused with a decimal point.
     fn read_number(&mut self) -> Result<NumKind, String> {
         let c = self.cur().unwrap();
         if c == '0' {

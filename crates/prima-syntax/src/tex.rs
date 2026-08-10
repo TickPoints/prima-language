@@ -2,6 +2,8 @@ use crate::ast::{BinOp, Expr, ExprKind, Literal, Spanned, UnOp};
 use crate::error::SyntaxError;
 use crate::span::Span;
 
+/// MVP parsing subset for `tex"..."` literals (implementation plan §4.9): numbers/commands/`{}` grouping/`^` powers/implicit multiplication/`\frac`,
+/// producing the **same AST** as normal syntax, evaluated uniformly by the interpreter. TeX is only a view (spec §7); parsing goes the other way.
 pub fn parse_tex(src: &str) -> Result<Expr, SyntaxError> {
     TexParser { chars: src.chars().collect(), pos: 0 }.parse_expr()
 }
