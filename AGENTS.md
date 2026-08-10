@@ -58,5 +58,13 @@ cargo test -p prima-syntax       # 单 crate 测试
 - 广播（§11.4）在调用点对纯函数逐元素；二元数组运算逐元素；空/嵌套数组报错。
 - `ExprData::Real` 已加入（规范 §8.1 未列的落地扩展，便于浮点进入符号 DAG）。
 
+## 大型任务工作方式（重要）
+- **大型任务必须拆分为多个并行 SubAgent 执行**（Task 工具），不要在主会话里串行做完一切。
+- 划分原则：按 crate 边界 / 模块边界 / 无依赖的独立功能块切分，尽量让子任务之间无共享文件、无运行时耦合：
+  - 例如：`prima-syntax`（词法/解析/AST）与 `prima-core`（数值/ExprPool/化简/渲染）可并行；runtime 解释器可在 core API 定稿后并行启动。
+- 每个 SubAgent 的任务书必须包含：目标文件清单、依赖的已有 API 签名、验收命令（`cargo build`/`cargo test`/单测）、需要返回的信息。
+- 合并前主会话统一 `cargo build` + `cargo test` + `cargo clippy` 收口；接口冲突由主会话裁决。
+- 注意：`ExprPool`/`SymbolTable` 是进程级共享（OnceLock），SubAgent 测试若各自起进程无影响，但同一进程内共享状态勿假定顺序。
+
 ## 下一步
 - Phase 2（策略、数值层与错误处理）：Config 三级策略生效、坍缩函数族（to_/try_/checked_/clamped_/rounded_）、`fn`/`if`/`while`/`for`/`try-catch`、模块系统。详见 `docs/IMPLEMENTATION-zh_CN.md` §5。
