@@ -1,0 +1,66 @@
+---
+source: tests/tex.rs
+expression: "parse_tex(r\"\\sqrt{2} + \\pi\").unwrap()"
+---
+Expr {
+    kind: Binary {
+        op: Add,
+        lhs: Expr {
+            kind: Call {
+                callee: Expr {
+                    kind: Path {
+                        segments: [
+                            Spanned {
+                                value: "sqrt",
+                                span: Span {
+                                    start: 8,
+                                    end: 8,
+                                },
+                            },
+                        ],
+                    },
+                    span: Span {
+                        start: 8,
+                        end: 8,
+                    },
+                },
+                args: [
+                    Expr {
+                        kind: Literal(
+                            Integer(
+                                "2",
+                            ),
+                        ),
+                        span: Span {
+                            start: 7,
+                            end: 7,
+                        },
+                    },
+                ],
+            },
+            span: Span {
+                start: 8,
+                end: 8,
+            },
+        },
+        rhs: Expr {
+            kind: Symbol(
+                Spanned {
+                    value: "pi",
+                    span: Span {
+                        start: 14,
+                        end: 14,
+                    },
+                },
+            ),
+            span: Span {
+                start: 14,
+                end: 14,
+            },
+        },
+    },
+    span: Span {
+        start: 8,
+        end: 14,
+    },
+}

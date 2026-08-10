@@ -1,4 +1,5 @@
 use prima_core::expr_pool::{ExprData, ExprPool, ExprId};
+use prima_core::SymbolId;
 
 #[test]
 fn interning_deduplicates() {
@@ -6,8 +7,8 @@ fn interning_deduplicates() {
     let a = pool.integer(1);
     let b = pool.integer(1);
     assert_eq!(a, b);
-    let s1 = pool.symbol(42);
-    let s2 = pool.symbol(42);
+    let s1 = pool.symbol(SymbolId(42));
+    let s2 = pool.symbol(SymbolId(42));
     assert_eq!(s1, s2);
     assert_ne!(a, s1);
 }
@@ -15,8 +16,8 @@ fn interning_deduplicates() {
 #[test]
 fn add_is_normalized() {
     let pool = ExprPool::new();
-    let x = pool.symbol(10);
-    let y = pool.symbol(5);
+    let x = pool.symbol(SymbolId(10));
+    let y = pool.symbol(SymbolId(5));
     let s1 = pool.add(&[x, y]);
     let s2 = pool.add(&[y, x]);
     assert_eq!(s1, s2);
@@ -27,7 +28,7 @@ fn add_is_normalized() {
 fn mul_and_pow_roundtrip() {
     let pool = ExprPool::new();
     let two = pool.integer(2);
-    let x = pool.symbol(1);
+    let x = pool.symbol(SymbolId(1));
     let p = pool.pow(x, two);
     match pool.get(p) {
         Some(ExprData::Pow { base, exp }) => {
@@ -41,7 +42,7 @@ fn mul_and_pow_roundtrip() {
 #[test]
 fn apply_builds_tree() {
     let pool = ExprPool::new();
-    let f = pool.symbol(7);
+    let f = pool.symbol(SymbolId(7));
     let arg = pool.integer(3);
     let app = pool.apply(f, &[arg]);
     assert!(matches!(pool.get(app), Some(ExprData::Apply { .. })));

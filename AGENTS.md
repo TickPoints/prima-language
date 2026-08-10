@@ -50,5 +50,13 @@ cargo test -p prima-syntax       # 单 crate 测试
 - CLI 集成测试用 assert_cmd，样例 `.pra` 放 `examples/`（cargo 忽略非 .rs）。
 - proptest 随机输入只断言「不 panic、不挂起」，不断言语义。
 
+## Phase 1（已完成）关键约定
+- `print`/`println` 都会换行；默认 LaTeX 输出（`print_format` 策略尚未接入）。
+- 化简：intern 层（`ExprPool::add2/mul2/pow2/sub2/div2`）做等级 0/1（0*x、1*x、常量合并、Add/Mul 扁平化）；`core::simplify::simplify` 全量应用 2/3 级（`Pow(sqrt(x),2)→x`、欧拉 `e^{iθ}`、`sin/cos/tan/exp/log/ln/abs/sqrt` 常量折叠、`Pow(x,1/2)→\sqrt{x}`）。
+- 内置符号在 `core::builtins` 注册（TeX 名作显示名，如 `pi → \pi`）；`SymbolTable::global()` 惰性初始化。
+- TeX 字面量：`prima-syntax::tex` 解析 MVP 子集 → 与普通语法相同的 AST → 解释器统一求值。
+- 广播（§11.4）在调用点对纯函数逐元素；二元数组运算逐元素；空/嵌套数组报错。
+- `ExprData::Real` 已加入（规范 §8.1 未列的落地扩展，便于浮点进入符号 DAG）。
+
 ## 下一步
-- Phase 1（MVP 符号引擎）：ExprPool 化简等级 0/1、LaTeX 渲染器、MFn 求值、`print`。详见 `docs/IMPLEMENTATION-zh_CN.md` §5。
+- Phase 2（策略、数值层与错误处理）：Config 三级策略生效、坍缩函数族（to_/try_/checked_/clamped_/rounded_）、`fn`/`if`/`while`/`for`/`try-catch`、模块系统。详见 `docs/IMPLEMENTATION-zh_CN.md` §5。

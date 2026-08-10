@@ -460,8 +460,11 @@ dependencies = [
 name = "prima-runtime"
 version = "0.1.0"
 dependencies = [
+ "num-bigint",
+ "num-traits",
  "prima-core",
  "prima-syntax",
+ "thiserror",
 ]
 
 [[package]]

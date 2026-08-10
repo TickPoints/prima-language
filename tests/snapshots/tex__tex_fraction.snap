@@ -1,0 +1,59 @@
+---
+source: tests/tex.rs
+expression: "parse_tex(r\"\\frac{1}{3} x\").unwrap()"
+---
+Expr {
+    kind: Binary {
+        op: Mul,
+        lhs: Expr {
+            kind: Binary {
+                op: Div,
+                lhs: Expr {
+                    kind: Literal(
+                        Integer(
+                            "1",
+                        ),
+                    ),
+                    span: Span {
+                        start: 7,
+                        end: 7,
+                    },
+                },
+                rhs: Expr {
+                    kind: Literal(
+                        Integer(
+                            "3",
+                        ),
+                    ),
+                    span: Span {
+                        start: 10,
+                        end: 10,
+                    },
+                },
+            },
+            span: Span {
+                start: 7,
+                end: 10,
+            },
+        },
+        rhs: Expr {
+            kind: Symbol(
+                Spanned {
+                    value: "x",
+                    span: Span {
+                        start: 13,
+                        end: 13,
+                    },
+                },
+            ),
+            span: Span {
+                start: 13,
+                end: 13,
+            },
+        },
+    },
+    span: Span {
+        start: 7,
+        end: 13,
+    },
+}

@@ -3,6 +3,7 @@ pub mod error;
 pub mod lexer;
 pub mod parser;
 pub mod span;
+pub mod tex;
 pub mod token;
 
 pub use ast::{Expr, ExprKind, Program, Stmt};

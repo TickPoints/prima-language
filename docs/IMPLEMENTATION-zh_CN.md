@@ -330,6 +330,14 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
   simplify(tex"\e^{i\pi}+1") → 0
   ```
 
+> **Phase 1 落地记录（2026-08）**：全部完成，验收样例见 `examples/phase1.pra`。与本文档的偏差/定稿：
+> - `ExprData` 增加了 `Real(Real)` 变体（规范 §8.1 未列，为使浮点可进入符号 DAG）；`ExprData::Symbol(SymbolId)` 用 `core::symbol::SymbolId` 新类型。
+> - 化简规则实现在 `core::simplify::simplify(pool, builtins, id)`（无 level 参数，MVP 全量应用）：intern 层（`ExprPool::add2/mul2/pow2/sub2/div2` + `add_n/mul_n` 扁平化/常量合并）做 0/1 级；`simplify` 做 2/3 级（`Pow(sqrt(x),2)→x`、欧拉 `e^{iθ}→cos+i·sin`、`sin/cos/tan/exp/log/ln/abs/sqrt` 常量折叠、`Pow(x,1/2)→sqrt`）。
+> - TeX 字面量解析器放在 `prima-syntax::tex`（MVP 子集：数字/命令/`{}` 分组/`^`/`_` 忽略/隐式乘法/`\frac`），产出与普通语法相同的 AST，由解释器统一求值。
+> - 解释器在 `prima-runtime::eval`：`Env`（值/函数双命名空间 + 闭包捕获）、MFn 调用 = 参数替换进 body 符号求值；**广播**（§11.4）在调用点对纯函数逐元素，拒空/嵌套数组；二元数组运算逐元素；`a |> f`/`a |> f(x)` 管道改写为调用。
+> - `print`/`println` 当前都会换行（spec 区分 print 与 println，MVP 从简）；默认 LaTeX 输出。
+> - 返回类型 `fn` 语法支持 `->` 与 `:` 两种（示例用 `->`，BNF 写 `:`）。
+
 ### Phase 2：策略、数值层与错误处理（对应里程碑 4、5、7）
 
 - Config 三级策略（§4.6）；`fraction := false` 生效；F64 不精确传染（§6.4）。

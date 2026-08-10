@@ -1,9 +1,17 @@
+pub mod builtins;
 pub mod error;
 pub mod expr_pool;
 pub mod number;
+pub mod render;
+pub mod simplify;
+pub mod symbol;
 pub mod value;
 
+pub use builtins::BuiltinSymbols;
 pub use error::CoreError;
 pub use expr_pool::{ExprData, ExprId, ExprPool};
 pub use number::{Number, Real};
+pub use render::{render_latex, render_number};
+pub use simplify::simplify;
+pub use symbol::{SymbolId, SymbolTable};
 pub use value::{IndeterminateForm, Value};

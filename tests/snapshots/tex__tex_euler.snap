@@ -1,0 +1,87 @@
+---
+source: tests/tex.rs
+expression: "parse_tex(r\"\\e^{i\\pi} + 1\").unwrap()"
+---
+Expr {
+    kind: Binary {
+        op: Add,
+        lhs: Expr {
+            kind: Binary {
+                op: Pow,
+                lhs: Expr {
+                    kind: Symbol(
+                        Spanned {
+                            value: "e",
+                            span: Span {
+                                start: 2,
+                                end: 2,
+                            },
+                        },
+                    ),
+                    span: Span {
+                        start: 2,
+                        end: 2,
+                    },
+                },
+                rhs: Expr {
+                    kind: Binary {
+                        op: Mul,
+                        lhs: Expr {
+                            kind: Symbol(
+                                Spanned {
+                                    value: "i",
+                                    span: Span {
+                                        start: 5,
+                                        end: 5,
+                                    },
+                                },
+                            ),
+                            span: Span {
+                                start: 5,
+                                end: 5,
+                            },
+                        },
+                        rhs: Expr {
+                            kind: Symbol(
+                                Spanned {
+                                    value: "pi",
+                                    span: Span {
+                                        start: 8,
+                                        end: 8,
+                                    },
+                                },
+                            ),
+                            span: Span {
+                                start: 8,
+                                end: 8,
+                            },
+                        },
+                    },
+                    span: Span {
+                        start: 5,
+                        end: 8,
+                    },
+                },
+            },
+            span: Span {
+                start: 2,
+                end: 8,
+            },
+        },
+        rhs: Expr {
+            kind: Literal(
+                Integer(
+                    "1",
+                ),
+            ),
+            span: Span {
+                start: 13,
+                end: 13,
+            },
+        },
+    },
+    span: Span {
+        start: 2,
+        end: 13,
+    },
+}

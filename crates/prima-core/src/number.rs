@@ -3,12 +3,21 @@ use std::fmt;
 
 use num_bigint::BigInt;
 use num_rational::BigRational;
-use num_traits::{One, ToPrimitive, Zero};
+use num_traits::{One, Signed, ToPrimitive, Zero};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Real {
     F32(f32),
     F64(f64),
+}
+
+impl std::hash::Hash for Real {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Real::F32(f) => f.to_bits().hash(state),
+            Real::F64(f) => f.to_bits().hash(state),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +49,138 @@ impl Number {
             Number::Complex { re, im } => re.is_zero() && im.is_zero(),
         }
     }
+
+    pub fn is_one(&self) -> bool {
+        match self {
+            Number::Integer(i) => i == &BigInt::from(1),
+            Number::Rational(r) => r == &BigRational::new(BigInt::from(1), BigInt::from(1)),
+            Number::Real(Real::F32(f)) => *f == 1.0,
+            Number::Real(Real::F64(f)) => *f == 1.0,
+            Number::Complex { .. } => false,
+        }
+    }
+
+    pub fn abs(&self) -> Number {
+        match self {
+            Number::Integer(i) => Number::Integer(i.abs()),
+            Number::Rational(r) => Number::Rational(r.abs()),
+            Number::Real(Real::F32(x)) => Number::Real(Real::F32(x.abs())),
+            Number::Real(Real::F64(x)) => Number::Real(Real::F64(x.abs())),
+            Number::Complex { .. } => self.clone(),
+        }
+    }
+
+    pub fn sqrt(&self) -> Option<Number> {
+        match self {
+            Number::Integer(n) => isqrt(n).map(Number::Integer),
+            Number::Rational(r) => {
+                let p = isqrt(r.numer())?;
+                let q = isqrt(r.denom())?;
+                Some(Number::Rational(BigRational::new(p, q)))
+            }
+            Number::Real(Real::F32(x)) => Some(Number::Real(Real::F32(x.sqrt()))),
+            Number::Real(Real::F64(x)) => Some(Number::Real(Real::F64(x.sqrt()))),
+            Number::Complex { .. } => None,
+        }
+    }
+
+    pub fn pow(&self, exp: &Number) -> Option<Number> {
+        match (self, exp) {
+            (Number::Integer(a), Number::Integer(b)) => {
+                if b.is_zero() {
+                    return Some(Number::Integer(BigInt::one()));
+                }
+                let neg = *b < BigInt::zero();
+                let mag = if neg { -b } else { b.clone() };
+                let e = mag.to_u32()?;
+                if neg && a.is_zero() {
+                    return None;
+                }
+                let p = a.pow(e);
+                if neg {
+                    Some(normalized(BigInt::one(), p))
+                } else {
+                    Some(Number::Integer(p))
+                }
+            }
+            (Number::Rational(a), Number::Integer(b)) => {
+                if b.is_zero() {
+                    return Some(Number::Integer(BigInt::one()));
+                }
+                let neg = *b < BigInt::zero();
+                let mag = if neg { -b } else { b.clone() };
+                let e = mag.to_u32()?;
+                if neg && a.is_zero() {
+                    return None;
+                }
+                let p = a.numer().pow(e);
+                let q = a.denom().pow(e);
+                if neg {
+                    Some(normalized(q, p))
+                } else {
+                    Some(normalized(p, q))
+                }
+            }
+            (Number::Real(x), Number::Integer(b)) => {
+                let n = b.to_i32()?;
+                match x {
+                    Real::F32(f) => Some(Number::Real(Real::F32(f.powi(n)))),
+                    Real::F64(f) => Some(Number::Real(Real::F64(f.powi(n)))),
+                }
+            }
+            (Number::Real(x), Number::Rational(r)) => {
+                let v = r.to_f64()?;
+                match x {
+                    Real::F32(f) => Some(Number::Real(Real::F32(f.powf(v as f32)))),
+                    Real::F64(f) => Some(Number::Real(Real::F64(f.powf(v)))),
+                }
+            }
+            (Number::Integer(a), Number::Rational(r)) => {
+                if *r.denom() == BigInt::one() {
+                    return self.pow(&Number::Integer(r.numer().clone()));
+                }
+                if *r.denom() == BigInt::from(2) && *r.numer() == BigInt::one() {
+                    return self.sqrt();
+                }
+                let _ = a;
+                None
+            }
+            (Number::Rational(a), Number::Rational(r)) => {
+                if *r.denom() == BigInt::one() {
+                    return self.pow(&Number::Integer(r.numer().clone()));
+                }
+                if *r.denom() == BigInt::from(2) && *r.numer() == BigInt::one() {
+                    return self.sqrt();
+                }
+                let _ = a;
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+fn isqrt(n: &BigInt) -> Option<BigInt> {
+    if n < &BigInt::zero() {
+        return None;
+    }
+    if n.is_zero() {
+        return Some(BigInt::zero());
+    }
+    let bits = n.bits();
+    let mut x = BigInt::one() << bits.div_ceil(2);
+    loop {
+        let y = (&x + n / &x) >> 1;
+        if y >= x {
+            break;
+        }
+        x = y;
+    }
+    if &x * &x == *n {
+        Some(x)
+    } else {
+        None
+    }
 }
 
 impl From<i32> for Number {
@@ -65,6 +206,14 @@ fn to_rational(n: &Number) -> Number {
         Number::Integer(i) => Number::Rational(BigRational::new(i.clone(), BigInt::one())),
         Number::Rational(_) => n.clone(),
         _ => unreachable!("to_rational called on non-rational"),
+    }
+}
+
+fn normalized(numer: BigInt, denom: BigInt) -> Number {
+    if denom == BigInt::one() {
+        Number::Integer(numer)
+    } else {
+        Number::Rational(BigRational::new(numer, denom))
     }
 }
 
@@ -243,7 +392,7 @@ impl std::ops::Add for Number {
         use Number::*;
         match (a, b) {
             (Integer(x), Integer(y)) => Integer(x + y),
-            (Rational(x), Rational(y)) => Rational(x + y),
+            (Rational(x), Rational(y)) => { let r = x + y; normalized(r.numer().clone(), r.denom().clone()) },
             (Real(x), Real(y)) => Real(add_real(x, y)),
             (Complex { re, im }, Complex { re: u, im: v }) => Complex { re: Box::new(*re + *u), im: Box::new(*im + *v) },
             _ => unreachable!("promote must align operands"),
@@ -257,7 +406,10 @@ impl std::ops::Sub for Number {
         let (a, b) = promote(&self, &rhs);
         match (a, b) {
             (Number::Integer(x), Number::Integer(y)) => Number::Integer(x - y),
-            (Number::Rational(x), Number::Rational(y)) => Number::Rational(x - y),
+            (Number::Rational(x), Number::Rational(y)) => {
+                let r = x - y;
+                normalized(r.numer().clone(), r.denom().clone())
+            }
             (Number::Real(rx), Number::Real(ry)) => match (rx, ry) {
                 (Real::F32(x), Real::F32(y)) => Number::Real(Real::F32(x - y)),
                 _ => {
@@ -287,7 +439,7 @@ impl std::ops::Mul for Number {
         use Number::*;
         match (a, b) {
             (Integer(x), Integer(y)) => Integer(x * y),
-            (Rational(x), Rational(y)) => Rational(x * y),
+            (Rational(x), Rational(y)) => { let r = x * y; normalized(r.numer().clone(), r.denom().clone()) },
             (Real(x), Real(y)) => Real(mul_real(x, y)),
             (Complex { re, im }, Complex { re: u, im: v }) => {
                 let re_new = *re.clone() * *u.clone() - *im.clone() * *v.clone();
@@ -309,13 +461,14 @@ impl std::ops::Div for Number {
                 if y.is_zero() {
                     panic!("division by zero");
                 }
-                Rational(BigRational::new(x, y))
+                normalized(x, y)
             }
             (Rational(x), Rational(y)) => {
                 if y.is_zero() {
                     panic!("division by zero");
                 }
-                Rational(x / y)
+                let r = x / y;
+                normalized(r.numer().clone(), r.denom().clone())
             }
             (Real(x), Real(y)) => Real(div_real(x, y)),
             (Complex { re, im }, Complex { re: u, im: v }) => complex_div(*re, *im, *u, *v),
