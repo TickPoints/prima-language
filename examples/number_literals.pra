@@ -1,0 +1,5 @@
+// Number literals (spec §3): decimal, hexadecimal, binary, floating point, and scientific notation.
+print(0x1F)
+print(0b1010)
+print(1.5e3)
+print(0x10 + 0b11)

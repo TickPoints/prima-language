@@ -1,0 +1,10 @@
+// Policy in effect (spec §13.3, §19.1): `config { fraction := false }` makes division yield F64 directly instead of an exact rational.
+config { fraction := false }
+
+let x = 1/3
+print(x)
+print(1/3 + 1/3)
+
+// Expected output:
+// 0.3333333333333333
+// 0.6666666666666666

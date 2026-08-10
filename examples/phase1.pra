@@ -1,9 +1,0 @@
-let f(x) = x^2
-let v = [1, 2, 3]
-print(f(v))
-
-let a = tex"\sqrt{2} + \pi"
-print(a)
-
-let b = tex"\e^{i\pi} + 1"
-print(simplify(b))

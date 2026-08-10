@@ -1,0 +1,17 @@
+// Error handling (spec §16.3): `try`/`catch` captures collapse overflows; non-erroring branches execute normally.
+try {
+    let x = to_i32(1e20)
+    print(x)
+} catch e {
+    print("caught:", e)
+}
+
+try {
+    print(1)
+} catch e {
+    print("never")
+}
+
+// Expected output:
+// caught: overflow: `to_i32`: 100000000000000000000 cannot be represented as i32
+// 1

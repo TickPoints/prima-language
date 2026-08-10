@@ -17,7 +17,7 @@ fn mathdef_call() {
 }
 
 #[test]
-fn broadcast_milestone() {
+fn mfn_broadcasts_over_array() {
     let v = eval("let f(x) = x^2\nf([1, 2, 3])");
     assert_eq!(
         v,
@@ -42,7 +42,7 @@ fn tex_literal_renders_latex() {
 }
 
 #[test]
-fn euler_identity_milestone() {
+fn euler_identity_collapses_to_zero() {
     assert_eq!(eval(r#"simplify(tex"\e^{i\pi} + 1")"#), Value::Number(Number::from(0)));
 }
 

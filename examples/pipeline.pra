@@ -1,0 +1,3 @@
+// Pipeline syntax (spec §9.7): `a |> f` is equivalent to `f(a)`, for explicitly composing collapse/transforms.
+let f(x) = x^2
+print(3 |> f)
