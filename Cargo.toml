@@ -32,6 +32,7 @@ insta = "1.48"
 assert_cmd = "2"
 predicates = "3"
 proptest = "1"
+codespan-reporting = "0.13"
 
 [dependencies]
 prima-syntax = { path = "crates/prima-syntax" }
@@ -39,6 +40,7 @@ prima-core = { path = "crates/prima-core" }
 prima-runtime = { path = "crates/prima-runtime" }
 prima-stdlib = { path = "crates/prima-stdlib" }
 clap = { workspace = true }
+codespan-reporting = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
