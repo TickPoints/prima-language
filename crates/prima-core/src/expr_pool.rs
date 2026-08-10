@@ -12,9 +12,13 @@ use crate::number::{Number, Real};
 use crate::symbol::SymbolId;
 use crate::value::IndeterminateForm;
 
+/// Handle to an expression in the symbolic world (spec §8.1). In-process hash-consing depends on
+/// creation order, so `ExprId` is **forbidden from cross-process serialization/caching** (ADR §6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ExprId(u32);
 
+/// Node in the symbolic world (spec §8.1). `Add`/`Mul` are stored as canonically ordered n-ary lists (spec §8.4),
+/// so equality is `ExprId` equality (O(1)).
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ExprData {
     Symbol(SymbolId),
@@ -28,10 +32,13 @@ pub enum ExprData {
     Indeterminate(IndeterminateForm),
 }
 
+// Thread-local cache (spec §8.1): hit the local cache first, fall back to the global pool, write back on a hit.
 thread_local! {
     static LOCAL_CACHE: RefCell<HashMap<u64, ExprId>> = RefCell::new(HashMap::new());
 }
 
+/// Process-wide shared hash-consing pool (spec §8.1/§12.4): maps content hash → `ExprId`.
+/// The central store is append-only (the symbolic layer is acyclic and resident), concurrency-safe.
 pub struct ExprPool {
     global: DashMap<u64, ExprId>,
     store: RwLock<Vec<ExprData>>,
@@ -47,6 +54,7 @@ impl ExprPool {
         }
     }
 
+    /// Process-wide shared instance (`OnceLock`): the interpreter and the symbolic engine share one pool.
     pub fn global() -> &'static ExprPool {
         static POOL: OnceLock<ExprPool> = OnceLock::new();
         POOL.get_or_init(ExprPool::new)
@@ -58,6 +66,8 @@ impl ExprPool {
         h.finish()
     }
 
+    /// Intern flow (spec §8.1): content hash → local cache → global pool → append-allocate and write
+    /// back to both caches. The same `ExprData` always yields the same `ExprId`.
     pub fn intern(&self, data: ExprData) -> ExprId {
         let key = Self::hash_data(&data);
         let cached = LOCAL_CACHE.with(|c| c.borrow().get(&key).copied());
@@ -110,7 +120,7 @@ impl ExprPool {
                 }
             }
             Number::Real(r) => self.intern(ExprData::Real(*r)),
-            Number::Complex { .. } => panic!("cannot intern a complex number as an expression node (Phase 1)"),
+            Number::Complex { .. } => panic!("complex numbers cannot be interned as expression nodes yet"),
         }
     }
 
@@ -139,12 +149,14 @@ impl ExprPool {
         self.const_number(id).is_some_and(|n| n.is_one())
     }
 
+    /// Raw `Add` node (no simplification), stored in canonical order (spec §8.4).
     pub fn add(&self, items: &[ExprId]) -> ExprId {
         let mut v = items.to_vec();
         v.sort_by_key(|&id| (self.node_rank(id), id));
         self.intern(ExprData::Add(v.into_boxed_slice()))
     }
 
+    /// Raw `Mul` node (no simplification), stored in canonical order (spec §8.4).
     pub fn mul(&self, items: &[ExprId]) -> ExprId {
         let mut v = items.to_vec();
         v.sort_by_key(|&id| (self.node_rank(id), id));
@@ -159,6 +171,8 @@ impl ExprPool {
         self.intern(ExprData::Apply { f, args: args.to_vec().into_boxed_slice() })
     }
 
+    /// Level 0/1 addition simplification (spec §8.3): `Add` flattening, constant merging, `x+0→x`;
+    /// the result is sorted in canonical order (numbers/constants → symbols → composite nodes, spec §8.4).
     pub fn add_n(&self, items: &[ExprId]) -> ExprId {
         let mut flat = Vec::new();
         for &it in items {
@@ -193,6 +207,7 @@ impl ExprPool {
         self.intern(ExprData::Add(rest.into_boxed_slice()))
     }
 
+    /// Level 0/1 multiplication simplification (spec §8.3): `Mul` flattening, constant merging, `0*x→0`, `1*x→x`.
     pub fn mul_n(&self, items: &[ExprId]) -> ExprId {
         let mut flat = Vec::new();
         for &it in items {
@@ -238,6 +253,7 @@ impl ExprPool {
         self.mul_n(&[a, b])
     }
 
+    /// Level 0/1 power simplification (spec §8.3): `x^0→1`, `x^1→x`, `1^x→1`, plus constant folding at the same level.
     pub fn pow2(&self, base: ExprId, exp: ExprId) -> ExprId {
         if self.is_const_zero(exp) {
             return self.integer(1);

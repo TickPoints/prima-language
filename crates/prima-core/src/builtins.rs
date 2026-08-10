@@ -2,6 +2,8 @@ use std::sync::OnceLock;
 
 use crate::symbol::{SymbolId, SymbolTable};
 
+/// Built-in symbol set (spec §7.1–7.2): each math constant and operator holds a pre-resolved `SymbolId`,
+/// letting the simplification engine compare symbols in O(1). Physical constants (spec §7.3) are registered in a later stage.
 pub struct BuiltinSymbols {
     pub e: SymbolId,
     pub pi: SymbolId,
@@ -24,6 +26,7 @@ pub struct BuiltinSymbols {
     pub abs: SymbolId,
 }
 
+// Register math constants and operators (spec §7.1–7.2); the TeX name is used as the display name.
 pub(crate) fn register(t: &SymbolTable) {
     t.intern_display("e", "\\e");
     t.intern_display("pi", "\\pi");

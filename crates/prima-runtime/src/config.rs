@@ -1,5 +1,14 @@
-use prima_core::number::Number;
+//! Policy system (spec §13): configuration values for the three-level policy and the merge basis.
+//!
+//! Precedence **local > module > global** (spec §13.1): the evaluator holds a stack of
+//! `Config` values; `with config` pushes and leaving a block pops (spec §4.6); this module applies
+//! the AST values of `config {}` entries to a `Config`.
 
+use prima_syntax::ast::{ConfigEntry, Expr, ExprKind, Literal};
+
+use crate::error::RuntimeError;
+
+/// Domain annotation (spec §6.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Domain {
     Real,
@@ -10,11 +19,14 @@ pub enum Domain {
     NonZero,
 }
 
+/// `undefined_handling` policy (spec §13.2): `strict` errors / `custom { 0/0 := 1 }` black magic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UndefinedHandling {
     Strict,
+    Custom,
 }
 
+/// Print format (spec §13.2); currently only the `latex` renderer is available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrintFormat {
     Latex,
@@ -22,10 +34,14 @@ pub enum PrintFormat {
     Ascii,
 }
 
+/// Policy configuration (spec §13.2 finalized): `domain`/`undefined_handling` are global (polluting) policies,
+/// the rest are module/local policies; defaults match the spec (`fraction`/`broadcast`/`loop_optimization` on by default).
 #[derive(Debug, Clone)]
 pub struct Config {
     pub domain: Domain,
     pub undefined_handling: UndefinedHandling,
+    /// Entries of `custom { 0/0 := 1, ... }` (spec §13.4): pattern → value expression pairs.
+    pub custom_rules: Vec<(Expr, Expr)>,
     pub fraction: bool,
     pub broadcast: bool,
     pub loop_optimization: bool,
@@ -39,6 +55,7 @@ impl Default for Config {
         Config {
             domain: Domain::Complex,
             undefined_handling: UndefinedHandling::Strict,
+            custom_rules: Vec::new(),
             fraction: true,
             broadcast: true,
             loop_optimization: true,
@@ -49,7 +66,76 @@ impl Default for Config {
     }
 }
 
-pub struct Engine {
-    pub config: Config,
-    pub _marker: std::marker::PhantomData<Number>,
+impl Config {
+    /// Apply the entries of `config {}` to the current configuration (spec §13.2 policy table).
+    pub fn apply(&mut self, entries: &[ConfigEntry]) -> Result<(), RuntimeError> {
+        for e in entries {
+            match e.name.value.as_str() {
+                "domain" => {
+                    let v = parse_enum(&e.value, "domain")?;
+                    self.domain = match v.as_str() {
+                        "real" => Domain::Real,
+                        "complex" => Domain::Complex,
+                        "integer" => Domain::Integer,
+                        "positive" => Domain::Positive,
+                        "nonnegative" => Domain::NonNegative,
+                        "nonzero" => Domain::NonZero,
+                        _ => return Err(RuntimeError::Message(format!("unknown `domain` value `{v}`"))),
+                    };
+                }
+                "undefined_handling" => {
+                    match &e.value.kind {
+                        ExprKind::Path { segments } if segments.len() == 1 && segments[0].value == "strict" => {
+                            self.undefined_handling = UndefinedHandling::Strict;
+                        }
+                        ExprKind::Custom(items) => {
+                            self.undefined_handling = UndefinedHandling::Custom;
+                            self.custom_rules = items.clone();
+                        }
+                        _ => return Err(RuntimeError::Message("invalid value for `undefined_handling`".into())),
+                    }
+                }
+                "fraction" => self.fraction = parse_bool(&e.value, "fraction")?,
+                "broadcast" => self.broadcast = parse_bool(&e.value, "broadcast")?,
+                "loop_optimization" => self.loop_optimization = parse_bool(&e.value, "loop_optimization")?,
+                "simplify_level" => self.simplify_level = parse_int(&e.value, "simplify_level")?,
+                "num_to_big" => self.num_to_big = parse_bool(&e.value, "num_to_big")?,
+                "print_format" => {
+                    let v = parse_enum(&e.value, "print_format")?;
+                    self.print_format = match v.as_str() {
+                        "latex" => PrintFormat::Latex,
+                        "unicode" => PrintFormat::Unicode,
+                        "ascii" => PrintFormat::Ascii,
+                        _ => return Err(RuntimeError::Message(format!("unknown `print_format` value `{v}`"))),
+                    };
+                }
+                other => return Err(RuntimeError::Message(format!("unknown config key `{other}`"))),
+            }
+        }
+        Ok(())
+    }
+}
+
+fn parse_bool(e: &Expr, key: &str) -> Result<bool, RuntimeError> {
+    match &e.kind {
+        ExprKind::Literal(Literal::Bool(b)) => Ok(*b),
+        _ => Err(RuntimeError::Message(format!("config `{key}` expects a bool"))),
+    }
+}
+
+fn parse_int(e: &Expr, key: &str) -> Result<u8, RuntimeError> {
+    match &e.kind {
+        ExprKind::Literal(Literal::Integer(s)) => s
+            .parse::<u8>()
+            .map_err(|_| RuntimeError::Message(format!("config `{key}` expects an integer 0..=3"))),
+        _ => Err(RuntimeError::Message(format!("config `{key}` expects an integer"))),
+    }
+}
+
+fn parse_enum(e: &Expr, key: &str) -> Result<String, RuntimeError> {
+    match &e.kind {
+        ExprKind::Path { segments } if segments.len() == 1 => Ok(segments[0].value.clone()),
+        ExprKind::Symbol(s) => Ok(s.value.clone()),
+        _ => Err(RuntimeError::Message(format!("config `{key}` expects an enum value"))),
+    }
 }

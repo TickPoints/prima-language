@@ -5,6 +5,8 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
+/// Inexact real (spec §6.1). `NaN`/`Inf` are allowed to exist only in this layer (spec §6.2),
+/// and only arise from explicit collapse; they never enter the symbolic layer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Real {
     F32(f32),
@@ -20,6 +22,8 @@ impl std::hash::Hash for Real {
     }
 }
 
+/// Numeric tower (spec §6.1): exact layer `Integer`/`Rational`/`Complex` and inexact layer `Real`.
+/// The exact layer stays exact by default; a `Real` infects the result to inexact (spec §6.4 promotion rules).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Number {
     Integer(BigInt),
@@ -139,6 +143,7 @@ impl Number {
                 if *r.denom() == BigInt::one() {
                     return self.pow(&Number::Integer(r.numer().clone()));
                 }
+                // Exact x^(1/2): return an exact square root for perfect (rational) squares, otherwise leave it to the symbolic layer (spec §7.4: `sqrt(-1)→\i` depends on the domain).
                 if *r.denom() == BigInt::from(2) && *r.numer() == BigInt::one() {
                     return self.sqrt();
                 }
@@ -158,10 +163,117 @@ impl Number {
             _ => None,
         }
     }
+
+    /// Numeric conversion (spec §9.2 `to_f64`): both the exact layer and `Real` convert; complex returns `NaN` (callers must check `is_complex` first).
+    pub fn to_f64_lossy(&self) -> f64 {
+        match self {
+            Number::Integer(i) => i.to_f64().unwrap_or(f64::NAN),
+            Number::Rational(r) => r.to_f64().unwrap_or(f64::NAN),
+            Number::Real(Real::F32(f)) => *f as f64,
+            Number::Real(Real::F64(f)) => *f,
+            Number::Complex { .. } => f64::NAN,
+        }
+    }
+
+    /// Exact conversion to `i64` (only integral values that do not overflow), otherwise `None`.
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Number::Integer(i) => i.to_i64(),
+            Number::Rational(r) if *r.denom() == BigInt::one() => r.numer().to_i64(),
+            Number::Real(Real::F64(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f => Some(*f as i64),
+            Number::Real(Real::F32(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f as f64 => Some(*f as i64),
+            _ => None,
+        }
+    }
+
+    /// Exact conversion to `i32` (only integral values that do not overflow), otherwise `None`.
+    pub fn as_i32(&self) -> Option<i32> {
+        self.as_i64().and_then(|v| i32::try_from(v).ok())
+    }
+
+    /// Exact conversion to `u64` (only non-negative integral values that do not overflow), otherwise `None`.
+    pub fn as_u64(&self) -> Option<u64> {
+        match self {
+            Number::Integer(i) => i.to_u64(),
+            Number::Rational(r) if *r.denom() == BigInt::one() => r.numer().to_u64(),
+            Number::Real(Real::F64(f)) if f.fract() == 0.0 && f.is_sign_positive() && (*f as u64) as f64 == *f => {
+                Some(*f as u64)
+            }
+            Number::Real(Real::F32(f)) if f.fract() == 0.0 && f.is_sign_positive() && (*f as u64) as f64 == *f as f64 => {
+                Some(*f as u64)
+            }
+            _ => None,
+        }
+    }
+
+    /// Conversion to `BigInt` (only integral values, spec §9.2 `to_bigint`).
+    pub fn as_bigint(&self) -> Option<BigInt> {
+        match self {
+            Number::Integer(i) => Some(i.clone()),
+            Number::Rational(r) if *r.denom() == BigInt::one() => Some(r.numer().clone()),
+            Number::Real(Real::F64(f)) if f.fract() == 0.0 => Some(BigInt::from(*f as i64)),
+            Number::Real(Real::F32(f)) if f.fract() == 0.0 => Some(BigInt::from(*f as i64)),
+            _ => None,
+        }
+    }
+
+    /// Conversion to `BigRational` (exact layer, spec §9.2 `to_rational`).
+    pub fn as_rational(&self) -> Option<BigRational> {
+        match self {
+            Number::Integer(i) => Some(BigRational::from_integer(i.clone())),
+            Number::Rational(r) => Some(r.clone()),
+            Number::Real(Real::F64(f)) if f.fract() == 0.0 => Some(BigRational::from_integer(BigInt::from(*f as i64))),
+            Number::Real(Real::F32(f)) if f.fract() == 0.0 => Some(BigRational::from_integer(BigInt::from(*f as i64))),
+            _ => None,
+        }
+    }
+
+    /// Whether this is an integral value (no fractional part, prerequisite for integer collapse in spec §9.2).
+    pub fn is_integer_value(&self) -> bool {
+        self.as_bigint().is_some()
+    }
+
+    /// Truncate toward zero to an integer (spec §9.6 `truncated_i32`).
+    pub fn truncate(&self) -> Number {
+        match self {
+            Number::Integer(_) => self.clone(),
+            Number::Rational(r) => {
+                let t = r.to_integer();
+                normalized(t, BigInt::one())
+            }
+            Number::Real(Real::F64(f)) => Number::Real(Real::F64(f.trunc())),
+            Number::Real(Real::F32(f)) => Number::Real(Real::F32(f.trunc())),
+            Number::Complex { .. } => self.clone(),
+        }
+    }
+
+    /// Round to the nearest integer (spec §9.6 `rounded_i32`).
+    pub fn round(&self) -> Number {
+        match self {
+            Number::Integer(_) => self.clone(),
+            Number::Rational(r) => normalized(r.round().numer().clone(), BigInt::one()),
+            Number::Real(Real::F64(f)) => Number::Real(Real::F64(f.round())),
+            Number::Real(Real::F32(f)) => Number::Real(Real::F32(f.round())),
+            Number::Complex { .. } => self.clone(),
+        }
+    }
+
+    /// Round to a fixed number of decimal digits (spec §9.6 `rounded_f64(x, digits)`).
+    pub fn rounded_digits(&self, digits: i64) -> Number {
+        let mult = 10f64.powi(digits as i32);
+        let v = (self.to_f64_lossy() * mult).round() / mult;
+        Number::Real(Real::F64(v))
+    }
+
+    /// Clamp to `[min, max]` (spec §9.5 `clamped_f64`).
+    pub fn clamped_f64(&self, min: f64, max: f64) -> Number {
+        let v = self.to_f64_lossy();
+        Number::Real(Real::F64(v.clamp(min, max)))
+    }
 }
 
-fn isqrt(n: &BigInt) -> Option<BigInt> {
-    if n < &BigInt::zero() {
+// Integer square root via Newton iteration: returns `None` for non-perfect squares so exact `sqrt` stays symbolic.
+fn isqrt(n: &BigInt) -> Option<BigInt> {    if n < &BigInt::zero() {
         return None;
     }
     if n.is_zero() {
@@ -282,6 +394,9 @@ fn promote_real(a: &Number, b: &Number) -> (Number, Number) {
     }
 }
 
+/// Promote two numbers to a common type (spec §6.4).
+/// Promotion sequence: `Integer < Rational < Complex<Rational> < F64 < Complex<F64>`;
+/// a `Real` infects, promoting the whole `Complex` to `Complex<Real>`.
 pub fn promote(a: &Number, b: &Number) -> (Number, Number) {
     use Number::*;
     let a_complex = matches!(a, Complex { .. });

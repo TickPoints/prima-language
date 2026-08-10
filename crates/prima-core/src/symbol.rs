@@ -2,9 +2,12 @@ use std::sync::{OnceLock, RwLock};
 
 use dashmap::DashMap;
 
+/// Symbol identifier (spec §7): built-in symbols and user symbols share the same registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SymbolId(pub u32);
 
+/// Symbol registry: name → `SymbolId`, with the display name taken from the TeX name (e.g. `pi → \pi`, spec §7).
+/// Lazily initialized; built-in symbols are registered on the first access to `SymbolTable::global()`.
 pub struct SymbolTable {
     names: RwLock<Vec<String>>,
     map: DashMap<String, SymbolId>,
@@ -41,6 +44,7 @@ impl SymbolTable {
         id
     }
 
+    /// Register a symbol with an explicit display name (TeX name; spec §7: built-in symbols are independent of TeX, TeX is only a view).
     pub fn intern_display(&self, name: &str, display: &str) -> SymbolId {
         if let Some(id) = self.map.get(name) {
             return *id;

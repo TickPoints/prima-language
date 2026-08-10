@@ -1,4 +1,5 @@
 pub mod builtins;
+pub mod collapse;
 pub mod error;
 pub mod expr_pool;
 pub mod number;
@@ -8,6 +9,7 @@ pub mod symbol;
 pub mod value;
 
 pub use builtins::BuiltinSymbols;
+pub use collapse::{collapse_value, numeric_value};
 pub use error::CoreError;
 pub use expr_pool::{ExprData, ExprId, ExprPool};
 pub use number::{Number, Real};

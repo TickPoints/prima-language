@@ -6,6 +6,7 @@ use crate::expr_pool::{ExprData, ExprId, ExprPool};
 use crate::number::{Number, Real};
 use crate::symbol::SymbolTable;
 
+/// LaTeX view of a number (spec §8.3 default `print_format := latex`): rationals render as `\frac{n}{d}`.
 pub fn render_number(n: &Number) -> String {
     match n {
         Number::Integer(i) => i.to_string(),
@@ -16,6 +17,8 @@ pub fn render_number(n: &Number) -> String {
     }
 }
 
+/// ExprDAG → LaTeX view (spec §8.3 level 0, preserving the original form). TeX names come from the symbol table (spec §7);
+/// rendering is just a view conversion, decoupled from the reverse parsing of `tex"..."` (spec §4.9).
 pub fn render_latex(pool: &ExprPool, symbols: &SymbolTable, id: ExprId) -> String {
     match pool.get(id) {
         Some(ExprData::Symbol(s)) => symbols.name(s).unwrap_or_else(|| format!("?{}", s.0)),

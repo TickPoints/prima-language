@@ -5,6 +5,9 @@ use crate::builtins::BuiltinSymbols;
 use crate::expr_pool::{ExprData, ExprId, ExprPool};
 use crate::number::Number;
 
+/// Full simplification (spec §8.3 levels 2/3): fold recursively, then apply rules on demand —
+/// `Pow(sqrt(x), 2) → x`, Euler's `e^{iθ} → cos + i·sin`, constant folding for `sin/cos/exp/log/ln/abs/sqrt`,
+/// `Pow(x, 1/2) → \sqrt{x}`. Simplification never changes the mathematical value.
 pub fn simplify(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId) -> ExprId {
     let node = match pool.get(id) {
         Some(n) => n,
@@ -115,6 +118,7 @@ fn apply_rule(pool: &ExprPool, builtins: &BuiltinSymbols, f: ExprId, args: &[Exp
     None
 }
 
+/// An angle of the form `k·\pi`: extract the rational coefficient k, then consult the exact trig table (spec §7 built-in symbol simplification).
 fn trig_of_angle(pool: &ExprPool, builtins: &BuiltinSymbols, expr: ExprId) -> Option<(Number, Number)> {
     let c = rational_pi_coefficient(pool, builtins, expr)?;
     exact_trig(&c)
@@ -184,6 +188,7 @@ fn exact_trig(c: &BigRational) -> Option<(Number, Number)> {
     }
 }
 
+/// Euler's formula (spec §7.4): fold `e^{iθ}` into `cosθ + i·sinθ` using the exact trig values of θ.
 fn euler(pool: &ExprPool, builtins: &BuiltinSymbols, z: ExprId) -> Option<ExprId> {
     let i = pool.symbol(builtins.i);
     let theta = match pool.get(z)? {
