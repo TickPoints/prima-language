@@ -1,6 +1,7 @@
 use crate::span::Span;
 
-/// Token: `kind` + source range (spec §3). Statements are separated by newlines; the lexer emits `Newline` for the parser to consume at statement boundaries.
+/// Token: `kind` + source range (spec §3). Statements are separated by `;` (spec §4.2);
+/// the lexer emits `Newline` so the parser can detect the deprecated newline-separated form and warn (W0001).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,
@@ -30,8 +31,9 @@ pub enum TokenKind {
     KwIf,
     KwElse,
     KwStep,
-    KwTry,
-    KwCatch,
+    KwClass,
+    KwSelf,
+    KwSelfType,
     KwMatch,
     KwParFor,
     KwConfig,
@@ -48,6 +50,10 @@ pub enum TokenKind {
     KwMacro,
     KwTrait,
     KwImpl,
+
+    // `try`/`catch` are removed in v2.0 (spec §16.3); kept as tokens only so the parser can emit an `E0010` hint.
+    KwTry,
+    KwCatch,
 
     Plus,
     Minus,
@@ -72,6 +78,10 @@ pub enum TokenKind {
     PipePipe,
     Pipe,
     PipeArrow,
+    Question,
+    Dot,
+    DotDot,
+    DotDotEq,
     Colon,
     ColonColon,
     ColonEq,
@@ -79,7 +89,6 @@ pub enum TokenKind {
     FatArrow,
     Comma,
     Semicolon,
-    DotDot,
     Underscore,
     LParen,
     RParen,
@@ -112,8 +121,9 @@ pub fn describe(kind: &TokenKind) -> String {
         TokenKind::KwIf => "`if`".into(),
         TokenKind::KwElse => "`else`".into(),
         TokenKind::KwStep => "`step`".into(),
-        TokenKind::KwTry => "`try`".into(),
-        TokenKind::KwCatch => "`catch`".into(),
+        TokenKind::KwClass => "`class`".into(),
+        TokenKind::KwSelf => "`self`".into(),
+        TokenKind::KwSelfType => "`Self`".into(),
         TokenKind::KwMatch => "`match`".into(),
         TokenKind::KwParFor => "`parfor`".into(),
         TokenKind::KwConfig => "`config`".into(),
@@ -129,6 +139,8 @@ pub fn describe(kind: &TokenKind) -> String {
         TokenKind::KwMacro => "`macro`".into(),
         TokenKind::KwTrait => "`trait`".into(),
         TokenKind::KwImpl => "`impl`".into(),
+        TokenKind::KwTry => "`try`".into(),
+        TokenKind::KwCatch => "`catch`".into(),
         TokenKind::Plus => "`+`".into(),
         TokenKind::Minus => "`-`".into(),
         TokenKind::Star => "`*`".into(),
@@ -152,6 +164,10 @@ pub fn describe(kind: &TokenKind) -> String {
         TokenKind::PipePipe => "`||`".into(),
         TokenKind::Pipe => "`|`".into(),
         TokenKind::PipeArrow => "`|>`".into(),
+        TokenKind::Question => "`?`".into(),
+        TokenKind::Dot => "`.`".into(),
+        TokenKind::DotDot => "`..`".into(),
+        TokenKind::DotDotEq => "`..=`".into(),
         TokenKind::Colon => "`:`".into(),
         TokenKind::ColonColon => "`::`".into(),
         TokenKind::ColonEq => "`:=`".into(),
@@ -159,7 +175,6 @@ pub fn describe(kind: &TokenKind) -> String {
         TokenKind::FatArrow => "`=>`".into(),
         TokenKind::Comma => "`,`".into(),
         TokenKind::Semicolon => "`;`".into(),
-        TokenKind::DotDot => "`..`".into(),
         TokenKind::Underscore => "`_`".into(),
         TokenKind::LParen => "`(`".into(),
         TokenKind::RParen => "`)`".into(),

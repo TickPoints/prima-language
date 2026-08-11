@@ -461,11 +461,14 @@ impl<'a> Lexer<'a> {
             }
             ',' => (TokenKind::Comma, 1),
             ';' => (TokenKind::Semicolon, 1),
+            '?' => (TokenKind::Question, 1),
             '.' => {
-                if self.starts_with("..") {
+                if self.starts_with("..=") {
+                    (TokenKind::DotDotEq, 3)
+                } else if self.starts_with("..") {
                     (TokenKind::DotDot, 2)
                 } else {
-                    return Err("unexpected `.`".into());
+                    (TokenKind::Dot, 1)
                 }
             }
             '(' => (TokenKind::LParen, 1),
@@ -494,6 +497,9 @@ fn keyword_or_ident(s: &str) -> TokenKind {
         "if" => TokenKind::KwIf,
         "else" => TokenKind::KwElse,
         "step" => TokenKind::KwStep,
+        "class" => TokenKind::KwClass,
+        "self" => TokenKind::KwSelf,
+        "Self" => TokenKind::KwSelfType,
         "try" => TokenKind::KwTry,
         "catch" => TokenKind::KwCatch,
         "match" => TokenKind::KwMatch,

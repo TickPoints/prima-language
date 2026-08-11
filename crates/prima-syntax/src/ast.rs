@@ -47,10 +47,18 @@ pub enum ImportItem {
     Name { name: Spanned<String>, alias: Option<Spanned<String>> },
 }
 
+/// Visibility modifier (spec §15.2): default private / `pub(mod)` / `pub`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    Private,
+    Module,
+    Public,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Let {
-        name: Spanned<String>,
+        pat: Pattern,
         mut_: bool,
         type_ann: Option<Type>,
         value: Expr,
@@ -76,6 +84,19 @@ pub enum Stmt {
         ret: Option<Type>,
         annotations: Vec<Annotation>,
         body: Expr,
+        span: Span,
+    },
+    /// Class definition (spec §4.5): fields + methods.
+    ClassDef {
+        name: Spanned<String>,
+        members: Vec<ClassMember>,
+        span: Span,
+    },
+    /// Operator overload via `impl ops::Add for T` (spec §18.5).
+    Impl {
+        op: ImplOp,
+        target: Spanned<String>,
+        members: Vec<Box<Stmt>>,
         span: Span,
     },
     Assign {
@@ -111,13 +132,29 @@ pub enum Stmt {
         else_: Option<Block>,
         span: Span,
     },
-    Return {
-        value: Option<Expr>,
+    /// `if let pattern = expr { ... } else { ... }` (spec §4.4).
+    IfLet {
+        pat: Pattern,
+        value: Expr,
+        then: Block,
+        else_: Option<Block>,
         span: Span,
     },
-    Try {
+    /// `while let pattern = expr { ... }` (spec §4.4).
+    WhileLet {
+        pat: Pattern,
+        value: Expr,
         body: Block,
-        catches: Vec<Catch>,
+        span: Span,
+    },
+    /// `match` used as a statement (spec §4.4); the expression form is `ExprKind::Match`.
+    Match {
+        scrutinee: Expr,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+    Return {
+        value: Option<Expr>,
         span: Span,
     },
     WithConfig {
@@ -128,17 +165,41 @@ pub enum Stmt {
     Pub(Box<Stmt>),
 }
 
+/// Class member (spec §4.5): a field or a method. The outer visibility modifier comes from the parse layer.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Catch {
-    pub var: Spanned<String>,
-    pub ty: Option<Type>,
-    pub block: Block,
+pub struct ClassMember {
+    pub vis: Visibility,
+    pub kind: ClassMemberKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClassMemberKind {
+    Field { name: Spanned<String>, ty: Type },
+    /// Method with an optional body: `@builtin` classes declare signature-only methods (spec §18.4).
+    Method { name: Spanned<String>, params: Vec<Param>, ret: Option<Type>, annotations: Vec<Annotation>, body: Option<Block> },
+}
+
+/// Operator overload target of `impl ops::X for T` (spec §18.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImplOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Neg,
+    Eq,
+    Cmp,
+    Index,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: Spanned<String>,
     pub type_ann: Option<Type>,
+    /// `self` receiver of a method (spec §4.5): a shallow copy of the object.
+    pub is_self: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +207,10 @@ pub enum Annotation {
     Parallel,
     Jit,
     Gpu,
+    /// `@builtin`: implementation provided by the Rust host (spec §18.4).
+    Builtin,
+    /// `@c_api::extern`: export a C ABI interface (spec §18.4).
+    CApiExtern,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,7 +233,18 @@ pub enum Type {
     Rational,
     F64,
     F32,
+    I8,
+    I16,
     I32,
+    I64,
+    I128,
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+    Isize,
+    Usize,
     Complex,
     Expr,
     Symbol,
@@ -178,12 +254,56 @@ pub enum Type {
     Array(Box<Type>),
     Matrix(Box<Type>),
     Tuple(Vec<Type>),
+    Option(Box<Type>),
+    Result(Box<Type>, Box<Type>),
     Fn { params: Vec<Type>, ret: Box<Type> },
     MFn { params: Vec<Type>, ret: Box<Type> },
+    /// `Self` inside a class body (spec §4.5).
+    SelfType,
     User(Spanned<String>),
 }
 
-/// Math and host expressions **share the same AST** (spec §4.2: `math_expr := expr`).
+/// Match arm (spec §4.4): pattern with an optional guard, `pattern [if cond] => expr`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub guard: Option<Expr>,
+    pub body: Expr,
+}
+
+/// Rust-style patterns (spec §4.4) for `let` destructuring, `if let`/`while let`, and `match` arms.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    Wildcard(Span),
+    Binding(Spanned<String>),
+    Literal(Literal),
+    /// `(a, b, ..)` — trailing `..` is allowed.
+    Tuple(Vec<Pattern>, bool),
+    /// `[x, y, ..]` — trailing `..` is allowed.
+    Array(Vec<Pattern>, bool),
+    /// `Type { x, y: pat, .. }`.
+    Struct {
+        name: Spanned<String>,
+        fields: Vec<FieldPattern>,
+        rest: bool,
+    },
+    /// `Some(x)` / `Ok(v)` / `Err(e)` / `None`.
+    Variant { name: Spanned<String>, args: Vec<Pattern>, span: Span },
+    /// `0..9` / `1..=5` (inclusive range).
+    Range { lo: Literal, hi: Literal, inclusive: bool },
+    /// `pat1 | pat2` (or-pattern).
+    Or(Vec<Pattern>),
+    /// `(pat)`.
+    Group(Box<Pattern>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldPattern {
+    pub name: Spanned<String>,
+    pub pat: Option<Pattern>,
+}
+
+/// Math and host expressions **share the same AST** (spec §4.3: `math_expr := expr`).
 /// The "symbol world / numeric world" distinction lives not at the parse layer but in the runtime demotion layer (implementation plan §4.8).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expr {
@@ -196,16 +316,32 @@ pub enum ExprKind {
     Literal(Literal),
     Symbol(Spanned<String>),
     Path { segments: Vec<Spanned<String>> },
+    /// `self` expression (spec §4.5).
+    Self_,
     Call { callee: Box<Expr>, args: Vec<Expr> },
+    /// `obj.method(args)` (spec §4.5).
+    MethodCall { receiver: Box<Expr>, name: Spanned<String>, args: Vec<Expr> },
+    /// `obj.field` (spec §4.5 field access).
+    Field { receiver: Box<Expr>, name: Spanned<String> },
+    /// `T { a, b, ..base }` struct literal (spec §4.5).
+    StructLiteral { name: Spanned<String>, fields: Vec<FieldValue>, base: Option<Box<Expr>> },
     Index { base: Box<Expr>, index: Index },
     Binary { op: BinOp, lhs: Box<Expr>, rhs: Box<Expr> },
     Unary { op: UnOp, operand: Box<Expr> },
+    /// `expr?` try operator (spec §16.3): propagates `Err`/`None` in a `Result`/`Option`-returning function.
+    Try(Box<Expr>),
     Array(Vec<Expr>),
     Tuple(Vec<Expr>),
     Lambda { params: Vec<Param>, body: Box<Expr> },
     Match { scrutinee: Box<Expr>, arms: Vec<MatchArm> },
     Pipeline { lhs: Box<Expr>, rhs: Box<Expr> },
     Custom(Vec<(Expr, Expr)>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldValue {
+    pub name: Spanned<String>,
+    pub value: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -257,23 +393,4 @@ pub enum UnOp {
     Neg,
     Not,
     Pos,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct MatchArm {
-    pub pattern: Pattern,
-    pub body: Expr,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Pattern {
-    Literal(Literal),
-    Binding(Spanned<String>),
-    Wildcard(Span),
-    Path(Vec<Spanned<String>>),
-    Ctor {
-        name: Vec<Spanned<String>>,
-        args: Vec<Pattern>,
-        span: Span,
-    },
 }
