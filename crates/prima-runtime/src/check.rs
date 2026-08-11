@@ -1,4 +1,4 @@
-use prima_syntax::ast::{BinOp, Expr, ExprKind, Literal, Stmt, Type, UnOp};
+use prima_syntax::ast::{BinOp, ClassMemberKind, Expr, ExprKind, Literal, MatchArm, Pattern, Stmt, Type, UnOp};
 use prima_syntax::parse;
 use prima_syntax::Span;
 
@@ -10,6 +10,13 @@ pub struct TypeError {
     /// Source span of the offending value, for caret rendering (spec §16.4).
     pub span: Span,
     pub message: String,
+}
+
+/// Static-check context: whether `?` (spec §16.3 `E0054`) is allowed — i.e. inside a `fn`/method
+/// whose return type is `Result<..>`/`Option<..>`.
+#[derive(Debug, Clone, Copy)]
+struct Ctx {
+    allow_try: bool,
 }
 
 /// Statically check source code (spec §6.3 / §16.2 compile-time errors): return all type errors (collecting, not fail-fast).
@@ -28,18 +35,45 @@ pub fn check_src(src: &str) -> Vec<TypeError> {
     };
 
     let mut errors = Vec::new();
+    let ctx = Ctx { allow_try: false };
     for stmt in &program.stmts {
-        collect_stmt_errors(src, stmt, &mut errors);
+        collect_stmt_errors(src, stmt, &mut errors, ctx);
     }
     // Statement order is source order; sorting stably by (line, column) keeps it consistent with span.start.
     errors.sort_by_key(|e| (e.line, e.column));
     errors
 }
 
-/// Only check the type annotations of top-level (and `pub`-wrapped) `let`/`const`; do not descend into blocks/function bodies.
-fn collect_stmt_errors(src: &str, stmt: &Stmt, errors: &mut Vec<TypeError>) {
+/// Collect static errors for one statement. Only the type annotations of `let`/`const` (with a
+/// plain binding pattern) are checked; all bodies are descended into to catch `?` misuse.
+fn collect_stmt_errors(src: &str, stmt: &Stmt, errors: &mut Vec<TypeError>, ctx: Ctx) {
     match stmt {
-        Stmt::Let { type_ann: Some(t), value, .. } | Stmt::Const { type_ann: t, value, .. } => {
+        Stmt::Let { pat, type_ann, value, span, .. } => {
+            // `let` rejects refutable patterns (spec §4.4 `E0053`).
+            if pattern_is_refutable(pat) {
+                let (line, column) = line_col(src, span.start);
+                errors.push(TypeError {
+                    line,
+                    column,
+                    span: *span,
+                    message: "refutable pattern in `let` (E0053)".into(),
+                });
+            }
+            if let Some(t) = type_ann {
+                let inf = infer(value);
+                if !annot_accepts(t, inf) {
+                    let (line, column) = line_col(src, value.span.start);
+                    errors.push(TypeError {
+                        line,
+                        column,
+                        span: value.span,
+                        message: format!("type mismatch: expected {}, got {}", annot_name(t), inf),
+                    });
+                }
+            }
+            collect_expr_errors(src, value, errors, ctx);
+        }
+        Stmt::Const { type_ann: t, value, .. } => {
             let inf = infer(value);
             if !annot_accepts(t, inf) {
                 let (line, column) = line_col(src, value.span.start);
@@ -50,9 +84,193 @@ fn collect_stmt_errors(src: &str, stmt: &Stmt, errors: &mut Vec<TypeError>) {
                     message: format!("type mismatch: expected {}, got {}", annot_name(t), inf),
                 });
             }
+            collect_expr_errors(src, value, errors, ctx);
         }
-        Stmt::Pub(inner) => collect_stmt_errors(src, inner, errors),
+        Stmt::FnDef { ret, body, .. } => {
+            let allow = matches!(ret, Some(Type::Result(..) | Type::Option(..)));
+            collect_block_errors(src, body, errors, Ctx { allow_try: allow });
+        }
+        Stmt::MathDef { body, .. } => {
+            collect_expr_errors(src, body, errors, Ctx { allow_try: false });
+        }
+        Stmt::ClassDef { members, .. } => {
+            for m in members {
+                if let ClassMemberKind::Method { ret, body: Some(b), .. } = &m.kind {
+                    let allow = matches!(ret, Some(Type::Result(..) | Type::Option(..)));
+                    collect_block_errors(src, b, errors, Ctx { allow_try: allow });
+                }
+            }
+        }
+        Stmt::Impl { members, .. } => {
+            for m in members {
+                collect_stmt_errors(src, m, errors, ctx);
+            }
+        }
+        Stmt::IfLet { value, then, else_, .. } => {
+            collect_expr_errors(src, value, errors, ctx);
+            collect_block_errors(src, then, errors, ctx);
+            if let Some(b) = else_ {
+                collect_block_errors(src, b, errors, ctx);
+            }
+        }
+        Stmt::WhileLet { value, body, .. } => {
+            collect_expr_errors(src, value, errors, ctx);
+            collect_block_errors(src, body, errors, ctx);
+        }
+        Stmt::Match { scrutinee, arms, .. } => {
+            collect_expr_errors(src, scrutinee, errors, ctx);
+            collect_arms_errors(src, arms, errors, ctx);
+        }
+        Stmt::If { cond, then, elifs, else_, .. } => {
+            collect_expr_errors(src, cond, errors, ctx);
+            collect_block_errors(src, then, errors, ctx);
+            for (c, b) in elifs {
+                collect_expr_errors(src, c, errors, ctx);
+                collect_block_errors(src, b, errors, ctx);
+            }
+            if let Some(b) = else_ {
+                collect_block_errors(src, b, errors, ctx);
+            }
+        }
+        Stmt::While { cond, body, .. } => {
+            collect_expr_errors(src, cond, errors, ctx);
+            collect_block_errors(src, body, errors, ctx);
+        }
+        Stmt::For { range, step, body, .. } | Stmt::ParFor { range, step, body, .. } => {
+            collect_expr_errors(src, &range.0, errors, ctx);
+            collect_expr_errors(src, &range.1, errors, ctx);
+            if let Some(s) = step {
+                collect_expr_errors(src, s, errors, ctx);
+            }
+            collect_block_errors(src, body, errors, ctx);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(e) = value {
+                collect_expr_errors(src, e, errors, ctx);
+            }
+        }
+        Stmt::Assign { target, value, .. } => {
+            collect_expr_errors(src, target, errors, ctx);
+            collect_expr_errors(src, value, errors, ctx);
+        }
+        Stmt::WithConfig { entries, body, .. } => {
+            for e in entries {
+                collect_expr_errors(src, &e.value, errors, ctx);
+            }
+            collect_block_errors(src, body, errors, ctx);
+        }
+        Stmt::Expr(e) => collect_expr_errors(src, e, errors, ctx),
+        Stmt::Pub(inner) => collect_stmt_errors(src, inner, errors, ctx),
+    }
+}
+
+fn collect_block_errors(src: &str, block: &prima_syntax::ast::Block, errors: &mut Vec<TypeError>, ctx: Ctx) {
+    for s in &block.stmts {
+        collect_stmt_errors(src, s, errors, ctx);
+    }
+}
+
+fn collect_arms_errors(src: &str, arms: &[MatchArm], errors: &mut Vec<TypeError>, ctx: Ctx) {
+    for arm in arms {
+        if let Some(g) = &arm.guard {
+            collect_expr_errors(src, g, errors, ctx);
+        }
+        collect_expr_errors(src, &arm.body, errors, ctx);
+    }
+}
+
+/// Descend an expression tree, flagging `?` outside a `Result`/`Option`-returning function (spec §16.3 `E0054`).
+fn collect_expr_errors(src: &str, expr: &Expr, errors: &mut Vec<TypeError>, ctx: Ctx) {
+    match &expr.kind {
+        ExprKind::Try(inner) => {
+            if !ctx.allow_try {
+                let (line, column) = line_col(src, expr.span.start);
+                errors.push(TypeError {
+                    line,
+                    column,
+                    span: expr.span,
+                    message: "`?` can only be used inside a function returning `Result`/`Option` (E0054)".into(),
+                });
+            }
+            collect_expr_errors(src, inner, errors, ctx);
+        }
+        ExprKind::Call { callee, args } => {
+            collect_expr_errors(src, callee, errors, ctx);
+            for a in args {
+                collect_expr_errors(src, a, errors, ctx);
+            }
+        }
+        ExprKind::MethodCall { receiver, args, .. } => {
+            collect_expr_errors(src, receiver, errors, ctx);
+            for a in args {
+                collect_expr_errors(src, a, errors, ctx);
+            }
+        }
+        ExprKind::Field { receiver, .. } => collect_expr_errors(src, receiver, errors, ctx),
+        ExprKind::StructLiteral { fields, base, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value {
+                    collect_expr_errors(src, v, errors, ctx);
+                }
+            }
+            if let Some(b) = base {
+                collect_expr_errors(src, b, errors, ctx);
+            }
+        }
+        ExprKind::Index { base, index } => {
+            collect_expr_errors(src, base, errors, ctx);
+            for item in &index.items {
+                match item {
+                    prima_syntax::ast::IndexItem::Elem(e) => collect_expr_errors(src, e, errors, ctx),
+                    prima_syntax::ast::IndexItem::Slice { start, end } => {
+                        if let Some(s) = start {
+                            collect_expr_errors(src, s, errors, ctx);
+                        }
+                        if let Some(e) = end {
+                            collect_expr_errors(src, e, errors, ctx);
+                        }
+                    }
+                }
+            }
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            collect_expr_errors(src, lhs, errors, ctx);
+            collect_expr_errors(src, rhs, errors, ctx);
+        }
+        ExprKind::Unary { operand, .. } => collect_expr_errors(src, operand, errors, ctx),
+        ExprKind::Array(items) | ExprKind::Tuple(items) => {
+            for i in items {
+                collect_expr_errors(src, i, errors, ctx);
+            }
+        }
+        ExprKind::Lambda { body, .. } => collect_expr_errors(src, body, errors, ctx),
+        ExprKind::Match { scrutinee, arms } => {
+            collect_expr_errors(src, scrutinee, errors, ctx);
+            collect_arms_errors(src, arms, errors, ctx);
+        }
+        ExprKind::Pipeline { lhs, rhs } => {
+            collect_expr_errors(src, lhs, errors, ctx);
+            collect_expr_errors(src, rhs, errors, ctx);
+        }
+        ExprKind::Custom(items) => {
+            for (p, v) in items {
+                collect_expr_errors(src, p, errors, ctx);
+                collect_expr_errors(src, v, errors, ctx);
+            }
+        }
         _ => {}
+    }
+}
+
+/// Refutable-pattern check for `let` (spec §4.4): only bindings, wildcards and grouped tuples/arrays
+/// of irrefutable patterns are irrefutable.
+fn pattern_is_refutable(p: &Pattern) -> bool {
+    match p {
+        Pattern::Wildcard(_) | Pattern::Binding(_) => false,
+        Pattern::Tuple(pats, _) | Pattern::Array(pats, _) => pats.iter().any(pattern_is_refutable),
+        Pattern::Group(inner) => pattern_is_refutable(inner),
+        Pattern::Or(pats) => pats.iter().any(pattern_is_refutable),
+        _ => true,
     }
 }
 
@@ -75,12 +293,26 @@ fn infer(expr: &Expr) -> &'static str {
                 return match segments[0].value.as_str() {
                     "to_f64" => "F64",
                     "to_f32" => "F32",
+                    "to_i8" => "I8",
+                    "to_i16" => "I16",
                     "to_i32" => "I32",
-                    "to_i64" | "to_bigint" => "Integer",
+                    "to_i64" => "I64",
+                    "to_i128" => "I128",
+                    "to_u8" => "U8",
+                    "to_u16" => "U16",
+                    "to_u32" => "U32",
+                    "to_u64" => "U64",
+                    "to_u128" => "U128",
+                    "to_isize" => "Isize",
+                    "to_usize" => "Usize",
+                    "to_bigint" => "Integer",
                     "to_rational" => "Rational",
                     "to_complex" => "Complex",
                     "print" | "println" => "Nil",
                     name if name.starts_with("try_") || name.starts_with("checked_") => "Result",
+                    "Some" | "None" => "Option",
+                    "Ok" | "Err" => "Result",
+                    "get" => "Option",
                     _ => "Expr",
                 };
             }
@@ -127,7 +359,18 @@ fn annot_accepts(t: &Type, inf: &str) -> bool {
         Type::Rational => matches!(inf, "Integer" | "Rational"),
         Type::F64 => matches!(inf, "Integer" | "Rational" | "F64" | "F32"),
         Type::F32 => matches!(inf, "Integer" | "Rational" | "F32"),
-        Type::I32 => inf == "Integer",
+        Type::I8 => inf == "I8",
+        Type::I16 => inf == "I16",
+        Type::I32 => inf == "I32",
+        Type::I64 => inf == "I64",
+        Type::I128 => inf == "I128",
+        Type::U8 => inf == "U8",
+        Type::U16 => inf == "U16",
+        Type::U32 => inf == "U32",
+        Type::U64 => inf == "U64",
+        Type::U128 => inf == "U128",
+        Type::Isize => inf == "Isize",
+        Type::Usize => inf == "Usize",
         Type::Complex => matches!(inf, "Integer" | "Rational" | "Complex"),
         Type::Number => matches!(inf, "Integer" | "Rational" | "F64" | "F32" | "Complex"),
         Type::Expr | Type::Symbol => true,
@@ -136,6 +379,9 @@ fn annot_accepts(t: &Type, inf: &str) -> bool {
         Type::Char => inf == "Char",
         Type::Array(_) => inf == "Array",
         Type::Tuple(_) => inf == "Tuple",
+        Type::Option(_) => inf == "Option",
+        Type::Result(..) => inf == "Result",
+        Type::SelfType => true,
         Type::Fn { .. } | Type::MFn { .. } | Type::User(_) | Type::Matrix(_) => true,
     }
 }
@@ -148,7 +394,18 @@ fn annot_name(t: &Type) -> &'static str {
         Type::Rational => "Rational",
         Type::F64 => "F64",
         Type::F32 => "F32",
+        Type::I8 => "I8",
+        Type::I16 => "I16",
         Type::I32 => "I32",
+        Type::I64 => "I64",
+        Type::I128 => "I128",
+        Type::U8 => "U8",
+        Type::U16 => "U16",
+        Type::U32 => "U32",
+        Type::U64 => "U64",
+        Type::U128 => "U128",
+        Type::Isize => "Isize",
+        Type::Usize => "Usize",
         Type::Complex => "Complex",
         Type::Expr => "Expr",
         Type::Symbol => "Symbol",
@@ -158,6 +415,9 @@ fn annot_name(t: &Type) -> &'static str {
         Type::Array(_) => "Array",
         Type::Matrix(_) => "Matrix",
         Type::Tuple(_) => "Tuple",
+        Type::Option(_) => "Option",
+        Type::Result(..) => "Result",
+        Type::SelfType => "Self",
         Type::Fn { .. } => "Fn",
         Type::MFn { .. } => "MFn",
         Type::User(_) => "User",
@@ -180,7 +440,7 @@ mod tests {
 
     #[test]
     fn f64_annotation_rejects_symbolic_value() {
-        let errs = check_src("let x: F64 = sqrt(2)");
+        let errs = check_src("let x: F64 = sqrt(2);");
         assert_eq!(errs.len(), 1);
         assert!(errs[0].message.contains("F64"));
         assert!(errs[0].message.contains("Expr"));
@@ -188,12 +448,12 @@ mod tests {
 
     #[test]
     fn explicit_conversion_satisfies_annotation() {
-        assert!(check_src("let y: F64 = to_f64(sqrt(2))").is_empty());
+        assert!(check_src("let y: F64 = to_f64(sqrt(2));").is_empty());
     }
 
     #[test]
     fn integer_annotation_rejects_float() {
-        let errs = check_src("let z: Integer = 3.14");
+        let errs = check_src("let z: Integer = 3.14;");
         assert_eq!(errs.len(), 1);
         assert!(errs[0].message.contains("Integer"));
         assert!(errs[0].message.contains("F64"));
@@ -201,7 +461,7 @@ mod tests {
 
     #[test]
     fn string_annotation_rejects_integer() {
-        let errs = check_src("let s: String = 5");
+        let errs = check_src("let s: String = 5;");
         assert_eq!(errs.len(), 1);
         assert!(errs[0].message.contains("String"));
         assert!(errs[0].message.contains("Integer"));
@@ -216,13 +476,37 @@ mod tests {
 
     #[test]
     fn promotion_is_allowed() {
-        assert!(check_src("let n: Integer = 7\nlet r: F64 = 1").is_empty());
+        assert!(check_src("let n: Integer = 7; let r: F64 = 1;").is_empty());
     }
 
     #[test]
     fn errors_are_reported_in_source_order() {
-        let errs = check_src("let a: String = 1\nlet b: Integer = 2.5");
+        let errs = check_src("let a: String = 1\nlet b: Integer = 2.5\n");
         assert_eq!(errs.len(), 2);
         assert!(errs[0].line < errs[1].line);
+    }
+
+    #[test]
+    fn try_operator_rejected_outside_result_fn() {
+        let errs = check_src("let x = try_f64(\"a\")?;");
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("E0054"));
+    }
+
+    #[test]
+    fn try_operator_allowed_in_result_fn() {
+        assert!(check_src("fn f() -> Result<F64, Error> {\n    let v = try_f64(\"a\")?;\n    return Ok(v);\n}").is_empty());
+    }
+
+    #[test]
+    fn refutable_pattern_in_let_is_flagged() {
+        let errs = check_src("let 0 = x;");
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].message.contains("E0053"));
+    }
+
+    #[test]
+    fn collapse_targets_infer_fixed_width_types() {
+        assert!(check_src("let a: I8 = to_i8(7); let b: Usize = to_usize(3); let c: Option<Integer> = get([1], 0);").is_empty());
     }
 }

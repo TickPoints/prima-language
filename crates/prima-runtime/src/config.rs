@@ -34,6 +34,15 @@ pub enum PrintFormat {
     Ascii,
 }
 
+/// Operator-overload usage policy (spec §13.2/§18.5): `warn` (default, emits `W0005`),
+/// `allow` (no warning), or `deny` (using an overload is an error).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverloadPolicy {
+    Warn,
+    Allow,
+    Deny,
+}
+
 /// Policy configuration (spec §13.2 finalized): `domain`/`undefined_handling` are global (polluting) policies,
 /// the rest are module/local policies; defaults match the spec (`fraction`/`broadcast`/`loop_optimization` on by default).
 #[derive(Debug, Clone)]
@@ -48,6 +57,7 @@ pub struct Config {
     pub simplify_level: u8,
     pub num_to_big: bool,
     pub print_format: PrintFormat,
+    pub overload_policy: OverloadPolicy,
 }
 
 impl Default for Config {
@@ -62,6 +72,7 @@ impl Default for Config {
             simplify_level: 2,
             num_to_big: true,
             print_format: PrintFormat::Latex,
+            overload_policy: OverloadPolicy::Warn,
         }
     }
 }
@@ -107,6 +118,15 @@ impl Config {
                         "unicode" => PrintFormat::Unicode,
                         "ascii" => PrintFormat::Ascii,
                         _ => return Err(RuntimeError::Message(format!("unknown `print_format` value `{v}`"))),
+                    };
+                }
+                "overload_policy" => {
+                    let v = parse_enum(&e.value, "overload_policy")?;
+                    self.overload_policy = match v.as_str() {
+                        "warn" => OverloadPolicy::Warn,
+                        "allow" => OverloadPolicy::Allow,
+                        "deny" => OverloadPolicy::Deny,
+                        _ => return Err(RuntimeError::Message(format!("unknown `overload_policy` value `{v}`"))),
                     };
                 }
                 other => return Err(RuntimeError::Message(format!("unknown config key `{other}`"))),

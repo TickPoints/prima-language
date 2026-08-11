@@ -1,29 +1,36 @@
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 
 use num_bigint::BigInt;
-use num_traits::ToPrimitive;
 use prima_core::render::{render_latex, render_number};
 use prima_core::simplify::simplify;
 use prima_core::{BuiltinSymbols, ExprId, ExprPool, Number, Real, SymbolTable, Value};
 use prima_syntax::ast::{
-    AssignOp, BinOp, Block, ConfigBlock, Expr, ExprKind, ImportItem, ImportKind, IndexItem, Literal, MatchArm, Pattern, Program, Spanned, Stmt, Type, UnOp,
+    Annotation, AssignOp, BinOp, Block, ClassMemberKind, ConfigBlock, Expr, ExprKind, FieldValue,
+    ImportItem, ImportKind, ImplOp, IndexItem, Literal, MatchArm, Param, Pattern, Program, Spanned,
+    Stmt, Type, UnOp, Visibility,
 };
 use prima_syntax::error::SyntaxError;
+use prima_syntax::{Span, SyntaxWarning};
 
 use crate::builtins::Builtin;
-use crate::config::{Config, Domain, UndefinedHandling};
+use crate::class::{ClassDef, ClassInstance, FieldDef, MethodDef};
+use crate::config::{Config, Domain, OverloadPolicy, UndefinedHandling};
 use crate::error::RuntimeError;
 use crate::module::{ModuleGraph, ModuleUnit, ResolvedImport};
 
-/// Function value (spec §11): builtins, pure math functions (MFn/closures), and host functions (`fn`); closures carry their defining environment.
+/// Function value (spec §11): builtins, pure math functions (MFn/closures), host functions (`fn`),
+/// and a small set of native host functions (`get`). Closures carry their defining environment.
 #[derive(Clone)]
 pub enum Function {
     Builtin(Builtin),
-    User { params: Vec<prima_syntax::ast::Param>, body: Expr, env: EnvRef },
-    Host { params: Vec<prima_syntax::ast::Param>, ret: Option<Type>, body: Block, env: EnvRef },
+    User { params: Vec<Param>, body: Expr, env: EnvRef },
+    Host { params: Vec<Param>, ret: Option<Type>, body: Block, env: EnvRef },
+    /// `get(array, index) -> Option<Number>`: safe array access returning `None` out of range (spec §11.3).
+    NativeGet,
 }
 
 impl Function {
@@ -33,15 +40,18 @@ impl Function {
             // MFn/closures are pure math; `fn` may have side effects (spec §11.2) and does not participate in implicit broadcast.
             Function::User { .. } => true,
             Function::Host { .. } => false,
+            // `get` returns an `Option`, which broadcast would misinterpret; keep it out of the elementwise path.
+            Function::NativeGet => false,
         }
     }
 }
 
-/// Module namespace item (spec §15.2): a public function or value exported by a module.
+/// Module namespace item (spec §15.2): a public function, value, or class exported by a module.
 #[derive(Clone)]
 pub enum NamespaceItem {
     Func(Function),
     Val(Value),
+    Class(ClassDef),
 }
 
 /// Shared handle for an evaluation environment: an `Rc<RefCell>` shared chain makes block-scope shadowing (spec §12.2)
@@ -58,7 +68,7 @@ pub struct Env {
 }
 
 impl Env {
-    /// Root environment: pre-imports the common builtins of `core` (spec §15.5, currently the available subset).
+    /// Root environment: pre-imports the common builtins of `core` (spec §15.5) plus `get` (spec §11.3).
     pub fn new() -> Env {
         let mut env = Env::default();
         for name in [
@@ -73,38 +83,85 @@ impl Env {
             "cos",
             "tan",
             "abs",
+            "to_i8",
+            "to_i16",
             "to_i32",
             "to_i64",
+            "to_i128",
+            "to_u8",
+            "to_u16",
+            "to_u32",
+            "to_u64",
+            "to_u128",
+            "to_isize",
+            "to_usize",
             "to_f32",
             "to_f64",
             "to_bigint",
             "to_rational",
             "to_bigfloat",
             "to_complex",
+            "try_i8",
+            "try_i16",
             "try_i32",
             "try_i64",
+            "try_i128",
+            "try_u8",
+            "try_u16",
+            "try_u32",
+            "try_u64",
+            "try_u128",
+            "try_isize",
+            "try_usize",
+            "try_f32",
             "try_f64",
             "try_bigint",
             "try_rational",
             "try_complex",
+            "checked_i8",
+            "checked_i16",
             "checked_i32",
+            "checked_i64",
+            "checked_i128",
+            "checked_u8",
+            "checked_u16",
+            "checked_u32",
             "checked_u64",
+            "checked_u128",
             "checked_add",
             "checked_mul",
+            "clamped_i8",
+            "clamped_i16",
             "clamped_i32",
+            "clamped_i64",
+            "clamped_i128",
+            "clamped_u8",
+            "clamped_u16",
+            "clamped_u32",
             "clamped_u64",
+            "clamped_u128",
+            "clamped_f32",
             "clamped_f64",
             "rounded_f64",
+            "rounded_f32",
             "rounded_i32",
             "truncated_i32",
             "unwrap",
             "unwrap_or",
             "expect",
+            "format",
+            "to_string",
+            "concat",
+            "Some",
+            "None",
+            "Ok",
+            "Err",
         ] {
             if let Some(b) = Builtin::from_name(name) {
                 env.set_func(name, Function::Builtin(b));
             }
         }
+        env.set_func("get", Function::NativeGet);
         env
     }
 
@@ -176,6 +233,8 @@ impl Env {
         match item {
             NamespaceItem::Func(f) => self.set_func(name, f),
             NamespaceItem::Val(v) => self.set_value(name, v),
+            // Classes live in the evaluator's class registry; `bind_imports` registers them there directly.
+            NamespaceItem::Class(_) => {}
         }
     }
 }
@@ -198,6 +257,20 @@ pub struct Evaluator {
     config: Vec<Config>,
     /// Evaluated module public items (indexed by module path), available for `import` binding (spec §15).
     module_items: HashMap<String, HashMap<String, NamespaceItem>>,
+    /// Collected warnings (spec §16.5): parse warnings plus `W0002`/`W0005` from the evaluator.
+    warnings: Vec<SyntaxWarning>,
+    /// Class registry (spec §4.7): class name → definition, shared across the evaluation run.
+    class_defs: HashMap<String, ClassDef>,
+    /// Instance table (spec §5): `Value::Class(id)` → runtime object.
+    instances: HashMap<u32, ClassInstance>,
+    /// Monotonic instance-id allocator.
+    next_instance_id: u32,
+    /// Operator overloads (spec §18.5): key `"<class>::<Op>"` → method definition (`ImplOp` has no `Hash`).
+    overloads: HashMap<String, MethodDef>,
+    /// Stack of the `self` receiver instance ids of the methods currently executing (spec §4.5).
+    self_stack: Vec<u32>,
+    /// Module path currently being evaluated (`""` for the root module), for `pub(mod)` visibility (spec §15.2).
+    current_module: String,
 }
 
 impl Default for Evaluator {
@@ -215,6 +288,13 @@ impl Evaluator {
             output: Box::new(|s| print!("{s}")),
             config: vec![Config::default()],
             module_items: HashMap::new(),
+            warnings: Vec::new(),
+            class_defs: HashMap::new(),
+            instances: HashMap::new(),
+            next_instance_id: 0,
+            overloads: HashMap::new(),
+            self_stack: Vec::new(),
+            current_module: String::new(),
         }
     }
 
@@ -226,6 +306,13 @@ impl Evaluator {
             output: Box::new(output),
             config: vec![Config::default()],
             module_items: HashMap::new(),
+            warnings: Vec::new(),
+            class_defs: HashMap::new(),
+            instances: HashMap::new(),
+            next_instance_id: 0,
+            overloads: HashMap::new(),
+            self_stack: Vec::new(),
+            current_module: String::new(),
         }
     }
 
@@ -239,6 +326,12 @@ impl Evaluator {
 
     pub fn builtins(&self) -> &'static BuiltinSymbols {
         self.builtins
+    }
+
+    /// Warnings collected since the last parse entry point (spec §16.5): parse warnings (`W0001`)
+    /// plus deprecation/overload warnings emitted during evaluation (`W0002`/`W0005`).
+    pub fn warnings(&self) -> &[SyntaxWarning] {
+        &self.warnings
     }
 
     fn reset_config(&mut self) {
@@ -257,6 +350,13 @@ impl Evaluator {
             self.config.push(cfg);
         }
         Ok(())
+    }
+
+    /// Record a warning (spec §16.5). Spans of the offending construct are threaded where cheaply
+    /// available; operator-overload warnings (`W0005`) carry a zero span (the operator values are
+    /// already evaluated when the overload is dispatched).
+    fn push_warning(&mut self, code: &'static str, span: Span, message: String) {
+        self.warnings.push(SyntaxWarning { span, code, message });
     }
 
     /// Interpret a file as the root module (spec §15.3 module system plus the pre-imported `core`).
@@ -303,11 +403,17 @@ impl Evaluator {
                 }
             }
         }
+        let prev_module = std::mem::take(&mut self.current_module);
+        self.current_module = unit.path.join("::");
         let env = Env::new().into_ref();
-        self.bind_imports(&env, &unit.imports)?;
-        self.push_module_config(unit.program.config.as_ref())?;
-        let result = self.eval_module_inner(&env, unit);
-        self.config.pop();
+        let result = (|| {
+            self.bind_imports(&env, &unit.imports)?;
+            self.push_module_config(unit.program.config.as_ref())?;
+            let r = self.eval_module_inner(&env, unit);
+            self.config.pop();
+            r
+        })();
+        self.current_module = prev_module;
         let items = result?;
         self.module_items.insert(unit.path.join("::"), items);
         Ok(())
@@ -340,13 +446,19 @@ impl Evaluator {
                 items.insert(name.value.clone(), NamespaceItem::Func(f));
                 Ok(())
             }
-            Stmt::Let { name, value, .. } | Stmt::Const { name, value, .. } => {
+            Stmt::Let { pat: Pattern::Binding(name), value, .. } | Stmt::Const { name, value, .. } => {
                 let v = self.eval_expr(env, value)?;
                 env.borrow_mut().set_value(&name.value, v.clone());
                 items.insert(name.value.clone(), NamespaceItem::Val(v));
                 Ok(())
             }
-            _ => crate::error::err("`pub` only applies to `let`/`const`/`fn`"),
+            Stmt::ClassDef { name, members, .. } => {
+                let def = self.build_class_def(name, members, env);
+                self.register_class(def.clone());
+                items.insert(def.name.clone(), NamespaceItem::Class(def));
+                Ok(())
+            }
+            _ => crate::error::err("`pub` only applies to `let`/`const`/`fn`/`class`"),
         }
     }
 
@@ -360,6 +472,11 @@ impl Evaluator {
                     let items = self.module_items.get(&key).cloned().ok_or_else(|| {
                         RuntimeError::Message(format!("module `{key}` is not loaded"))
                     })?;
+                    for item in items.values() {
+                        if let NamespaceItem::Class(def) = item {
+                            self.register_class(def.clone());
+                        }
+                    }
                     let ns = alias.as_ref().map(|a| a.value.clone()).unwrap_or_else(|| key.clone());
                     if env.borrow_mut().set_module(&ns, items) {
                         return crate::error::err(format!("conflicting import: module `{ns}`"));
@@ -376,7 +493,7 @@ impl Evaluator {
                                     if !bound.insert(name.clone()) {
                                         return crate::error::err(format!("conflicting import: `{name}`"));
                                     }
-                                    env.borrow_mut().bind_item(name, item.clone());
+                                    self.bind_imported_item(env, name, item);
                                 }
                             }
                             ImportItem::Name { name, alias } => {
@@ -387,7 +504,7 @@ impl Evaluator {
                                 if !bound.insert(target.clone()) {
                                     return crate::error::err(format!("conflicting import: `{target}`"));
                                 }
-                                env.borrow_mut().bind_item(&target, item);
+                                self.bind_imported_item(env, &target, &item);
                             }
                         }
                     }
@@ -395,6 +512,14 @@ impl Evaluator {
             }
         }
         Ok(())
+    }
+
+    /// Bind one imported item into the environment; classes are registered in the class registry (spec §15.2).
+    fn bind_imported_item(&mut self, env: &EnvRef, name: &str, item: &NamespaceItem) {
+        match item {
+            NamespaceItem::Class(def) => self.register_class(def.clone()),
+            other => env.borrow_mut().bind_item(name, other.clone()),
+        }
     }
 
     pub fn eval_program(&mut self, program: &Program) -> Result<(), RuntimeError> {
@@ -419,12 +544,20 @@ impl Evaluator {
     }
 
     pub fn eval_src(&mut self, src: &str) -> Result<(), RuntimeError> {
-        let program = prima_syntax::parse(src).map_err(syntax_errors)?;
+        let (program, errors, warnings) = prima_syntax::parse_checked(src);
+        if !errors.is_empty() {
+            return Err(syntax_errors(errors));
+        }
+        self.warnings = warnings;
         self.eval_program(&program)
     }
 
     pub fn eval_value(&mut self, src: &str) -> Result<Value, RuntimeError> {
-        let program = prima_syntax::parse(src).map_err(syntax_errors)?;
+        let (program, errors, warnings) = prima_syntax::parse_checked(src);
+        if !errors.is_empty() {
+            return Err(syntax_errors(errors));
+        }
+        self.warnings = warnings;
         self.reset_config();
         if !program.imports.is_empty() {
             return crate::error::err("`import` requires running from a file");
@@ -441,6 +574,9 @@ impl Evaluator {
         for stmt in &program.stmts {
             if let Stmt::Expr(e) = stmt {
                 last = self.eval_expr(env, e)?;
+            } else if let Stmt::Match { scrutinee, arms, .. } = stmt {
+                // `match` is an expression (spec §4.4); as a statement it still yields a value when it is the last one.
+                last = self.eval_match(env, scrutinee, arms)?;
             } else {
                 match self.eval_stmt(env, stmt)? {
                     Flow::Continue => {}
@@ -467,6 +603,10 @@ impl Evaluator {
             Value::Indeterminate(_) => "indeterminate".into(),
             Value::Undefined => "undefined".into(),
             Value::Error(msg) => format!("error: {msg}"),
+            Value::Class(id) => match self.instances.get(id) {
+                Some(inst) => format!("class {}", inst.class),
+                None => format!("class {id}"),
+            },
             Value::Tuple(items) => {
                 let inner: Vec<String> = items.iter().map(|it| self.format_value(it)).collect();
                 format!("({})", inner.join(", "))
@@ -475,6 +615,8 @@ impl Evaluator {
                 Ok(v) => self.format_value(v),
                 Err(msg) => format!("err: {msg}"),
             },
+            Value::Option(Some(v)) => self.format_value(v),
+            Value::Option(None) => "none".into(),
         }
     }
 
@@ -493,6 +635,22 @@ impl Evaluator {
         Ok(Flow::Continue)
     }
 
+    /// Evaluate a function/method body with implicit tail-return of the last expression statement
+    /// (spec §4.5 method examples such as `get_a`/`new` end in a bare expression).
+    fn eval_block_tail(&mut self, env: &EnvRef, block: &Block) -> Result<Value, RuntimeError> {
+        let n = block.stmts.len();
+        for (i, stmt) in block.stmts.iter().enumerate() {
+            if i == n - 1 && let Stmt::Expr(e) = stmt {
+                return self.eval_expr(env, e);
+            }
+            match self.eval_stmt(env, stmt)? {
+                Flow::Continue => {}
+                Flow::Return(v) => return Ok(v),
+            }
+        }
+        Ok(Value::Nil)
+    }
+
     /// Evaluate one statement, attaching its source span to any error (spec §16.4).
     fn eval_stmt(&mut self, env: &EnvRef, stmt: &Stmt) -> Result<Flow, RuntimeError> {
         let span = stmt_span(stmt);
@@ -501,13 +659,26 @@ impl Evaluator {
 
     fn eval_stmt_inner(&mut self, env: &EnvRef, stmt: &Stmt) -> Result<Flow, RuntimeError> {
         match stmt {
-            Stmt::Let { name, value, .. } => {
-                if let ExprKind::Lambda { params, body } = &value.kind {
+            Stmt::Let { pat, value, .. } => {
+                // `let name = lambda` binds a function (spec §11.1); other patterns destructure the value (spec §4.4).
+                if let Pattern::Binding(name) = pat
+                    && let ExprKind::Lambda { params, body } = &value.kind
+                {
                     let f = Function::User { params: params.clone(), body: (**body).clone(), env: Rc::clone(env) };
                     env.borrow_mut().set_func(&name.value, f);
-                } else {
-                    let v = self.eval_expr(env, value)?;
-                    env.borrow_mut().set_value(&name.value, v);
+                    return Ok(Flow::Continue);
+                }
+                let v = self.eval_expr(env, value)?;
+                // `let` accepts only irrefutable patterns (spec §4.4; `E0053`).
+                if pattern_is_refutable(pat) {
+                    return crate::error::err("refutable pattern in `let`");
+                }
+                let bindings = self
+                    .match_pattern(env, &v, pat)
+                    .ok_or_else(|| RuntimeError::Message("refutable pattern in `let`".into()))?;
+                let mut e = env.borrow_mut();
+                for (name, val) in bindings {
+                    e.set_value(&name, val);
                 }
                 Ok(Flow::Continue)
             }
@@ -521,9 +692,58 @@ impl Evaluator {
                 env.borrow_mut().set_func(&name.value, f);
                 Ok(Flow::Continue)
             }
-            Stmt::FnDef { name, params, ret, body, .. } => {
-                let f = Function::Host { params: params.clone(), ret: ret.clone(), body: body.clone(), env: Rc::clone(env) };
-                env.borrow_mut().set_func(&name.value, f);
+            Stmt::FnDef { name, params, ret, annotations, body, .. } => {
+                // `@builtin fn` (spec §18.4): bind to the Rust host builtin of the same name; unregistered → E0055.
+                if annotations.contains(&Annotation::Builtin) {
+                    match Builtin::from_name(&name.value) {
+                        Some(b) => {
+                            env.borrow_mut().set_func(&name.value, Function::Builtin(b));
+                            Ok(Flow::Continue)
+                        }
+                        None => crate::error::err(format!(
+                            "unregistered `@builtin` function `{}` (E0055)",
+                            name.value
+                        )),
+                    }
+                } else {
+                    let f = Function::Host { params: params.clone(), ret: ret.clone(), body: body.clone(), env: Rc::clone(env) };
+                    env.borrow_mut().set_func(&name.value, f);
+                    Ok(Flow::Continue)
+                }
+            }
+            Stmt::ClassDef { name, members, .. } => {
+                let def = self.build_class_def(name, members, env);
+                self.register_class(def);
+                Ok(Flow::Continue)
+            }
+            Stmt::Impl { op, target, members, .. } => {
+                // Operator overload methods (spec §18.5): `impl ops::Add for T { fn add(self, ...) { ... } }`.
+                for m in members {
+                    match m.as_ref() {
+                        Stmt::FnDef { params, ret, body, .. } => {
+                            let def = MethodDef {
+                                params: params.clone(),
+                                ret: ret.clone(),
+                                body: Some(body.clone()),
+                                vis: Visibility::Public,
+                                env: Rc::clone(env),
+                            };
+                            self.overloads.insert(overload_key(&target.value, *op), def);
+                        }
+                        Stmt::MathDef { params, ret, body, .. } => {
+                            let block = Block { stmts: vec![Stmt::Expr(body.clone())], span: body.span };
+                            let def = MethodDef {
+                                params: params.clone(),
+                                ret: ret.clone(),
+                                body: Some(block),
+                                vis: Visibility::Public,
+                                env: Rc::clone(env),
+                            };
+                            self.overloads.insert(overload_key(&target.value, *op), def);
+                        }
+                        _ => return crate::error::err("`impl` body must contain function definitions"),
+                    }
+                }
                 Ok(Flow::Continue)
             }
             Stmt::Expr(e) => {
@@ -532,6 +752,39 @@ impl Evaluator {
             }
             Stmt::Assign { target, op, value, .. } => {
                 let v = self.eval_expr(env, value)?;
+                // Array element assignment `A[i] = v` (spec §11.3): writes back through the array binding.
+                if let ExprKind::Index { base, index } = &target.kind {
+                    let (name, mut arr) = self.eval_array_lvalue(env, base)?;
+                    if index.items.len() != 1 {
+                        return crate::error::err("multi-dimensional indexing is not supported yet");
+                    }
+                    let idx = match &index.items[0] {
+                        IndexItem::Elem(e) => self.eval_index_number(env, e)?,
+                        IndexItem::Slice { .. } => return crate::error::err("slice assignment is not supported"),
+                    };
+                    if idx >= arr.len() {
+                        return Err(RuntimeError::IndexOutOfBounds(format!("index {idx} (length {})", arr.len())));
+                    }
+                    let nv = self.scalar_value(v)?;
+                    let merged = match op {
+                        AssignOp::Assign => nv,
+                        AssignOp::AddAssign => {
+                            let r = self.eval_number_binary(BinOp::Add, arr[idx].clone(), nv)?;
+                            self.scalar_value(r)?
+                        }
+                        AssignOp::SubAssign => {
+                            let r = self.eval_number_binary(BinOp::Sub, arr[idx].clone(), nv)?;
+                            self.scalar_value(r)?
+                        }
+                    };
+                    arr[idx] = merged;
+                    let mut e = env.borrow_mut();
+                    if !e.set_existing(&name, Value::Array(arr.clone())) {
+                        e.set_value(&name, Value::Array(arr));
+                    }
+                    return Ok(Flow::Continue);
+                }
+                // Simple variable assignment (spec §4.2 examples: `s = 0`, `s += i`).
                 let name = match &target.kind {
                     ExprKind::Path { segments } if segments.len() == 1 => &segments[0].value,
                     _ => return crate::error::err("assignment target must be a variable"),
@@ -565,6 +818,20 @@ impl Evaluator {
                     None => Ok(Flow::Continue),
                 }
             }
+            Stmt::IfLet { pat, value, then, else_, .. } => {
+                let v = self.eval_expr(env, value)?;
+                if let Some(bindings) = self.match_pattern(env, &v, pat) {
+                    let scope = Env::child(env);
+                    for (name, val) in bindings {
+                        scope.borrow_mut().set_value(&name, val);
+                    }
+                    return self.eval_block_stmts(&scope, then);
+                }
+                match else_ {
+                    Some(b) => self.eval_block(env, b),
+                    None => Ok(Flow::Continue),
+                }
+            }
             Stmt::While { cond, body, .. } => {
                 loop {
                     if !self.eval_cond(env, cond)? {
@@ -574,6 +841,24 @@ impl Evaluator {
                         return Ok(flow);
                     }
                 }
+                Ok(Flow::Continue)
+            }
+            Stmt::WhileLet { pat, value, body, .. } => {
+                loop {
+                    let v = self.eval_expr(env, value)?;
+                    let Some(bindings) = self.match_pattern(env, &v, pat) else { break };
+                    let scope = Env::child(env);
+                    for (name, val) in bindings {
+                        scope.borrow_mut().set_value(&name, val);
+                    }
+                    if let flow @ Flow::Return(_) = self.eval_block_stmts(&scope, body)? {
+                        return Ok(flow);
+                    }
+                }
+                Ok(Flow::Continue)
+            }
+            Stmt::Match { scrutinee, arms, .. } => {
+                self.eval_match(env, scrutinee, arms)?;
                 Ok(Flow::Continue)
             }
             Stmt::For { var, range, step, body, .. } => {
@@ -608,22 +893,6 @@ impl Evaluator {
                 };
                 Ok(Flow::Return(v))
             }
-            Stmt::Try { body, catches, .. } => match self.eval_block(env, body) {
-                Ok(flow) => Ok(flow),
-                Err(e) => {
-                    for c in catches {
-                        if let Some(ty) = &c.ty
-                            && !self.catch_matches(ty, &e)
-                        {
-                            continue;
-                        }
-                        let scope = Env::child(env);
-                        scope.borrow_mut().set_value(&c.var.value, Value::String(e.to_string()));
-                        return self.eval_block_stmts(&scope, &c.block);
-                    }
-                    Err(e)
-                }
-            },
             Stmt::WithConfig { entries, body, .. } => {
                 let mut cfg = self.current_config().clone();
                 cfg.apply(entries)?;
@@ -637,11 +906,25 @@ impl Evaluator {
         }
     }
 
-    /// Type filter for `catch e: Error::Overflow` (spec §16.3), matching by error category name.
-    fn catch_matches(&self, ty: &Type, e: &RuntimeError) -> bool {
-        let Type::User(name) = ty else { return true };
-        let want = name.value.rsplit("::").next().unwrap_or("");
-        want == e.kind() || want == "Error"
+    /// Evaluate an array lvalue `A` (a plain variable holding an array), for `A[i] = v` (spec §11.3).
+    fn eval_array_lvalue(&mut self, env: &EnvRef, base: &Expr) -> Result<(String, Vec<Number>), RuntimeError> {
+        match &base.kind {
+            ExprKind::Path { segments } if segments.len() == 1 => {
+                let name = segments[0].value.clone();
+                match self.eval_expr(env, base)? {
+                    Value::Array(a) => Ok((name, a)),
+                    _ => crate::error::err("assignment target must be an array"),
+                }
+            }
+            _ => crate::error::err("assignment target must be a variable"),
+        }
+    }
+
+    fn scalar_value(&self, v: Value) -> Result<Number, RuntimeError> {
+        match v {
+            Value::Number(n) => Ok(n),
+            _ => crate::error::err("array elements must be numbers"),
+        }
     }
 
     fn eval_cond(&mut self, env: &EnvRef, e: &Expr) -> Result<bool, RuntimeError> {
@@ -725,9 +1008,25 @@ impl Evaluator {
                         Some(NamespaceItem::Func(_)) => {
                             crate::error::err(format!("function `{item}` cannot be used as a value"))
                         }
+                        Some(NamespaceItem::Class(_)) => {
+                            crate::error::err(format!("class `{item}` cannot be used as a value"))
+                        }
                         None => crate::error::err(format!("unknown module item `{ns}::{item}`")),
                     }
                 }
+            }
+            ExprKind::Self_ => {
+                let id = *self
+                    .self_stack
+                    .last()
+                    .ok_or_else(|| RuntimeError::Message("`self` outside of a method".into()))?;
+                Ok(Value::Class(id))
+            }
+            ExprKind::Call { callee, args } => self.eval_call(env, callee, args),
+            ExprKind::MethodCall { receiver, name, args } => self.eval_method_call(env, receiver, name, args),
+            ExprKind::Field { receiver, name } => self.eval_field(env, receiver, name),
+            ExprKind::StructLiteral { name, fields, base } => {
+                self.eval_struct_literal(env, name, fields, base.as_deref())
             }
             ExprKind::Binary { op: BinOp::Broadcast, lhs, rhs } => self.eval_broadcast_op(env, lhs, rhs),
             ExprKind::Binary { op, lhs, rhs } => {
@@ -739,8 +1038,18 @@ impl Evaluator {
                 let v = self.eval_expr(env, operand)?;
                 self.eval_unary(*op, v)
             }
-            ExprKind::Call { callee, args } => self.eval_call(env, callee, args),
             ExprKind::Index { base, index } => self.eval_index(env, base, index),
+            ExprKind::Try(inner) => {
+                // `?` operator (spec §16.3): propagates `Err`/`None` as a runtime error (checked statically in `check`).
+                let v = self.eval_expr(env, inner)?;
+                match v {
+                    Value::Result(Ok(v)) => Ok(*v),
+                    Value::Result(Err(m)) => Err(RuntimeError::Message(m)),
+                    Value::Option(Some(v)) => Ok(*v),
+                    Value::Option(None) => Err(RuntimeError::Message("`?` on a `None` value".into())),
+                    other => crate::error::err(format!("`?` expects a `Result` or `Option`, got {}", value_type_name(&other))),
+                }
+            }
             ExprKind::Array(items) => {
                 let mut elems = Vec::new();
                 for item in items {
@@ -758,7 +1067,11 @@ impl Evaluator {
             }
             ExprKind::Lambda { .. } => crate::error::err("lambda must be assigned to a variable to be callable"),
             ExprKind::Match { scrutinee, arms } => self.eval_match(env, scrutinee, arms),
-            ExprKind::Pipeline { lhs, rhs } => self.eval_pipeline(env, lhs, rhs),
+            ExprKind::Pipeline { lhs, rhs } => {
+                // Deprecated pipeline (spec §9.7/§16.5 W0002): rewritten as a call.
+                self.push_warning("W0002", expr.span, "`|>` pipeline is deprecated (spec §9.7); use class methods".into());
+                self.eval_pipeline(env, lhs, rhs)
+            }
             ExprKind::Custom(_) => crate::error::err("`custom` config block is not valid here"),
         }
     }
@@ -822,6 +1135,10 @@ impl Evaluator {
     fn eval_binary(&mut self, op: BinOp, a: Value, b: Value) -> Result<Value, RuntimeError> {
         self.ensure_defined(&a)?;
         self.ensure_defined(&b)?;
+        // Operator overload (spec §18.5): a class operand with a registered overload for this op dispatches to the method.
+        if let Some(r) = self.try_overload_binary(op, &a, &b) {
+            return r;
+        }
         if matches!(a, Value::Array(_)) || matches!(b, Value::Array(_)) {
             return self.eval_binary_array(op, a, b);
         }
@@ -850,6 +1167,58 @@ impl Evaluator {
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => self.eval_compare(op, a, b),
             _ => crate::error::err("operator not supported"),
         }
+    }
+
+    /// Try to dispatch a binary operator to a registered class overload (spec §18.5).
+    fn try_overload_binary(&mut self, op: BinOp, a: &Value, b: &Value) -> Option<Result<Value, RuntimeError>> {
+        let impl_op = match op {
+            BinOp::Add => ImplOp::Add,
+            BinOp::Sub => ImplOp::Sub,
+            BinOp::Mul => ImplOp::Mul,
+            BinOp::Div => ImplOp::Div,
+            BinOp::Mod => ImplOp::Rem,
+            BinOp::Eq | BinOp::Ne => ImplOp::Eq,
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => ImplOp::Cmp,
+            _ => return None,
+        };
+        if !matches!(a, Value::Class(_)) && !matches!(b, Value::Class(_)) {
+            return None;
+        }
+        // The class operand is the `self` receiver; the other operand is the argument (spec §18.5).
+        let (self_v, other_v) = if matches!(a, Value::Class(_)) {
+            (a.clone(), b.clone())
+        } else {
+            (b.clone(), a.clone())
+        };
+        let Value::Class(id) = &self_v else { return None };
+        let class = self.instances.get(id).map(|i| i.class.clone())?;
+        if !self.overloads.contains_key(&overload_key(&class, impl_op)) {
+            return None;
+        }
+        Some(self.overload_dispatch(&class, impl_op, self_v, vec![other_v]))
+    }
+
+    /// Dispatch an operator overload method: policy check (spec §13.2 `overload_policy`) then a method call.
+    fn overload_dispatch(&mut self, class: &str, op: ImplOp, self_v: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let method = self.overloads.get(&overload_key(class, op)).cloned().ok_or_else(|| {
+            RuntimeError::Message(format!("no `{op:?}` overload registered for `{class}`"))
+        })?;
+        match self.current_config().overload_policy {
+            OverloadPolicy::Deny => {
+                return crate::error::err(format!(
+                    "operator overload for `{class}` is denied by `overload_policy`"
+                ))
+            }
+            OverloadPolicy::Warn => {
+                self.push_warning(
+                    "W0005",
+                    Span::new(0, 0),
+                    format!("operator overload in use (`{class}` `{op:?}`); `overload_policy := allow` to silence"),
+                );
+            }
+            OverloadPolicy::Allow => {}
+        }
+        self.call_method(&method, self_v, args)
     }
 
     fn eval_number_binary(&mut self, op: BinOp, x: Number, y: Number) -> Result<Value, RuntimeError> {
@@ -979,16 +1348,26 @@ impl Evaluator {
     fn eval_unary(&mut self, op: UnOp, v: Value) -> Result<Value, RuntimeError> {
         self.ensure_defined(&v)?;
         match op {
-            UnOp::Neg => match v {
-                Value::Number(n) => Ok(Value::Number(-n)),
-                Value::Array(elems) => Ok(Value::Array(elems.into_iter().map(|n| -n).collect())),
-                Value::Expr(id) => {
-                    let node = self.pool.mul2(self.pool.integer(-1), id);
-                    let simp = simplify(self.pool, self.builtins, node);
-                    Ok(self.value_from_expr(simp))
+            UnOp::Neg => {
+                if let Value::Class(id) = &v
+                    && let Some(class) = self.instances.get(id).map(|i| i.class.clone())
+                {
+                    if self.overloads.contains_key(&overload_key(&class, ImplOp::Neg)) {
+                        return self.overload_dispatch(&class, ImplOp::Neg, v, vec![]);
+                    }
+                    return crate::error::err("cannot negate a class instance");
                 }
-                _ => crate::error::err("cannot negate this value"),
-            },
+                match v {
+                    Value::Number(n) => Ok(Value::Number(-n)),
+                    Value::Array(elems) => Ok(Value::Array(elems.into_iter().map(|n| -n).collect())),
+                    Value::Expr(id) => {
+                        let node = self.pool.mul2(self.pool.integer(-1), id);
+                        let simp = simplify(self.pool, self.builtins, node);
+                        Ok(self.value_from_expr(simp))
+                    }
+                    _ => crate::error::err("cannot negate this value"),
+                }
+            }
             UnOp::Not => match v {
                 Value::Bool(b) => Ok(Value::Bool(!b)),
                 _ => crate::error::err("`!` requires a boolean"),
@@ -998,6 +1377,22 @@ impl Evaluator {
     }
 
     fn eval_call(&mut self, env: &EnvRef, callee: &Expr, args: &[Expr]) -> Result<Value, RuntimeError> {
+        // Class associated functions `T::name(args)` and `mod::T::name(args)` (spec §4.5).
+        if let ExprKind::Path { segments } = &callee.kind {
+            if let Some(v) = self.try_string_associated(env, segments, args)? {
+                return Ok(v);
+            }
+            if segments.len() >= 2 {
+                let (class_segs, method_seg) = segments.split_at(segments.len() - 1);
+                if let Some(def) = self.resolve_class(env, class_segs) {
+                    let mut arg_values = Vec::with_capacity(args.len());
+                    for a in args {
+                        arg_values.push(self.eval_expr(env, a)?);
+                    }
+                    return self.call_associated(&def, &method_seg[0].value, arg_values);
+                }
+            }
+        }
         let mut arg_values = Vec::with_capacity(args.len());
         for a in args {
             arg_values.push(self.eval_expr(env, a)?);
@@ -1023,9 +1418,473 @@ impl Evaluator {
         }
     }
 
+    /// Resolve a class name: `T` (local registry) or `mod::T` (module export, spec §15.2).
+    fn resolve_class(&self, env: &EnvRef, segments: &[Spanned<String>]) -> Option<ClassDef> {
+        if segments.is_empty() {
+            return None;
+        }
+        let name = &segments[segments.len() - 1].value;
+        if segments.len() == 1 {
+            self.class_defs.get(name).cloned()
+        } else {
+            let ns = path_key(&segments[..segments.len() - 1]);
+            match env.borrow().lookup_module_item(&ns, name) {
+                Some(NamespaceItem::Class(def)) => Some(def),
+                _ => self.class_defs.get(name).cloned(),
+            }
+        }
+    }
+
+    /// Call an associated function `T::name(args)` (spec §4.5): a method with no `self` parameter.
+    fn call_associated(&mut self, def: &ClassDef, method_name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let method = def.methods.get(method_name).cloned().ok_or_else(|| {
+            RuntimeError::Message(format!("unknown associated function `{}::{}`", def.name, method_name))
+        })?;
+        if method.params.iter().any(|p| p.is_self) {
+            return crate::error::err(format!("`{}::{}` is a method; call it on an instance", def.name, method_name));
+        }
+        if method.body.is_none() {
+            return crate::error::err(format!("`{}::{}` is an unregistered `@builtin` method", def.name, method_name));
+        }
+        let body = method.body.as_ref().expect("body checked above");
+        if args.len() != method.params.len() {
+            return crate::error::err(format!(
+                "`{}::{}` expects {} arguments, got {}",
+                def.name,
+                method_name,
+                method.params.len(),
+                args.len()
+            ));
+        }
+        let call_env = Env::child(&method.env);
+        for (p, a) in method.params.iter().zip(args) {
+            call_env.borrow_mut().set_value(&p.name.value, a);
+        }
+        self.eval_block_tail(&call_env, body)
+    }
+
+    /// Evaluate a method call `obj.method(args)` (spec §4.5), including the builtin `String` methods (spec §18.1).
+    fn eval_method_call(&mut self, env: &EnvRef, receiver: &Expr, name: &Spanned<String>, args: &[Expr]) -> Result<Value, RuntimeError> {
+        let rcv = self.eval_expr(env, receiver)?;
+        let mut arg_values = Vec::with_capacity(args.len());
+        for a in args {
+            arg_values.push(self.eval_expr(env, a)?);
+        }
+        match rcv {
+            Value::Class(id) => {
+                let inst = self.instances.get(&id).cloned().ok_or_else(|| {
+                    RuntimeError::Message("unknown class instance".into())
+                })?;
+                let def = self.class_defs.get(&inst.class).cloned().ok_or_else(|| {
+                    RuntimeError::Message(format!("unknown class `{}`", inst.class))
+                })?;
+                let method = def.methods.get(&name.value).cloned().ok_or_else(|| {
+                    RuntimeError::Message(format!("unknown method `{}` on `{}`", name.value, def.name))
+                })?;
+                if method.vis == Visibility::Private && !self.in_method_of(&def.name) {
+                    return crate::error::err(format!("private method `{}` cannot be called", name.value));
+                }
+                if method.vis == Visibility::Module && self.current_module != def.module {
+                    return crate::error::err(format!(
+                        "method `{}` of `{}` is `pub(mod)` and not accessible from this module",
+                        name.value, def.name
+                    ));
+                }
+                if !method.params.first().map(|p| p.is_self).unwrap_or(false) {
+                    return crate::error::err(format!(
+                        "`{}` on `{}` is an associated function; call it as `{}::{}(...)`",
+                        name.value, def.name, def.name, name.value
+                    ));
+                }
+                self.call_method(&method, Value::Class(id), arg_values)
+            }
+            Value::String(s) => self.call_string_method(&s, &name.value, arg_values),
+            Value::Number(_) => {
+                // Numeric method syntax (spec §9): `x.to_f64()`, `x.rounded(3)` etc. dispatch to the collapse family.
+                let collapse_name = numeric_method_name(&name.value);
+                let mut cargs = Vec::with_capacity(arg_values.len() + 1);
+                cargs.push(rcv.clone());
+                cargs.extend(arg_values);
+                crate::collapse::call(&collapse_name, &cargs, self.pool, self.builtins)
+            }
+            Value::Array(a) if name.value == "get" => {
+                if arg_values.len() != 1 {
+                    return crate::error::err("`get` expects 1 argument");
+                }
+                self.call_array_get(Value::Array(a), arg_values[0].clone())
+            }
+            Value::Array(_) => crate::error::err("arrays have no method (use `get` for safe element access)"),
+            Value::Option(_) | Value::Result(_)
+                if matches!(name.value.as_str(), "unwrap" | "unwrap_or" | "expect") =>
+            {
+                // `v.get(10).unwrap_or(0)` method syntax on `Option`/`Result` (spec §16.3) → the collapse builtin.
+                let mut cargs = Vec::with_capacity(arg_values.len() + 1);
+                cargs.push(rcv.clone());
+                cargs.extend(arg_values);
+                crate::collapse::call(&name.value, &cargs, self.pool, self.builtins)
+            }
+            other => crate::error::err(format!("cannot call method `{}` on {}", name.value, value_type_name(&other))),
+        }
+    }
+
+    /// Call a method: `self` is bound to the receiver (a shallow copy — same instance handle, spec §12.3).
+    fn call_method(&mut self, method: &MethodDef, receiver: Value, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let body = method
+            .body
+            .as_ref()
+            .ok_or_else(|| RuntimeError::Message("unregistered `@builtin` method".into()))?;
+        let self_param = method
+            .params
+            .first()
+            .filter(|p| p.is_self)
+            .ok_or_else(|| RuntimeError::Message("method requires a `self` receiver".into()))?;
+        let expected = method.params.len() - 1;
+        if args.len() != expected {
+            return crate::error::err(format!("method expects {} arguments, got {}", expected, args.len()));
+        }
+        let instance_id = match &receiver {
+            Value::Class(id) => Some(*id),
+            _ => None,
+        };
+        if let Some(id) = instance_id {
+            self.self_stack.push(id);
+        }
+        let call_env = Env::child(&method.env);
+        {
+            let mut e = call_env.borrow_mut();
+            e.set_value(&self_param.name.value, receiver.clone());
+            for (p, a) in method.params.iter().skip(1).zip(args) {
+                e.set_value(&p.name.value, a);
+            }
+        }
+        let result = self.eval_block_tail(&call_env, body);
+        if instance_id.is_some() {
+            self.self_stack.pop();
+        }
+        result
+    }
+
+    /// Whether the currently executing method belongs to `class` (used for private-field access, spec §15.2).
+    fn in_method_of(&self, class: &str) -> bool {
+        self.self_stack
+            .last()
+            .and_then(|id| self.instances.get(id))
+            .map(|i| i.class == class)
+            .unwrap_or(false)
+    }
+
+    /// Whether a field is accessible from the current context (spec §15.2): private fields are readable
+    /// only inside methods of the same class; `pub(mod)` fields are readable only inside the defining module.
+    fn field_accessible(&self, def: &ClassDef, field: &FieldDef) -> bool {
+        match field.vis {
+            Visibility::Public => true,
+            Visibility::Module => self.current_module == def.module,
+            Visibility::Private => self.in_method_of(&def.name),
+        }
+    }
+
+    /// Field access `obj.field` (spec §4.5): private fields are readable only inside methods of the same class.
+    fn eval_field(&mut self, env: &EnvRef, receiver: &Expr, name: &Spanned<String>) -> Result<Value, RuntimeError> {
+        let rcv = self.eval_expr(env, receiver)?;
+        match rcv {
+            Value::Class(id) => {
+                let inst = self.instances.get(&id).cloned().ok_or_else(|| {
+                    RuntimeError::Message("unknown class instance".into())
+                })?;
+                let def = self.class_defs.get(&inst.class).cloned().ok_or_else(|| {
+                    RuntimeError::Message(format!("unknown class `{}`", inst.class))
+                })?;
+                let field = def.fields.get(&name.value).cloned().ok_or_else(|| {
+                    RuntimeError::Message(format!("`{}` has no field `{}`", def.name, name.value))
+                })?;
+                if !self.field_accessible(&def, &field) {
+                    return crate::error::err(format!("field `{}` of `{}` is not accessible here", name.value, def.name));
+                }
+                inst.fields.get(&name.value).cloned().ok_or_else(|| {
+                    RuntimeError::Message(format!("field `{}` is uninitialized", name.value))
+                })
+            }
+            other => crate::error::err(format!("field access requires a class instance, got {}", value_type_name(&other))),
+        }
+    }
+
+    /// Struct literal `T { a, b, ..base }` (spec §4.5): unknown field `E0060`, missing field `E0061`.
+    fn eval_struct_literal(
+        &mut self,
+        env: &EnvRef,
+        name: &Spanned<String>,
+        fields: &[FieldValue],
+        base: Option<&Expr>,
+    ) -> Result<Value, RuntimeError> {
+        let def = self.class_defs.get(&name.value).cloned().ok_or_else(|| {
+            RuntimeError::Message(format!("unknown class `{}`", name.value))
+        })?;
+        let mut provided: HashSet<String> = HashSet::new();
+        let mut out_fields: HashMap<String, Value> = HashMap::new();
+        for fv in fields {
+            if !def.fields.contains_key(&fv.name.value) {
+                return crate::error::err(format!("unknown field `{}` in `{}` literal", fv.name.value, name.value));
+            }
+            let v = match &fv.value {
+                Some(e) => self.eval_expr(env, e)?,
+                None => env.borrow().get_value(&fv.name.value).ok_or_else(|| {
+                    RuntimeError::Message(format!("no value `{}` in scope for field shorthand", fv.name.value))
+                })?,
+            };
+            provided.insert(fv.name.value.clone());
+            out_fields.insert(fv.name.value.clone(), v);
+        }
+        if let Some(b) = base {
+            match self.eval_expr(env, b)? {
+                Value::Class(bid) => {
+                    let binst = self.instances.get(&bid).cloned().ok_or_else(|| {
+                        RuntimeError::Message("unknown class instance".into())
+                    })?;
+                    if binst.class != def.name {
+                        return crate::error::err(format!("`{}` literal base must be a `{}` instance", name.value, def.name));
+                    }
+                    for (k, v) in binst.fields {
+                        if !provided.contains(&k) {
+                            out_fields.insert(k, v);
+                        }
+                    }
+                }
+                _ => return crate::error::err("struct literal base must be a class instance"),
+            }
+        }
+        for f in def.fields.keys() {
+            if !out_fields.contains_key(f) {
+                return crate::error::err(format!("missing field `{f}` in `{}` literal", name.value));
+            }
+        }
+        let id = self.next_instance_id;
+        self.next_instance_id += 1;
+        self.instances.insert(id, ClassInstance { class: def.name, fields: out_fields });
+        Ok(Value::Class(id))
+    }
+
+    /// Build a `ClassDef` from a class statement (spec §4.5): fields and methods.
+    fn build_class_def(&mut self, name: &Spanned<String>, members: &[prima_syntax::ast::ClassMember], env: &EnvRef) -> ClassDef {
+        let mut def = ClassDef {
+            name: name.value.clone(),
+            module: self.current_module.clone(),
+            fields: HashMap::new(),
+            methods: HashMap::new(),
+        };
+        for m in members {
+            match &m.kind {
+                ClassMemberKind::Field { name: fname, ty } => {
+                    def.fields.insert(fname.value.clone(), FieldDef { ty: ty.clone(), vis: m.vis });
+                }
+                ClassMemberKind::Method { name: mname, params, ret, body, .. } => {
+                    def.methods.insert(
+                        mname.value.clone(),
+                        MethodDef {
+                            params: params.clone(),
+                            ret: ret.clone(),
+                            body: body.clone(),
+                            vis: m.vis,
+                            env: Rc::clone(env),
+                        },
+                    );
+                }
+            }
+        }
+        def
+    }
+
+    /// Register a class in the registry (spec §4.7). A later definition with the same name wins.
+    fn register_class(&mut self, def: ClassDef) {
+        self.class_defs.insert(def.name.clone(), def);
+    }
+
+    /// Builtin `String` methods (spec §18.1): all string methods operate on a value-semantic copy.
+    fn call_string_method(&mut self, s: &str, name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let expect_arity = |n: usize| -> Result<(), RuntimeError> {
+            if args.len() == n {
+                Ok(())
+            } else {
+                crate::error::err(format!("`String.{name}` expects {n} argument(s), got {}", args.len()))
+            }
+        };
+        let str_arg = |i: usize| -> Result<String, RuntimeError> {
+            match args.get(i) {
+                Some(Value::String(s)) => Ok(s.clone()),
+                Some(other) => crate::error::err(format!("`String.{name}` argument {i} must be a string, got {}", value_type_name(other))),
+                None => crate::error::err(format!("`String.{name}` missing argument {i}")),
+            }
+        };
+        let int_arg = |i: usize| -> Result<i64, RuntimeError> {
+            match args.get(i) {
+                Some(Value::Number(n)) => n
+                    .as_i64()
+                    .ok_or_else(|| RuntimeError::Type(format!("`String.{name}` argument {i} must be an integer, got {n}"))),
+                Some(_) => crate::error::err(format!("`String.{name}` argument {i} must be an integer")),
+                None => crate::error::err(format!("`String.{name}` missing argument {i}")),
+            }
+        };
+        match name {
+            "len" => {
+                expect_arity(0)?;
+                Ok(Value::Number(Number::from(s.chars().count() as i64)))
+            }
+            "is_empty" => {
+                expect_arity(0)?;
+                Ok(Value::Bool(s.is_empty()))
+            }
+            "push" => {
+                expect_arity(1)?;
+                Ok(Value::String(format!("{s}{}", str_arg(0)?)))
+            }
+            "insert" => {
+                expect_arity(2)?;
+                let idx = int_arg(0)?;
+                let sub = str_arg(1)?;
+                let len = s.chars().count() as i64;
+                if idx < 0 || idx > len {
+                    return Ok(Value::Result(Err(format!("insert index {idx} out of range (length {len})"))));
+                }
+                let idx = idx as usize;
+                let mut out: String = s.chars().take(idx).collect();
+                out.push_str(&sub);
+                out.extend(s.chars().skip(idx));
+                Ok(Value::Result(Ok(Box::new(Value::String(out)))))
+            }
+            "char_at" => {
+                expect_arity(1)?;
+                let idx = int_arg(0)?;
+                if idx < 0 {
+                    return Ok(Value::Option(None));
+                }
+                match s.chars().nth(idx as usize) {
+                    Some(c) => Ok(Value::Option(Some(Box::new(Value::Char(c))))),
+                    None => Ok(Value::Option(None)),
+                }
+            }
+            "substring" => {
+                expect_arity(2)?;
+                let a = int_arg(0)?;
+                let b = int_arg(1)?;
+                if a < 0 {
+                    return crate::error::err("`String.substring` start must be non-negative");
+                }
+                let (a, b) = (a as usize, b as usize);
+                let chars: Vec<char> = s.chars().collect();
+                if a > chars.len() || b > chars.len() || a > b {
+                    return crate::error::err(format!("invalid substring range {a}..{b} (length {})", chars.len()));
+                }
+                Ok(Value::String(chars[a..b].iter().collect()))
+            }
+            "contains" => {
+                expect_arity(1)?;
+                Ok(Value::Bool(s.contains(&str_arg(0)?)))
+            }
+            "starts_with" => {
+                expect_arity(1)?;
+                Ok(Value::Bool(s.starts_with(&str_arg(0)?)))
+            }
+            "ends_with" => {
+                expect_arity(1)?;
+                Ok(Value::Bool(s.ends_with(&str_arg(0)?)))
+            }
+            "replace" => {
+                expect_arity(2)?;
+                Ok(Value::String(s.replace(&str_arg(0)?, &str_arg(1)?)))
+            }
+            "trim" => {
+                expect_arity(0)?;
+                Ok(Value::String(s.trim().to_string()))
+            }
+            "split" => {
+                expect_arity(1)?;
+                let sep = str_arg(0)?;
+                let parts: Vec<Value> = s.split(&sep).map(|p| Value::String(p.to_string())).collect();
+                Ok(Value::Tuple(parts))
+            }
+            "to_upper" => {
+                expect_arity(0)?;
+                Ok(Value::String(s.to_uppercase()))
+            }
+            "to_lower" => {
+                expect_arity(0)?;
+                Ok(Value::String(s.to_lowercase()))
+            }
+            "repeat" => {
+                expect_arity(1)?;
+                let n = int_arg(0)?;
+                if n < 0 {
+                    return crate::error::err("`String.repeat` count must be non-negative");
+                }
+                Ok(Value::String(s.repeat(n as usize)))
+            }
+            _ => crate::error::err(format!("unknown `String` method `{name}`")),
+        }
+    }
+
+    /// `String::new()` / `String::from(x)` associated functions (spec §18.1).
+    fn try_string_associated(&mut self, env: &EnvRef, segments: &[Spanned<String>], args: &[Expr]) -> Result<Option<Value>, RuntimeError> {
+        if segments.len() != 2 || segments[0].value != "String" {
+            return Ok(None);
+        }
+        match segments[1].value.as_str() {
+            "new" => {
+                if !args.is_empty() {
+                    return crate::error::err("`String::new` takes no arguments");
+                }
+                Ok(Some(Value::String(String::new())))
+            }
+            "from" => {
+                if args.len() != 1 {
+                    return crate::error::err("`String::from` expects 1 argument");
+                }
+                let v = self.eval_expr(env, &args[0])?;
+                Ok(Some(Value::String(self.format_value(&v))))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// `get(array, index) -> Option<Number>`: safe array access (spec §11.3).
+    fn call_array_get(&mut self, arr: Value, idx: Value) -> Result<Value, RuntimeError> {
+        let Value::Array(a) = arr else {
+            return crate::error::err("`get` expects an array");
+        };
+        let i = match idx {
+            Value::Number(n) => n.as_i64(),
+            _ => None,
+        };
+        let Some(i) = i else {
+            return crate::error::err("`get` expects an integer index");
+        };
+        if i < 0 {
+            return Ok(Value::Option(None));
+        }
+        match a.get(i as usize) {
+            Some(n) => Ok(Value::Option(Some(Box::new(Value::Number(n.clone()))))),
+            None => Ok(Value::Option(None)),
+        }
+    }
+
     fn eval_index(&mut self, env: &EnvRef, base: &Expr, index: &prima_syntax::ast::Index) -> Result<Value, RuntimeError> {
-        let arr = self.eval_expr(env, base)?;
-        let arr = match arr {
+        let arr_v = self.eval_expr(env, base)?;
+        // Operator overload (spec §18.5): `Index` on a class instance.
+        if let Value::Class(id) = &arr_v {
+            let class = self.instances.get(id).map(|i| i.class.clone());
+            if let Some(class) = class {
+                if self.overloads.contains_key(&overload_key(&class, ImplOp::Index)) {
+                    if index.items.len() != 1 {
+                        return crate::error::err("multi-dimensional indexing is not supported yet");
+                    }
+                    let idx_v = match &index.items[0] {
+                        IndexItem::Elem(e) => self.eval_expr(env, e)?,
+                        IndexItem::Slice { .. } => return crate::error::err("slice indexing is not supported for overloads"),
+                    };
+                    return self.overload_dispatch(&class, ImplOp::Index, arr_v, vec![idx_v]);
+                }
+                return crate::error::err("cannot index a class instance");
+            }
+        }
+        let arr = match arr_v {
             Value::Array(a) => a,
             _ => return crate::error::err("indexing requires an array"),
         };
@@ -1034,17 +1893,40 @@ impl Evaluator {
         }
         match &index.items[0] {
             IndexItem::Elem(e) => {
-                let idx = self.eval_expr(env, e)?;
-                let idx = match idx {
-                    Value::Number(Number::Integer(i)) => i.to_usize().ok_or_else(|| RuntimeError::Message("array index out of range".into()))?,
-                    _ => return crate::error::err("array index must be an integer"),
-                };
+                let idx = self.eval_index_number(env, e)?;
                 arr.get(idx)
                     .cloned()
                     .map(Value::Number)
                     .ok_or_else(|| RuntimeError::IndexOutOfBounds(format!("index {idx} (length {})", arr.len())))
             }
-            IndexItem::Slice { .. } => crate::error::err("array slicing is not supported yet"),
+            IndexItem::Slice { start, end } => {
+                let lo = match start {
+                    Some(e) => self.eval_index_number(env, e)?,
+                    None => 0,
+                };
+                let hi = match end {
+                    Some(e) => self.eval_index_number(env, e)?,
+                    None => arr.len(),
+                };
+                let lo = lo.min(arr.len());
+                let hi = hi.min(arr.len());
+                if lo > hi {
+                    return crate::error::err("invalid slice range");
+                }
+                Ok(Value::Array(arr[lo..hi].to_vec()))
+            }
+        }
+    }
+
+    fn eval_index_number(&mut self, env: &EnvRef, e: &Expr) -> Result<usize, RuntimeError> {
+        match self.eval_expr(env, e)? {
+            Value::Number(n) => n
+                .as_i64()
+                .ok_or_else(|| RuntimeError::Message("array index must be an integer".into()))
+                .and_then(|i| {
+                    usize::try_from(i).map_err(|_| RuntimeError::Message("array index out of range".into()))
+                }),
+            _ => crate::error::err("array index must be an integer"),
         }
     }
 
@@ -1093,6 +1975,12 @@ impl Evaluator {
         }
         match func {
             Function::Builtin(b) => self.call_builtin(*b, args),
+            Function::NativeGet => {
+                if args.len() != 2 {
+                    return crate::error::err("`get` expects 2 arguments");
+                }
+                self.call_array_get(args[0].clone(), args[1].clone())
+            }
             Function::User { params, body, env: f_env } => {
                 if args.len() != params.len() {
                     return crate::error::err(format!("expected {} arguments, got {}", params.len(), args.len()));
@@ -1111,10 +1999,7 @@ impl Evaluator {
                 for (p, a) in params.iter().zip(args) {
                     call_env.borrow_mut().set_value(&p.name.value, a);
                 }
-                match self.eval_block(&call_env, body)? {
-                    Flow::Continue => Ok(Value::Nil),
-                    Flow::Return(v) => Ok(v),
-                }
+                self.eval_block_tail(&call_env, body)
             }
         }
     }
@@ -1217,41 +2102,165 @@ impl Evaluator {
         }
     }
 
-    /// `match` evaluation (spec §16.3): currently supports matching `Ok`/`Err` branches of a `Result`.
+    /// `match`/`if let`/`while let` arm evaluation (spec §4.4/§16.3): first matching pattern (with optional guard) wins.
     fn eval_match(&mut self, env: &EnvRef, scrutinee: &Expr, arms: &[MatchArm]) -> Result<Value, RuntimeError> {
         let sv = self.eval_expr(env, scrutinee)?;
         for arm in arms {
-            if let Some(bindings) = self.try_match(&sv, &arm.pattern) {
+            if let Some(bindings) = self.match_pattern(env, &sv, &arm.pattern) {
                 let scope = Env::child(env);
-                for (name, v) in bindings {
-                    scope.borrow_mut().set_value(&name, v);
+                for (name, val) in bindings {
+                    scope.borrow_mut().set_value(&name, val);
+                }
+                if let Some(g) = &arm.guard {
+                    match self.eval_expr(&scope, g)? {
+                        Value::Bool(true) => return self.eval_expr(&scope, &arm.body),
+                        Value::Bool(false) => continue,
+                        _ => return crate::error::err("match guard must be a boolean"),
+                    }
                 }
                 return self.eval_expr(&scope, &arm.body);
             }
         }
-        crate::error::err("`match` is non-exhaustive")
+        crate::error::err("match is non-exhaustive")
     }
 
-    fn try_match(&self, v: &Value, p: &Pattern) -> Option<Vec<(String, Value)>> {
+    /// Full pattern matching (spec §4.4): returns the bindings the pattern produces, or `None` on mismatch.
+    fn match_pattern(&mut self, env: &EnvRef, v: &Value, p: &Pattern) -> Option<Vec<(String, Value)>> {
         match p {
-            Pattern::Ctor { name, args, .. } => {
-                let ctor = name.last()?.value.as_str();
-                let Value::Result(r) = v else { return None };
-                match ctor {
-                    "Ok" => match r {
-                        Ok(inner) => bind_pattern_args(inner, args),
-                        Err(_) => None,
+            Pattern::Wildcard(_) => Some(vec![]),
+            Pattern::Binding(name) => Some(vec![(name.value.clone(), v.clone())]),
+            Pattern::Literal(lit) => {
+                let lv = self.eval_literal(env, lit).ok()?;
+                if self.pattern_values_equal(&lv, v) {
+                    Some(vec![])
+                } else {
+                    None
+                }
+            }
+            Pattern::Tuple(pats, rest) => {
+                let Value::Tuple(items) = v else { return None };
+                if !*rest && items.len() != pats.len() {
+                    return None;
+                }
+                if *rest && items.len() < pats.len() {
+                    return None;
+                }
+                let mut out = Vec::new();
+                for (pat, val) in pats.iter().zip(items) {
+                    out.extend(self.match_pattern(env, val, pat)?);
+                }
+                Some(out)
+            }
+            Pattern::Array(pats, rest) => {
+                let Value::Array(elems) = v else { return None };
+                if !*rest && elems.len() != pats.len() {
+                    return None;
+                }
+                if *rest && elems.len() < pats.len() {
+                    return None;
+                }
+                let mut out = Vec::new();
+                for (pat, n) in pats.iter().zip(elems) {
+                    out.extend(self.match_pattern(env, &Value::Number(n.clone()), pat)?);
+                }
+                Some(out)
+            }
+            Pattern::Struct { name, fields, .. } => {
+                let Value::Class(id) = v else { return None };
+                let inst = self.instances.get(id)?.clone();
+                if inst.class != name.value {
+                    return None;
+                }
+                let mut out = Vec::new();
+                for fp in fields {
+                    let fv = inst.fields.get(&fp.name.value)?;
+                    match &fp.pat {
+                        None => out.push((fp.name.value.clone(), fv.clone())),
+                        Some(p) => out.extend(self.match_pattern(env, fv, p)?),
+                    }
+                }
+                Some(out)
+            }
+            Pattern::Variant { name, args, .. } => {
+                match name.value.as_str() {
+                    "Some" => match v {
+                        Value::Option(Some(inner)) if args.len() == 1 => self.match_pattern(env, inner, &args[0]),
+                        _ => None,
                     },
-                    "Err" => match r {
-                        Ok(_) => None,
-                        Err(msg) => bind_pattern_args(&Value::String(msg.clone()), args),
+                    "None" => {
+                        if args.is_empty() && matches!(v, Value::Option(None)) {
+                            Some(vec![])
+                        } else {
+                            None
+                        }
+                    }
+                    "Ok" => match v {
+                        Value::Result(Ok(inner)) if args.len() == 1 => self.match_pattern(env, inner, &args[0]),
+                        _ => None,
+                    },
+                    "Err" => match v {
+                        Value::Result(Err(msg)) if args.len() == 1 => {
+                            self.match_pattern(env, &Value::String(msg.clone()), &args[0])
+                        }
+                        _ => None,
                     },
                     _ => None,
                 }
             }
-            Pattern::Wildcard(_) => Some(vec![]),
-            Pattern::Binding(name) => Some(vec![(name.value.clone(), v.clone())]),
+            Pattern::Range { lo, hi, inclusive } => {
+                let Value::Number(vn) = v else { return None };
+                let lo_n = self.eval_literal(env, lo).ok().and_then(|v| match v {
+                    Value::Number(n) => Some(n),
+                    _ => None,
+                })?;
+                let hi_n = self.eval_literal(env, hi).ok().and_then(|v| match v {
+                    Value::Number(n) => Some(n),
+                    _ => None,
+                })?;
+                let ge = self.number_cmp(vn, &lo_n).is_some_and(|o| o != Ordering::Less);
+                let hi_ok = if *inclusive {
+                    self.number_cmp(vn, &hi_n).is_some_and(|o| o != Ordering::Greater)
+                } else {
+                    self.number_cmp(vn, &hi_n).is_some_and(|o| o == Ordering::Less)
+                };
+                if ge && hi_ok {
+                    Some(vec![])
+                } else {
+                    None
+                }
+            }
+            Pattern::Or(pats) => {
+                for p in pats {
+                    if let Some(b) = self.match_pattern(env, v, p) {
+                        return Some(b);
+                    }
+                }
+                None
+            }
+            Pattern::Group(inner) => self.match_pattern(env, v, inner),
+        }
+    }
+
+    /// Promote-and-compare two numbers (spec §6.4); `None` when they cannot be compared.
+    fn number_cmp(&self, a: &Number, b: &Number) -> Option<Ordering> {
+        let (x, y) = prima_core::number::promote(a, b);
+        match (x, y) {
+            (Number::Integer(x), Number::Integer(y)) => Some(x.cmp(&y)),
+            (Number::Rational(x), Number::Rational(y)) => Some(x.cmp(&y)),
+            (Number::Real(Real::F32(x)), Number::Real(Real::F32(y))) => x.partial_cmp(&y),
+            (Number::Real(Real::F64(x)), Number::Real(Real::F64(y))) => x.partial_cmp(&y),
             _ => None,
+        }
+    }
+
+    /// Equality used by literal patterns (spec §4.4): numbers compare through the promotion tower.
+    fn pattern_values_equal(&self, a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Number(x), Value::Number(y)) => self.number_cmp(x, y) == Some(Ordering::Equal),
+            (Value::String(x), Value::String(y)) => x == y,
+            (Value::Char(x), Value::Char(y)) => x == y,
+            (Value::Bool(x), Value::Bool(y)) => x == y,
+            _ => a == b,
         }
     }
 
@@ -1325,13 +2334,17 @@ fn stmt_span(stmt: &Stmt) -> prima_syntax::Span {
         | Stmt::Const { span, .. }
         | Stmt::FnDef { span, .. }
         | Stmt::MathDef { span, .. }
+        | Stmt::ClassDef { span, .. }
+        | Stmt::Impl { span, .. }
         | Stmt::Assign { span, .. }
         | Stmt::For { span, .. }
         | Stmt::ParFor { span, .. }
         | Stmt::While { span, .. }
         | Stmt::If { span, .. }
+        | Stmt::IfLet { span, .. }
+        | Stmt::WhileLet { span, .. }
+        | Stmt::Match { span, .. }
         | Stmt::Return { span, .. }
-        | Stmt::Try { span, .. }
         | Stmt::WithConfig { span, .. } => *span,
         Stmt::Expr(e) => e.span,
         Stmt::Pub(inner) => stmt_span(inner),
@@ -1348,20 +2361,91 @@ static DEFAULT_CONFIG: Config = Config {
     simplify_level: 2,
     num_to_big: true,
     print_format: crate::config::PrintFormat::Latex,
+    overload_policy: OverloadPolicy::Warn,
 };
 
 fn path_key(segments: &[Spanned<String>]) -> String {
     segments.iter().map(|s| s.value.as_str()).collect::<Vec<_>>().join("::")
 }
 
-fn bind_pattern_args(v: &Value, patterns: &[Pattern]) -> Option<Vec<(String, Value)>> {
-    if patterns.len() != 1 {
-        return None;
+/// Operator-overload registry key: `"<class>::<Op>"` (spec §18.5; `ImplOp` has no `Hash`).
+fn overload_key(class: &str, op: ImplOp) -> String {
+    let name = match op {
+        ImplOp::Add => "Add",
+        ImplOp::Sub => "Sub",
+        ImplOp::Mul => "Mul",
+        ImplOp::Div => "Div",
+        ImplOp::Rem => "Rem",
+        ImplOp::Neg => "Neg",
+        ImplOp::Eq => "Eq",
+        ImplOp::Cmp => "Cmp",
+        ImplOp::Index => "Index",
+    };
+    format!("{class}::{name}")
+}
+
+/// Whether a `let` pattern can fail to match (spec §4.4): only bindings/wildcards/grouped-tuples of
+/// irrefutable patterns are irrefutable; anything else requires `if let`/`match` (`E0053`).
+fn pattern_is_refutable(p: &Pattern) -> bool {
+    match p {
+        Pattern::Wildcard(_) | Pattern::Binding(_) => false,
+        Pattern::Tuple(pats, _) | Pattern::Array(pats, _) => pats.iter().any(pattern_is_refutable),
+        // Struct patterns with `..` or binding-only fields never fail; a field with an explicit refutable sub-pattern does.
+        Pattern::Struct { fields, .. } => {
+            fields.iter().any(|f| match &f.pat {
+                None => false,
+                Some(sub) => pattern_is_refutable(sub),
+            })
+        }
+        Pattern::Group(inner) => pattern_is_refutable(inner),
+        Pattern::Or(pats) => pats.iter().any(pattern_is_refutable),
+        _ => true,
     }
-    match &patterns[0] {
-        Pattern::Binding(name) => Some(vec![(name.value.clone(), v.clone())]),
-        Pattern::Wildcard(_) => Some(vec![]),
-        _ => None,
+}
+
+/// Short display name of a value's type, for error messages.
+fn value_type_name(v: &Value) -> String {
+    match v {
+        Value::Nil => "nil".into(),
+        Value::Number(_) => "number".into(),
+        Value::Bool(_) => "bool".into(),
+        Value::Char(_) => "char".into(),
+        Value::String(_) => "string".into(),
+        Value::Array(_) => "array".into(),
+        Value::Expr(_) => "expr".into(),
+        Value::Symbol(_) => "symbol".into(),
+        Value::Class(_) => "class".into(),
+        Value::Option(_) => "option".into(),
+        Value::Result(_) => "result".into(),
+        Value::Tuple(_) => "tuple".into(),
+        Value::Indeterminate(_) => "indeterminate".into(),
+        Value::Undefined => "undefined".into(),
+        Value::Error(_) => "error".into(),
+    }
+}
+
+/// Map numeric method names to their collapse-family builtin (spec §9): `x.to_f64()`, `x.rounded(3)`, `x.truncated()`, `x.abs()`.
+fn numeric_method_name(name: &str) -> String {
+    match name {
+        "to_f64" => "to_f64".into(),
+        "to_f32" => "to_f32".into(),
+        "to_i8" => "to_i8".into(),
+        "to_i16" => "to_i16".into(),
+        "to_i32" => "to_i32".into(),
+        "to_i64" => "to_i64".into(),
+        "to_i128" => "to_i128".into(),
+        "to_u8" => "to_u8".into(),
+        "to_u16" => "to_u16".into(),
+        "to_u32" => "to_u32".into(),
+        "to_u64" => "to_u64".into(),
+        "to_u128" => "to_u128".into(),
+        "to_isize" => "to_isize".into(),
+        "to_usize" => "to_usize".into(),
+        "to_bigint" => "to_bigint".into(),
+        "to_rational" => "to_rational".into(),
+        "rounded" => "rounded_f64".into(),
+        "truncated" => "truncated_i32".into(),
+        _ => name.into(),
     }
 }
 
@@ -1390,5 +2474,188 @@ fn syntax_errors(errors: Vec<SyntaxError>) -> RuntimeError {
     match errors.first() {
         Some(e) => syntax_err(e.clone()),
         None => RuntimeError::Message("syntax error".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prima_core::Real;
+
+    fn eval(src: &str) -> Value {
+        Evaluator::new().eval_value(src).expect("eval failed")
+    }
+
+    fn eval_fmt(src: &str) -> String {
+        let mut ev = Evaluator::new();
+        let v = ev.eval_value(src).expect("eval failed");
+        ev.format_value(&v)
+    }
+
+    #[test]
+    fn tuple_destructuring_in_let() {
+        assert_eq!(eval("let t = (1, 2);\nlet (a, b) = t;\na + b"), Value::Number(Number::from(3)));
+    }
+
+    #[test]
+    fn array_get_returns_option() {
+        assert_eq!(
+            eval("let v = [1, 2, 3];\nv.get(1)"),
+            Value::Option(Some(Box::new(Value::Number(Number::from(2)))))
+        );
+        assert_eq!(eval("let v = [1, 2, 3];\nv.get(10)"), Value::Option(None));
+        assert_eq!(
+            eval("let v = [1, 2, 3];\nget(v, 0)"),
+            Value::Option(Some(Box::new(Value::Number(Number::from(1)))))
+        );
+    }
+
+    #[test]
+    fn if_let_and_match() {
+        assert_eq!(
+            eval("let v = [1, 2];\nlet r = 0;\nif let Some(x) = v.get(0) {\n    r = x * 10;\n}\nr"),
+            Value::Number(Number::from(10))
+        );
+        let r = eval("let r = try_i32(1e20);\nlet label = match r {\n    Ok(n) => \"ok\",\n    Err(e) => \"fail\"\n};\nlabel");
+        assert_eq!(r, Value::String("fail".into()));
+    }
+
+    #[test]
+    fn while_let_loops_over_get() {
+        let v = eval(
+            "let arr = [1, 2, 3];\nlet sum = 0;\nlet i = 0;\nwhile let Some(x) = get(arr, i) {\n    sum += x;\n    i += 1;\n}\nsum",
+        );
+        assert_eq!(v, Value::Number(Number::from(6)));
+    }
+
+    #[test]
+    fn match_guard_and_range_patterns() {
+        assert_eq!(
+            eval("let r = match 5 {\n    0 => \"zero\",\n    1 | 2 => \"small\",\n    3..=9 => \"medium\",\n    n if n > 100 => \"large\",\n    _ => \"other\"\n};\nr"),
+            Value::String("medium".into())
+        );
+    }
+
+    #[test]
+    fn match_is_non_exhaustive() {
+        assert!(Evaluator::new().eval_value("match 1 {\n    2 => 0\n}").is_err());
+    }
+
+    #[test]
+    fn try_operator_unwraps_ok() {
+        let v = eval("fn f(x) -> Result<Integer, Error> {\n    let v = try_i32(x)?;\n    return Ok(v);\n}\nf(7)");
+        assert_eq!(v, Value::Result(Ok(Box::new(Value::Number(Number::I32(7))))));
+    }
+
+    #[test]
+    fn try_operator_propagates_none() {
+        let err = Evaluator::new().eval_value("fn g() -> Option<Integer> {\n    let x = get([1], 5)?;\n    return Some(x);\n}\ng()").unwrap_err();
+        assert!(err.to_string().contains("None"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn class_associated_function_and_method() {
+        assert_eq!(
+            eval_fmt("class Vec2 {\n    x: F64, y: F64,\n    pub fn new(x, y) -> Self { Vec2 { x, y } }\n    pub fn sum(self) -> F64 { self.x + self.y }\n}\nlet v = Vec2::new(1, 2);\nv.sum()"),
+            "3"
+        );
+    }
+
+    #[test]
+    fn struct_literal_base_spreads_fields() {
+        assert_eq!(
+            eval_fmt("class P { pub x: Integer, pub y: Integer }\nlet a = P { x: 1, y: 2 };\nlet b = P { x: 9, ..a };\nb.y"),
+            "2"
+        );
+    }
+
+    #[test]
+    fn private_fields_are_not_accessible_from_outside() {
+        let src = "class C {\n    secret: Integer,\n    pub fn new(s) -> Self { C { secret: s } }\n}\nlet c = C::new(1);\nc.secret";
+        assert!(Evaluator::new().eval_value(src).is_err());
+    }
+
+    #[test]
+    fn string_methods() {
+        assert_eq!(eval("let s = \"hello\";\ns.len()"), Value::Number(Number::from(5)));
+        assert_eq!(eval("let s = \"aXb\";\ns.to_lower()"), Value::String("axb".into()));
+        assert_eq!(eval("let s = \"ab\";\ns.push(\"c\")"), Value::String("abc".into()));
+        assert_eq!(
+            eval("let s = \"hello world\";\ns.contains(\"world\")"),
+            Value::Bool(true)
+        );
+        assert_eq!(eval("let s = \"a,b,c\";\ns.split(\",\")"), Value::Tuple(vec![
+            Value::String("a".into()),
+            Value::String("b".into()),
+            Value::String("c".into()),
+        ]));
+        assert_eq!(
+            eval("let s = \"hi\";\ns.insert(1, \"o\")"),
+            Value::Result(Ok(Box::new(Value::String("hoi".into()))))
+        );
+        assert!(matches!(eval("let s = \"hi\";\ns.insert(9, \"o\")"), Value::Result(Err(_))));
+        assert_eq!(eval("String::new()"), Value::String(String::new()));
+    }
+
+    #[test]
+    fn operator_overload_dispatches_with_warning() {
+        let mut ev = Evaluator::new();
+        let v = ev
+            .eval_value(
+                "class Vec2 { x: F64, y: F64 }\nimpl ops::Add for Vec2 {\n    fn add(self, rhs) -> Vec2 { Vec2 { x: self.x + rhs.x, y: self.y + rhs.y } }\n}\nlet a = Vec2 { x: 1, y: 2 };\nlet b = Vec2 { x: 3, y: 4 };\na + b",
+            )
+            .expect("eval failed");
+        assert_eq!(ev.format_value(&v), "class Vec2");
+        assert!(ev.warnings().iter().any(|w| w.code == "W0005"));
+    }
+
+    #[test]
+    fn overload_policy_deny_errors() {
+        let mut ev = Evaluator::new();
+        assert!(ev
+            .eval_value(
+                "class V { x: F64 }\nimpl ops::Add for V {\n    fn add(self, rhs) -> V { V { x: self.x } }\n}\nwith config { overload_policy := deny } {\n    let a = V { x: 1 };\n    a + a\n}"
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn pipeline_emits_w0002() {
+        let mut ev = Evaluator::new();
+        ev.eval_value("let x = 1;\nx |> to_f64").expect("eval failed");
+        assert!(ev.warnings().iter().any(|w| w.code == "W0002"));
+    }
+
+    #[test]
+    fn parse_warnings_are_surfaced() {
+        let mut ev = Evaluator::new();
+        ev.eval_value("let x = 1\nx + 1\n").expect("eval failed");
+        assert!(ev.warnings().iter().any(|w| w.code == "W0001"));
+    }
+
+    #[test]
+    fn fixed_width_numbers_render() {
+        assert_eq!(eval_fmt("to_i8(7)"), "7");
+        assert_eq!(eval_fmt("to_u64(42)"), "42");
+        assert_eq!(eval_fmt("to_usize(3)"), "3");
+        let v = eval("to_f64(3)");
+        assert!(matches!(v, Value::Number(Number::Real(Real::F64(x))) if x == 3.0));
+    }
+
+    #[test]
+    fn array_element_assignment_writes_through() {
+        assert_eq!(eval("let a = [1, 2, 3];\na[1] = 9;\na"), Value::Array(vec![
+            Number::from(1),
+            Number::from(9),
+            Number::from(3),
+        ]));
+    }
+
+    #[test]
+    fn array_slice_returns_subarray() {
+        assert_eq!(eval("let a = [1, 2, 3, 4];\na[1..3]"), Value::Array(vec![
+            Number::from(2),
+            Number::from(3),
+        ]));
     }
 }
