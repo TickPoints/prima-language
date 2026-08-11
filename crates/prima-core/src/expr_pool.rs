@@ -121,6 +121,20 @@ impl ExprPool {
             }
             Number::Real(r) => self.intern(ExprData::Real(*r)),
             Number::Complex { .. } => panic!("complex numbers cannot be interned as expression nodes yet"),
+            // Fixed-width collapsed layer interns to the exact/`Real` node (spec §6.1).
+            Number::I8(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::I16(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::I32(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::I64(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::I128(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::U8(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::U16(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::U32(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::U64(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::U128(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::Isize(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::Usize(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::BigFloat(f) => self.intern(ExprData::Real(Real::F64(*f))),
         }
     }
 

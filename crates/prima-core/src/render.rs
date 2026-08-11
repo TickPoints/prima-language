@@ -14,6 +14,19 @@ pub fn render_number(n: &Number) -> String {
         Number::Real(Real::F64(f)) => f.to_string(),
         Number::Real(Real::F32(f)) => f.to_string(),
         Number::Complex { re, im } => format!("{} + {}i", render_number(re), render_number(im)),
+        Number::I8(v) => v.to_string(),
+        Number::I16(v) => v.to_string(),
+        Number::I32(v) => v.to_string(),
+        Number::I64(v) => v.to_string(),
+        Number::I128(v) => v.to_string(),
+        Number::U8(v) => v.to_string(),
+        Number::U16(v) => v.to_string(),
+        Number::U32(v) => v.to_string(),
+        Number::U64(v) => v.to_string(),
+        Number::U128(v) => v.to_string(),
+        Number::Isize(v) => v.to_string(),
+        Number::Usize(v) => v.to_string(),
+        Number::BigFloat(f) => f.to_string(),
     }
 }
 

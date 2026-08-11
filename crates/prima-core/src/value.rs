@@ -26,4 +26,6 @@ pub enum Value {
     Error(String),
     Tuple(Vec<Value>),
     Result(std::result::Result<Box<Value>, String>),
+    Class(u32),                       // class instance handle (spec §5); registry lives in prima-runtime
+    Option(Option<Box<Value>>),       // Option<T>: Some(T) / None
 }
