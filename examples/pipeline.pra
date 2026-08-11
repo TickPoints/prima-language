@@ -1,3 +1,12 @@
-// Pipeline syntax (spec §9.7): `a |> f` is equivalent to `f(a)`, for explicitly composing collapse/transforms.
-let f(x) = x^2
-print(3 |> f)
+// Method chaining (spec §9.7, §4.5): the deprecated `|>` pipeline (W0002) is replaced by class methods.
+class Float {
+    pub value: F64,
+    pub fn new(v) -> Self { Float { value: v } }
+    pub fn square(self) -> Self { Float::new(self.value * self.value) }
+}
+
+let x = Float::new(3.0);
+print(x.square().value);
+
+// Expected output:
+// 9

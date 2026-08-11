@@ -1,0 +1,32 @@
+// Classes (spec §4.5, §12.3): fields, `new` associated function, `self` methods, struct literals, and method chaining.
+class Counter {
+    pub count: Integer,
+    pub fn new(start: Integer) -> Self { Counter { count: start } }
+    pub fn increment(self) -> Self { Counter { count: self.count + 1 } }
+    pub fn value(self) -> Integer { self.count }
+}
+
+let c = Counter::new(10);
+let d = c.increment();
+print(c.value());
+print(d.value());
+
+let e = Counter { count: 5 };
+print(e.count);
+
+// Method chaining (spec §4.5, §9.7): each method returns a new instance.
+class Accumulator {
+    pub total: Integer,
+    pub fn new() -> Self { Accumulator { total: 0 } }
+    pub fn add(self, n: Integer) -> Self { Accumulator { total: self.total + n } }
+    pub fn total(self) -> Integer { self.total }
+}
+
+let s = Accumulator::new().add(1).add(2).add(3);
+print(s.total());
+
+// Expected output:
+// 10
+// 11
+// 5
+// 6

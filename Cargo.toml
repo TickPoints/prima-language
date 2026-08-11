@@ -48,3 +48,4 @@ assert_cmd = { workspace = true }
 predicates = { workspace = true }
 proptest = { workspace = true }
 num-bigint = { workspace = true }
+num-rational = { workspace = true }

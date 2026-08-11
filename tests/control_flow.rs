@@ -52,20 +52,21 @@ fn return_propagates_from_while_body() {
 }
 
 #[test]
-fn try_catch_binds_error() {
-    let out = run_src("try {\n    let x = to_i32(1e20)\n    print(x)\n} catch e {\n    print(\"caught\", e)\n}");
+fn match_on_error_result_binds_error() {
+    // v2.0 (spec §16.3): no `try`/`catch` — `match` on the `Result` of a `try_*` collapse.
+    let out = run_src("let x = try_i32(1e20);\nmatch x {\n    Ok(v) => print(v),\n    Err(e) => print(\"caught\", e)\n}");
     assert!(out.contains("caught"), "out = {out:?}");
 }
 
 #[test]
-fn try_catch_type_filter_falls_through() {
-    let out = run_src("try {\n    let x = to_i32(1e20)\n} catch e: Error::IndexOutOfBounds {\n    print(\"wrong\")\n} catch e {\n    print(\"overflow\")\n}");
+fn error_result_arm_handles_overflow() {
+    let out = run_src("let x = try_i32(1e20);\nmatch x {\n    Ok(v) => print(\"wrong\", v),\n    Err(e) => print(\"overflow\")\n}");
     assert!(out.contains("overflow"), "out = {out:?}");
 }
 
 #[test]
-fn try_success_skips_catch() {
-    assert_eq!(run_src("try {\n    print(1)\n} catch e {\n    print(\"never\")\n}"), "1\n");
+fn success_result_skips_err_arm() {
+    assert_eq!(run_src("let x = try_i32(7);\nmatch x {\n    Ok(v) => print(v),\n    Err(e) => print(\"never\")\n}"), "7\n");
 }
 
 #[test]

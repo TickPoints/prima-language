@@ -1,6 +1,6 @@
 // Modules and visibility (spec §15.2): `pub` exposes `square`; `helper` is private by default.
-pub let square(x) = x^2
-let helper(x) = x + 1
+pub let square(x) = x^2;
+let helper(x) = x + 1;
 
 // Expected output:
 // (Module file with no output of its own; `square` is called by `imports.pra` after `import`.)

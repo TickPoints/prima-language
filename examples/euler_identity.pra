@@ -1,3 +1,3 @@
 // Euler's identity (spec §7.4, §10): `\e^{i\pi} + 1` simplifies to 0 via `simplify`.
-let b = tex"\e^{i\pi} + 1"
-print(simplify(b))
+let b = tex"\e^{i\pi} + 1";
+print(simplify(b));

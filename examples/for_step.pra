@@ -1,6 +1,6 @@
 // For loop with a step (spec §14): `0..10 step 2` prints 0, 2, 4, 6, 8 in order.
 for i in 0..10 step 2 {
-    print(i)
+    print(i);
 }
 
 // Expected output:

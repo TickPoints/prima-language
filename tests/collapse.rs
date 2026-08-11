@@ -29,7 +29,7 @@ fn to_f64_of_builtin_const() {
 
 #[test]
 fn to_i32_exact() {
-    assert_eq!(eval("to_i32(42)"), Value::Number(Number::from(42)));
+    assert_eq!(eval("to_i32(42)"), Value::Number(Number::I32(42)));
 }
 
 #[test]
@@ -40,20 +40,20 @@ fn to_i32_overflow_is_runtime_error() {
 #[test]
 fn try_i32_returns_result() {
     assert!(matches!(eval("try_i32(1e20)"), Value::Result(Err(_))));
-    assert_eq!(eval("try_i32(7)"), Value::Result(Ok(Box::new(Value::Number(Number::from(7))))));
+    assert_eq!(eval("try_i32(7)"), Value::Result(Ok(Box::new(Value::Number(Number::I32(7))))));
 }
 
 #[test]
 fn unwrap_or_via_pipeline() {
     assert_eq!(eval("try_i32(1e20) |> unwrap_or(0)"), Value::Number(Number::from(0)));
-    assert_eq!(eval("try_i32(7) |> unwrap_or(0)"), Value::Number(Number::from(7)));
+    assert_eq!(eval("try_i32(7) |> unwrap_or(0)"), Value::Number(Number::I32(7)));
 }
 
 #[test]
 fn match_on_result() {
     assert_eq!(
         eval("match try_i32(7) {\n    Ok(n) => n\n    Err(e) => -1\n}"),
-        Value::Number(Number::from(7))
+        Value::Number(Number::I32(7))
     );
     assert_eq!(
         eval("match try_i32(1e20) {\n    Ok(n) => n\n    Err(e) => -1\n}"),
@@ -63,8 +63,8 @@ fn match_on_result() {
 
 #[test]
 fn checked_and_clamped_collapse() {
-    assert_eq!(eval("checked_i32(5)"), Value::Result(Ok(Box::new(Value::Number(Number::from(5))))));
-    assert_eq!(eval("clamped_i32(1000, 0, 255)"), Value::Number(Number::from(255)));
+    assert_eq!(eval("checked_i32(5)"), Value::Result(Ok(Box::new(Value::Number(Number::I32(5))))));
+    assert_eq!(eval("clamped_i32(1000, 0, 255)"), Value::Number(Number::I32(255)));
     assert_eq!(eval("clamped_f64(0.5, 0.0, 1.0)"), Value::Number(Number::Real(Real::F64(0.5))));
     assert_eq!(eval("truncated_i32(7/2)"), Value::Number(Number::from(3)));
     assert_eq!(eval_fmt("rounded_f64(\\pi, 3)"), "3.142");

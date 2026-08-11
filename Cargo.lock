@@ -460,6 +460,7 @@ dependencies = [
  "codespan-reporting",
  "insta",
  "num-bigint",
+ "num-rational",
  "predicates",
  "prima-core",
  "prima-runtime",

@@ -1,17 +1,19 @@
-// Error handling (spec §16.3): `try`/`catch` captures collapse overflows; non-erroring branches execute normally.
-try {
-    let x = to_i32(1e20)
-    print(x)
-} catch e {
-    print("caught:", e)
+// Error handling (spec §16.3): no try/catch — errors are values; `match`, `?`, and the unwrap family.
+fn parse_and_double(s: String) -> Result<F64, Error> {
+    let v = try_f64(s)?;
+    return Ok(v * 2.0);
 }
 
-try {
-    print(1)
-} catch e {
-    print("never")
+match parse_and_double("3.14") {
+    Ok(x)  => print(format("parsed {}", x)),
+    Err(e) => print(format("failed: {}", e))
 }
+print(parse_and_double("2.5").unwrap_or(0.0));
+print(parse_and_double("6.0").unwrap());
+print(parse_and_double("8.0").expect("parse failed"));
 
 // Expected output:
-// caught: overflow: `to_i32`: 100000000000000000000 cannot be represented as i32
-// 1
+// parsed 6.28
+// 5
+// 12
+// 16

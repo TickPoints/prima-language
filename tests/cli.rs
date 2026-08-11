@@ -85,6 +85,8 @@ fn run_all_examples_succeed() {
         "try_catch.pra",
         "imports.pra",
         "for_step.pra",
+        "classes.pra",
+        "patterns.pra",
     ];
     for name in examples {
         Command::cargo_bin("prima")
@@ -98,7 +100,7 @@ fn run_all_examples_succeed() {
 
 #[test]
 fn check_reports_type_errors() {
-    let src = "let x: F64 = sqrt(2)\n";
+    let src = "let x: F64 = sqrt(2);\n";
     let mut file = std::env::temp_dir();
     file.push(format!("prima_check_{}.pra", std::process::id()));
     std::fs::write(&file, src).unwrap();
@@ -115,7 +117,7 @@ fn check_reports_type_errors() {
 
 #[test]
 fn run_reports_located_runtime_errors() {
-    let src = "let a = 1\nlet b = a + (1/0)\n";
+    let src = "let a = 1;\nlet b = a + (1/0);\n";
     let mut file = std::env::temp_dir();
     file.push(format!("prima_run_err_{}.pra", std::process::id()));
     std::fs::write(&file, src).unwrap();
@@ -132,7 +134,7 @@ fn run_reports_located_runtime_errors() {
 
 #[test]
 fn check_passes_clean_file() {
-    let src = "let y: F64 = to_f64(sqrt(2))\n";
+    let src = "let y: F64 = to_f64(sqrt(2));\n";
     let mut file = std::env::temp_dir();
     file.push(format!("prima_check_ok_{}.pra", std::process::id()));
     std::fs::write(&file, src).unwrap();

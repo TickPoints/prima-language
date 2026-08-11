@@ -1,22 +1,22 @@
 // Control flow (spec §14): `if`/`else if`/`else` + `return` inside `fn`, plus `while` loops.
 fn classify(x: Integer) -> String {
     if x > 0 {
-        return "positive"
+        return "positive";
     } else if x < 0 {
-        return "negative"
+        return "negative";
     } else {
-        return "zero"
+        return "zero";
     }
 }
 
-print(classify(5))
-print(classify(-3))
-print(classify(0))
+print(classify(5));
+print(classify(-3));
+print(classify(0));
 
-let i = 0
+let i = 0;
 while i < 3 {
-    print(i)
-    i += 1
+    print(i);
+    i += 1;
 }
 
 // Expected output:
