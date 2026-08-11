@@ -1,6 +1,6 @@
-# Prima 语言 —— 实现方案（Implementation Plan）v1.0
+# Prima 语言 —— 实现方案（Implementation Plan）v2.0
 
-> **定位**：本文档是 [`SPECIFICATIONS-zh_CN.md`](./SPECIFICATIONS-zh_CN.md) 的实现落地决策。
+> **定位**：本文档是 [`SPECIFICATIONS-zh_CN.md`](./SPECIFICATIONS-zh_CN.md) v2.0 的实现落地决策。
 > 规范未覆盖处，以本文档为准；规范 §19.1 的若干**初步建议**（logos/chumsky/latex crate）经评估后**不采纳**，理由见 §2 与 §7。
 > 本文档的读者：实现者（含 AI 代理）。后续所有开发工作按本文档的分工与顺序推进。
 
@@ -22,7 +22,7 @@
  矩阵 / 线性代数 | `nalgebra` | 0.35 | `faer` 0.24 | §12.4 点名；MVP 用 nalgebra，faer 留作性能替换（§6） |
  CLI | `clap`（derive） | 4.6 | — | §20 子命令 run/compile/repl/fmt/check/test/doc |
  错误类型 | `thiserror` | 2.0 | — | §16.1 `Error` 枚举直接 derive |
- 诊断渲染 | `codespan-reporting` | 0.13 | `miette` | §16.4 即 rustc 风格（`--> file:line:col` + 脱字符），与它逐字匹配 |
+ 诊断渲染 | `codespan-reporting` | 0.13 | `miette` | §16.4 即 rustc 风格（`error[E00xx]: ...` + `--> file:line:col` + 脱字符） |
  REPL | `rustyline` | 18 | `reedline` 0.49 | `prima repl` |
  Unicode 标识符 | `unicode-ident` | 1.0 | — | §三：标识符可含希腊字母等 Unicode |
  惰性全局 | std `OnceLock` / `thread_local!` | — | `once_cell` | 标准库已覆盖，不引额外依赖 |
@@ -40,34 +40,38 @@
 
 ### 2.1 词法：手写，不用 logos
 
-Prima 的 token 集很小（约 30 类），但形状特殊：
+Prima 的 token 集在 v2.0 中约 40 类，但形状特殊：
 
 - TeX 符号字面量 `\pi`、`\speed_of_light`（§7），与反斜杠转义易混淆；
 - `tex"..."` 字面量（§三）内含任意 TeX 文本，不能按普通字符串切词；
-- `@`（矩阵乘法）、`@.`（广播算子，§11.4）、`|>`（管道，§9.7）这类多字符/复合算子；
-- `..`（区间与切片）、`^`/`**` 别名、保留关键字（async/yield/macro/trait/impl）需保留为 token 供未来使用。
+- `@`（矩阵乘法）、`@.`（广播算子，§11.4）、`@parallel`/`@builtin`/`@c_api::extern` 注解（`@` 起始、`::` 参与路径）；
+- `..`（区间与切片）、`..=`（含端区间，模式用）、`^`/`**` 别名、`?`（try 运算符）、`|>`（弃用管道）；
+- 保留关键字（async/yield/macro/trait）需保留为 token 供未来使用；`impl` 在 `ops` 模块中生效。
 
-手写 lexer 约 300–400 行，能对上述每一项给出**精确的 token 级错误与 span**（如未闭合字符串/TeX 字面量定位），并天然产出 `Token { kind, span }` 流。logos 的派生宏对自定义字面量与错误恢复控制较弱，收益（速度）在当前规模下无意义。
+手写 lexer 约 400–500 行，能对上述每一项给出**精确的 token 级错误与 span**（如未闭合字符串/TeX 字面量定位），并天然产出 `Token { kind, span }` 流。logos 的派生宏对自定义字面量与错误恢复控制较弱，收益（速度）在当前规模下无意义。
+
+**v2.0 新增 token**：`;`（语句分隔，规范）、`?`（try）、`..=`（含端区间）、关键字 `class`/`self`/`Self`/`impl`/`match`、注解起始 `@`。换行不再作为**语法要求**的分隔符，仅在 `;` 缺失时作为**弃用分隔**处理（规范 §4.2，产出 `W0001` 警告）。
 
 ### 2.2 语法：手写递归下降 + Pratt 优先级爬升
 
 **结论：Parser 手写**，理由：
 
-1. **精确诊断是硬需求**。§16.4 要求「文件:行:列 + 相关表达式 + 提示」，且编译期错误要**收集多个**而非 fail-fast。手写解析器对 span 与错误同步点（`;`、`}`、文件尾）有完全控制；chumsky 的恢复机制与自定义诊断格式对接成本高。
+1. **精确诊断是硬需求**。§16.4 要求「编号 + 文件:行:列 + 相关表达式 + 提示」，且编译期错误要**收集多个**而非 fail-fast。手写解析器对 span 与错误同步点（`;`、`}`、文件尾）有完全控制；chumsky 的恢复机制与自定义诊断格式对接成本高。
 2. **语法有上下文敏感结构**，表驱动文法（lalrpop/pest）处理别扭：
-   - `let f(x) = expr`（数学定义 §4.2）vs `let x = v`（变量绑定）——`let` 后跟 `ident (` 时是函数定义；
+   - `let f(x) = expr`（数学定义 §4.3）vs `let x = v`（变量绑定）vs `let (a, b) = v`（模式解构）——`let` 后需前瞻区分；
    - `config {}` / `import` 必须位于文件顶部（三区顺序），违反即报错；
-   - 注解后置：`let f(x) @parallel = x^2`（§17.1）；
+   - 注解后置：`let f(x) @parallel = x^2`（§17.1）；`@c_api::extern` 中的 `::`；
+   - 模式（§4.4）与表达式的歧义（`Some(x)` 是构造器调用还是模式？在模式上下文解析为模式）；
    - `with config { ... } { ... }`（§13.3 局部策略）。
    这些在递归下降里只是几个分支，在 LR/PEG 里需要大量消歧与语义谓词。
-3. **增量演进**：§22 预留 macro/async/trait/impl 语法；手写 parser 加规则、加错误恢复是局部改动，组合子/文法文件的重写成本高。rustc、Zig、Gleam 等均采用手写递归下降，是语言实现的主流做法。
+3. **增量演进**：§22 预留 macro/async/trait 语法；手写 parser 加规则、加错误恢复是局部改动，组合子/文法文件的重写成本高。rustc、Zig、Gleam 等均采用手写递归下降，是语言实现的主流做法。
 4. **无生成步骤**：AST 类型即代码，无 build.rs、无过程宏，利于调试与 AI 维护。
 
 **表达式解析**：Pratt（优先级爬升）。优先级表（低 → 高）：
 
 | 级别 | 算子 | 结合性 | 备注 |
 |------|------|--------|------|
-| 1 | `\|>` 管道 | 左 | `a \|> f \|> g` |
+| 1 | `\|>` 管道 | 左 | 弃用（W0002），降级为调用 |
 | 2 | `\|\|` | 左 | |
 | 3 | `&&` | 左 | |
 | 4 | `==` `!=` `<` `<=` `>` `>=` | 左 | |
@@ -75,11 +79,16 @@ Prima 的 token 集很小（约 30 类），但形状特殊：
 | 6 | `*` `/` `%` `@` `@.` | 左 | `@`=矩阵乘、`@.`=广播（§11.4） |
 | 7 | 一元 `-` `!` `+` | 右 | |
 | 8 | `^` `**` | 右 | 幂高于一元负号（数学惯例：`-x^2 = -(x^2)`，同 Julia） |
-| 9 | 后缀：调用 `()`、索引 `[]`（含切片 `..`）、路径 `::` | — | |
+| 9 | 后缀：调用 `()`、索引 `[]`（含切片 `..`）、路径 `::`、方法 `.name()`、字段 `.name`、`?` | — | `?` 绑定于第 9 级，优先于二元运算 |
 
 `^` 与 `**` 在解析层归一为同一个 BinOp 节点（别名，§三）。
 
 **Parser 错误策略**：panic-mode + 同步 token 集（`;`、`}`、`)`、文件尾），一次编译收集全部语法错误。
+
+**语句分隔策略**（§4.2）：
+- 解析时以 `;` 为语句终止符。
+- 当读到换行（`\n`）而未见 `;` 时：若下一 token 能合法开始一条新语句 → 记录一条 `W0001` 警告，按旧式换行分隔继续解析（兼容模式）；否则报 `E0011` 期望 `;`。
+- 块级语句（`if`/`while`/`for`/`fn`/`class`/`match`/`with config` 后的 `{}`）结束后 `;` 可省略，不触发警告。
 
 ### 2.3 渲染：手写，不用 `latex` crate
 
@@ -126,7 +135,9 @@ pub struct SourceLocation { pub file: Arc<PathBuf>, pub line: usize, pub column:
 // 诊断管线：DiagnosticCollector —— 编译期收集型（多个错误一次报全）
 ```
 
-§16.4 的 `--> src/main.pra:15:9` 格式由 `codespan-reporting` 渲染；`Error` 枚举（§16.1）用 `thiserror` derive，其中 `location` 字段在解释器抛错时由当前执行帧自动填充。
+§16.4 的 `error[E00xx]: ...` / `warning[W00xx]: ...` 格式由 `codespan-reporting` 渲染；错误码（§16.4/附录 C）作为诊断标题前缀（`E`/`R`/`W` + 四位编号）。`Error` 枚举（§16.1）用 `thiserror` derive，其中 `location` 字段在解释器抛错时由当前执行帧自动填充。
+
+**警告收集**：`DiagnosticCollector` 同时收集错误与警告；警告不阻止编译，`prima check --deny W0001` 可将指定警告升级为错误（工具层）。
 
 ### 4.2 AST（prima-syntax）
 
@@ -136,39 +147,88 @@ pub struct SourceLocation { pub file: Arc<PathBuf>, pub line: usize, pub column:
 pub struct Program { pub config: Option<ConfigBlock>, pub imports: Vec<Import>, pub stmts: Vec<Stmt> }
 
 pub enum Stmt {
-    Let { name: Ident, type_ann: Option<Type>, value: Expr, annotation: Option<Annotation> },
+    Let { pat: Pattern, type_ann: Option<Type>, value: Expr, annotation: Option<Annotation> }, // let (a, b) = ...
     Const { name: Ident, type_ann: Type, value: Expr },
-    FnDef { name: Ident, params: Vec<Param>, ret: Option<Type>, body: Block },     // fn
-    MathDef { name: Ident, params: Vec<Param>, ret: Option<Type>, body: Expr },    // let f(x) = ...
+    FnDef { name: Ident, params: Vec<Param>, ret: Option<Type>, annotation: Option<Annotation>, body: Block },
+    MathDef { name: Ident, params: Vec<Param>, ret: Option<Type>, annotation: Option<Annotation>, body: Expr },
+    ClassDef { name: Ident, vis: Visibility, members: Vec<ClassMember> },
+    Impl { op: ImplOp, target: Ident, members: Vec<FnDef> },            // ops::Add for T（§18.5）
     Expr(Expr),
     For { var: Ident, range: (Expr, Expr), step: Option<Expr>, body: Block },
     ParFor { /* 同 For */ },
     While { cond: Expr, body: Block },
     If { cond: Expr, then: Block, elifs: Vec<(Expr, Block)>, else_: Option<Block> },
+    IfLet { pat: Pattern, value: Expr, then: Block, else_: Option<Block> },   // if let（§4.4）
+    WhileLet { pat: Pattern, value: Expr, body: Block },                      // while let（§4.4）
+    Match { scrutinee: Expr, arms: Vec<MatchArm> },                           // match（表达式；语句形态同）
     Return(Option<Expr>),
-    Try { body: Block, catches: Vec<(Ident, Option<Type>, Block)> },
     WithConfig { entries: Vec<ConfigEntry>, body: Block },
     Pub(Box<Stmt>),
+}
+
+pub enum Visibility { Private, Module, Public }   // 无 / pub(mod) / pub（§15.2）
+
+pub struct ClassMember {                          // §4.5
+    pub vis: Visibility,
+    pub kind: ClassMemberKind,
+}
+pub enum ClassMemberKind {
+    Field { name: Ident, ty: Type },              // 字段
+    Method { name: Ident, params: Vec<Param>, ret: Option<Type>, body: Block }, // 方法
+    // 关联函数与普通方法同构；首个参数为 self 即方法
+}
+
+pub enum Param {
+    Normal { name: Ident, ty: Option<Type> },
+    Self_ { ty: Option<Type> },                   // self 参数（方法）
+    MutSelf { ty: Option<Type> },                 // mut self（保留扩展）
+}
+
+pub enum Pattern {                                // §4.4 全模式
+    Wildcard,                                     // _
+    Binding { name: Ident },                      // x
+    Literal(Literal),                             // 0 / "s" / true / \pi
+    Tuple(Vec<Pattern>, bool /* .. 尾 */),        // (a, b, ..)
+    Array(Vec<Pattern>, bool /* .. */),           // [x, ..]
+    Struct { name: Ident, fields: Vec<FieldPattern>, rest: bool }, // Point { x, y: 0, .. }
+    Variant { name: Ident, inner: Option<Box<Pattern>> },          // Some(x) / Ok(v) / None
+    Range { lo: Literal, hi: Literal, inclusive: bool },           // 0..9 / 1..=5
+    Or(Vec<Pattern>),                             // pat1 | pat2
+    Group(Box<Pattern>),
+}
+pub struct FieldPattern { pub name: Ident, pub pat: Option<Pattern> }
+
+pub struct MatchArm { pub pat: Pattern, pub guard: Option<Expr>, pub body: Expr }
+
+pub enum Annotation {                             // @parallel / @jit / @gpu / @builtin / @c_api::extern
+    Parallel, Jit, Gpu, Builtin, CApiExtern,
 }
 
 pub enum Expr {
     Literal(Literal),            // Integer/Float/Hex/Bin/String/Char/Bool/TexString
     Symbol(Ident),               // 含 \pi 形式的 TeX 名
+    Self_,                       // self
+    SelfType,                    // Self（类型位置出现于方法返回/字段）
     Path(Vec<Ident>),            // a::b::c（模块路径 / 限定访问）
     Call { f: Box<Expr>, args: Vec<Expr> },
+    MethodCall { receiver: Box<Expr>, name: Ident, args: Vec<Expr> }, // obj.method(...)（§4.5）
     Index { base: Box<Expr>, index: Index },          // Index::Elem / Index::Slice(RangeExpr)
+    Field { base: Box<Expr>, name: Ident },           // obj.field（类字段访问）
+    StructLiteral { name: Ident, fields: Vec<FieldValue>, base: Option<Box<Expr>> }, // T { a, b } / T { ..base }
     Binary { op: BinOp, lhs: Box<Expr>, rhs: Box<Expr> },  // op 携带优先级、幂右结合
     Unary { op: UnOp, e: Box<Expr> },
+    Try(Box<Expr>),              // expr?（§16.3）
     Array(Vec<Expr>),            // 嵌套数组在类型/求值层拒绝（§11.4）
     Tuple(Vec<Expr>),
     Lambda { params: Vec<Param>, body: Box<Expr> },   // |x| expr
-    Match { scrutinee: Box<Expr>, arms: Vec<(Pattern, Expr)> },
-    Pipeline { lhs: Box<Expr>, rhs: Box<Expr> },      // a |> f —— 解析为 AST 节点，降级时改写为 Call
+    Match { scrutinee: Box<Expr>, arms: Vec<MatchArm> },  // match 表达式
+    Pipeline { lhs: Box<Expr>, rhs: Box<Expr> },      // a |> f —— 弃用（W0002），降级时改写为 Call
 }
+pub struct FieldValue { pub name: Ident, pub value: Option<Expr> }
 // 每个节点携带 Span；Block = Vec<Stmt>
 ```
 
-**关键设计：数学表达式与宿主表达式共用同一 AST**（规范 §4.2：`math_expr := expr`）。「符号世界 / 数值世界」的区分**不在解析层**，而在**降级（lowering）层**：同一棵 AST 子树按上下文走两条路（§4.8）——这是「三世界架构」的落地缝隙，规范 §二 的示意图落位于此。
+**关键设计：数学表达式与宿主表达式共用同一 AST**（规范 §4.3：`math_expr := expr`）。「符号世界 / 数值世界」的区分**不在解析层**，而在**降级（lowering）层**：同一棵 AST 子树按上下文走两条路（§4.8）——这是「三世界架构」的落地缝隙，规范 §二 的示意图落位于此。
 
 ### 4.3 Number 塔与 Value（prima-core）
 
@@ -180,18 +240,35 @@ pub enum Number {
     Complex(Box<Complex<Number>>), // 递归；re/im 归一到 Rational 或 Real
 }
 
+// v2.0：定宽坍缩数值类型（§6.1）——实现策略：折叠进 Number::Real 的 F32/F64 变体 + 新增定宽整型变体
+pub enum Number {                // v2.0 定稿
+    Integer(BigInt),             // 符号/精确层
+    Rational(BigRational),
+    Real(Real),                  // F32 | F64
+    Complex(Box<Complex<Number>>),
+    // —— 坍缩层（§6.1 与 Rust 一一对应）——
+    I8(i8), I16(i16), I32(i32), I64(i64), I128(i128),
+    U8(u8), U16(u16), U32(u32), U64(u64), U128(u128),
+    Isize(isize), Usize(usize),
+    BigFloat(BigFloat),
+}
+
 pub struct Complex<T> { pub re: T, pub im: T }   // 不直接依赖 num-complex 的类型，
                                                  // 但复用其 trait 实现（T: Num）辅助泛型运算
 pub enum Value {  // §5 逐字落地
     Number(Number), Bool(bool), Char(char), String(String),
     Array(Array), Matrix(Matrix), Function(Function),
+    Class(ClassId),            // §5 类实例句柄（§4.7）
     Expr(ExprId), Symbol(SymbolId),
+    Option(Option<Box<Value>>), // §5 Option<T>：Some(T)/None
     Indeterminate(IndeterminateForm), Undefined, Error(Error), Nil,
     Tuple(Vec<Value>), Result(Result<Box<Value>, Error>),
 }
 ```
 
 **提升（promotion）规则实现**（§6.4 定稿）：`promote(a, b) -> (Number, Number)` 把两个数抬到公共层——序列 `Integer < Rational < Complex<Rational> < F64 < Complex<F64>`；遇 `Real` 即整个 Complex 提升为 Complex<Real>。约分/规范化在 `Rational` 构造时完成（`num-rational` 原生支持）。
+
+**定宽坍缩类型**：`I8/U8/.../F64` 只在**显式坍缩后**存在（§6.1），`promote` 不参与（坍缩后数值不参与隐式提升，定宽间转换需显式 `to_*`，§6.3）。数值算术在定宽层按 Rust 原生语义进行（溢出按 `checked_*` 报 `R0001`，`+` 等运算符在定宽层直接溢出为 Rust 语义）。
 
 > 性能注记：MVP 直接 `BigInt`；`num-bigint` 在值较小时内部已有小整数优化，无需自定义小整数快速路径。若基准显示热点，再做 `i64` 内联标签。
 
@@ -252,6 +329,7 @@ pub struct Config {
     pub simplify_level: u8,                   // 0..=3，默认 2
     pub num_to_big: bool,                     // true
     pub print_format: PrintFormat,            // latex | unicode | ascii
+    pub overload_policy: OverloadPolicy,      // warn | allow | deny（v2.0 新增，§13.2/18.5）
 }
 ```
 
@@ -262,7 +340,8 @@ pub struct Config {
 ### 4.7 模块系统（prima-runtime）
 
 - `FileResolver`：根模块 `src/main.pra`；`import` 解析按 §15.3 文件映射（`physics.pra` → 模块 `physics`；目录 → 子模块，`main.pra` 为入口）；import 环检测。
-- `Module`：`{ items: HashMap<String, (Visibility, Value)>, path: Vec<Ident>, config: Config }`；**默认私有，`pub` 公开**（§15.2）；模块间变量不互通。
+- `Module`：`{ items: HashMap<String, (Visibility, Value)>, path: Vec<Ident>, config: Config }`；**默认私有，`pub`/`pub(mod)` 公开**（§15.2）；模块间变量不互通。
+- **类注册表**：`ClassRegistry`（进程级 `OnceLock`）：`ClassId → ClassDef { name, fields: Vec<(Ident, Type)>, methods: HashMap<Ident, MethodDef>, vis }`。类实例 `Value::Class(ClassId)` + 运行时 `Rc<RefCell<ClassInstance>>`（§12.3 引用计数）。
 - 预导入 `core`（§15.5）：启动时把 core 全部公开项注入根作用域。
 - 求值序：解析时**预扫描**所有可达模块（两遍：先收集符号表，再求值），使 `pub` 项在 import 后立即可解析；模块体按 import 依赖序求值。
 
@@ -277,12 +356,15 @@ expr_ast
 ```
 
 - **MFn**（`let f(x) = body`）：闭包持有 body AST；调用时 `substitute(参数 → 实参 ExprId)` 得实例化 DAG → 化简 → 返回 `Expr`。实参是数值时按需坍缩（§10 例：`f(3.0) → 15.0`）。
-- **Fn**（`fn`）：宿主闭包，解释执行 Block；可有副作用（§11.2）。
+- **Fn**（`fn`）：宿主闭包，解释执行 Block；可有副作用（§11.2）；可返回 `Result`（§16.3）。
 - **广播**（§11.4）：调用点检查——参数为 `Array` 且 `broadcast := true` 时逐元素；**拒绝嵌套数组与空数组**（错误码，含 §16 诊断）；`@.` 是显式广播算子；`broadcast := false` 时提供 `map`/`@.`。
-- **`|>` 管道**（§9.7）：降级改写为嵌套调用。
+- **模式与解构**（§4.4）：`match`/`if let`/`while let`/`let` 统一走 `match_pattern(pattern, value) -> Result<Bindings, MatchFail>`；构造器模式（`Some`/`Ok`/`Err`）按内建变体匹配；`..` 通配其余。
+- **类**（§4.5/12.3）：`Test::new(...)` 查类注册表关联函数；`obj.method(...)` 依 `Value::Class` 的 `ClassId` 查方法表；`self` 绑定为实例的 `Rc` 浅拷贝；字段访问 `obj.x` 按可见性检查；`T { a, b }` 构造新实例（缺字段 `E0061`，未知字段 `E0060`）。
+- **`?` 运算符**（§16.3）：`expr?` 在返回 `Result` 的函数内：`Err(e)` → 提前返回 `Err(e)`；返回 `Option` 的函数内：`None` → 提前返回 `None`；上下文不匹配 → 编译期 `E0054`。
+- **`|>` 管道**（§9.7）：弃用（W0002），降级改写为嵌套调用。
 - **循环优化**（§10）：`loop_optimization := true` 时，`for i in a..b { acc += i }` 形态识别为闭式公式（Phase 2 实现，先 `0..n` 与 `1..n` 等差模式）。
 - **parfor**（§17.2）：`rayon::par_iter`；迭代体**副作用静态检查**（仅允许对索引槽 `A[i]` 赋值、纯函数调用），违规编译期报错。
-- **try/catch 与错误流**（§16.3）：运行时 `Error` 以 `Result` 在解释器帧间传播（不用 `catch_unwind` 包装——panic 只留给「兜底 panic」，§16.2 第 4 类）。`try { } catch e { }` 由解释器捕获传播的 `Error` 绑定到 `e`，支持 `catch e: Error::Overflow` 类型分支（§16.3 示例）。
+- **错误流**（§16.2/16.3）：可恢复错误以 `Value::Result` 表达；`to_*`/`unwrap`/`expect` 在解释器内转为**终止性 panic**（`panic!`，§16.2 第 3 类）。**不存在 `try/catch`**；解析 `try` 关键字即报 `E0010` 并提示改用 `Result`。
 - **Undefined 严格性**（§6.2）：`Undefined` 参与任何一元/二元运算即抛 `UndefinedError`（不传播运算）；`Indeterminate` 只在符号层存在，坍缩失败时转 `Undefined`。
 
 ### 4.9 渲染器（prima-core）
@@ -294,29 +376,38 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 - LaTeX 是 MVP 门槛（§19.1 里程碑 1）：`\sqrt{2} + \pi` 级输出；`tex"..."` 字面量解析为渲染树（内嵌小型 TeX 解析器，Phase 1 先支持 MVP 子集，逐步扩充）。
 - 规范 §7 强调「内置符号独立于 TeX，TeX 仅是视图」：`ExprDAG → (LaTeX|Unicode|ASCII)` 是纯视图转换，反向（`tex"..."` → DAG）才是解析，二者解耦。
+- `format`（§18.1）：模板解析 + 按 `print_format` 渲染参数，复用 `Renderer` 的 `render_to_string`。
 
 ### 4.10 错误模型汇总
 
 | 类别 | 时机 | 形态 |
 |------|------|------|
-| 语法 / 类型 / 污染性 / 导入冲突 | 编译期 | 收集型诊断（§16.2），codespan-reporting 渲染 |
-| `Undefined` 参与运算 | 可静态判定则编译期，否则运行时 | 结构化 Error |
-| 越界 / 维度 / I/O | 运行时 | Error，可 try/catch |
-| 基础坍缩失败（`to_i32` 溢出等） | 运行时 | panic → try/catch 捕获（Error 传播）；不可捕获 panic 仅限内部错误 |
+| 语法 / 类型 / 导入 / 可见性 / 污染性 | 编译期 | 收集型诊断（§16.2），编号 `E####`，codespan-reporting 渲染 |
+| `Undefined` 参与运算 | 可静态判定则编译期，否则运行时 | `R0006`，以 `Result` 返回（不 panic） |
+| 越界 / 维度 / I/O / 坍缩失败（`try_*`） | 运行时 | `R####`，以 `Result` 返回 |
+| 显式放弃错误（`to_*` / `unwrap` / `expect`） | 运行时 | 终止性 panic（带跨语言堆栈） |
+| 内部不可恢复错误 | 运行时 | panic（兜底） |
 
 ---
 
 ## 5. 实施路线图（Phase 0 → 5）
 
-每个 Phase 结束都有可运行的验收命令。
+每个 Phase 结束都有可运行的验收命令。Phase 0–2 已按 v1.x 落地；v2.0 变更分布在各 Phase 的增量任务中，见各 Phase 的「v2.0 增量」小节。
 
 ### Phase 0：工程骨架 + 前端（syntax crate）
 
 - workspace 建 4 个 lib crate + 根 CLI 包；CLI 用 clap 搭 `run`（其余子命令占位报「未实现」）。
 - `SourceMap` / `Span` / 词法器（§2.1 全 token 集）→ 单测覆盖每个 token 类型与错误分支。
-- 递归下降 Parser + Pratt（§2.2 优先级表），**覆盖附录 A BNF 全部产生式**（含 lambda、match、pipeline、`@parallel` 注解、`with config`、range/step、切片索引）。
+- 递归下降 Parser + Pratt（§2.2 优先级表），**覆盖附录 A BNF 全部产生式**。
 - 诊断收集器：一处源码可报多个错误。
 - **验收**：`cargo test` 通过；`insta` 快照测试（`tests/parsing/*.pra` → AST dump）；`proptest` 随机 token 序列不 panic 不挂起。
+
+**v2.0 增量**：
+- token：`;`、`?`、`..=`、`class`/`self`/`Self`/`impl`/`match`、注解 `@builtin`/`@c_api::extern`。
+- 模式解析器（§4.4 全模式）+ `match`/`if let`/`while let`/`let` 解构。
+- 语句分隔：`;` 规范 + 换行兼容（`W0001` 警告，§2.2）。
+- Class 语法（字段/方法/`Self`/可见性）+ `impl ops::X for T`。
+- 字符串转义全量（含 `\u{XXXX}`）+ `format` 函数签名（求值在 core/runtime）。
 
 ### Phase 1：MVP 符号引擎（core crate，对应 §19.1 里程碑 1–3）
 
@@ -331,28 +422,35 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
   ```
 
 > **Phase 1 落地记录（2026-08）**：全部完成，验收样例见 `examples/phase1.pra`。与本文档的偏差/定稿：
-> - `ExprData` 增加了 `Real(Real)` 变体（规范 §8.1 未列，为使浮点可进入符号 DAG）；`ExprData::Symbol(SymbolId)` 用 `core::symbol::SymbolId` 新类型。
-> - 化简规则实现在 `core::simplify::simplify(pool, builtins, id)`（无 level 参数，MVP 全量应用）：intern 层（`ExprPool::add2/mul2/pow2/sub2/div2` + `add_n/mul_n` 扁平化/常量合并）做 0/1 级；`simplify` 做 2/3 级（`Pow(sqrt(x),2)→x`、欧拉 `e^{iθ}→cos+i·sin`、`sin/cos/tan/exp/log/ln/abs/sqrt` 常量折叠、`Pow(x,1/2)→sqrt`）。
-> - TeX 字面量解析器放在 `prima-syntax::tex`（MVP 子集：数字/命令/`{}` 分组/`^`/`_` 忽略/隐式乘法/`\frac`），产出与普通语法相同的 AST，由解释器统一求值。
-> - 解释器在 `prima-runtime::eval`：`Env`（值/函数双命名空间 + 闭包捕获）、MFn 调用 = 参数替换进 body 符号求值；**广播**（§11.4）在调用点对纯函数逐元素，拒空/嵌套数组；二元数组运算逐元素；`a |> f`/`a |> f(x)` 管道改写为调用。
-> - `print`/`println` 当前都会换行（spec 区分 print 与 println，MVP 从简）；默认 LaTeX 输出。
-> - 返回类型 `fn` 语法支持 `->` 与 `:` 两种（示例用 `->`，BNF 写 `:`）。
+> - `ExprData` 增加了 `Real(Real)` 变体（规范 v1.0 §8.1 未列，为使浮点可进入符号 DAG）；`ExprData::Symbol(SymbolId)` 用 `core::symbol::SymbolId` 新类型。
+> - 化简规则实现在 `core::simplify::simplify(pool, builtins, id)`（无 level 参数，MVP 全量应用）：intern 层（`ExprPool::add2/mul2/pow2/sub2/div2` + `add_n/mul_n` 扁平化/常量合并）做 0/1 级；`simplify` 做 2/3 级。
+> - TeX 字面量解析器放在 `prima-syntax::tex`（MVP 子集），产出与普通语法相同的 AST。
+> - 解释器在 `prima-runtime::eval`；广播在调用点对纯函数逐元素，拒空/嵌套数组；`a |> f` 管道改写为调用。
+> - `print`/`println` 当前都会换行；默认 LaTeX 输出。
 
 ### Phase 2：策略、数值层与错误处理（对应里程碑 4、5、7）
 
 - Config 三级策略（§4.6）；`fraction := false` 生效；F64 不精确传染（§6.4）。
-- 坍缩函数族全量（§9.2–9.6）：`to_/try_/checked_/clamped_/rounded_/truncated_`，含 Result 包装、`unwrap` 家族。
-- `fn` 宿主函数、`if`/`while`/`for step`/`return`/`try-catch`（Error 传播模型 §4.8）。
+- 坍缩函数族（v1.0 规模）含 Result 包装、`unwrap` 家族。
+- `fn` 宿主函数、`if`/`while`/`for step`/`return`（v1.0 含 `try-catch`，**v2.0 移除**）。
 - 循环优化（等差闭式）；`Undefined` 严格性检查（§6.2）。
 - 模块系统（§4.7）+ `pub`/`import`/冲突检测 + 预导入 core。
-- **验收**：§19.1 里程碑 4/5/7 的三个样例逐字通过；`prima check` 报 §16.4 格式的类型错误。
+- **验收**：里程碑 4/5/7 样例通过；`prima check` 报 §16.4 格式的类型错误。
 
-> **Phase 2 落地记录（2026-08）**：全部完成，验收样例见 `examples/config_fraction.pra`（里程碑 4）、`examples/loop_optimization.pra`（里程碑 5）、`examples/try_catch.pra`（里程碑 7）。与本文档的偏差/定稿：
-> - 作用域实现为 `Rc<RefCell<Env>>` 共享链（`EnvRef`），块级 `let` 遮蔽 + 跨作用域赋值并存（本文档 §4.8 未明示，落地为共享引用）。
-> - `Value::Result`/`Value::Error` 以消息字符串承载错误（§16.1 结构化 `Error` 枚举留待后续阶段补齐）。
-> - `to_bigfloat` 为退化实现（原样返回数值，任意精度浮点留待后续）；`print_format` 仅 latex 渲染器可用；`num_to_big` 因数值层全程 BigInt 而无实际分支。
-> - `prima check` 先做字面量-注解级静态检查（§6.3 示例可判定）；完整表达式/函数类型推断（§6.3）留待后续阶段。
-> - 循环优化先覆盖 `0..n` 与 `1..n` 两种等差模式（§4.8 既定范围）；`for i in 1..100` 按规范 §19.1 示例闭合为 `100*101/2`。
+> **Phase 2 落地记录（2026-08，v1.x）**：`examples/config_fraction.pra`、`examples/loop_optimization.pra`、`examples/try_catch.pra`。与本文档的偏差/定稿：
+> - 作用域实现为 `Rc<RefCell<Env>>` 共享链（`EnvRef`）。
+> - `Value::Result`/`Value::Error` 以消息字符串承载错误（结构化 `Error` 枚举在 v2.0 补齐）。
+> - `to_bigfloat` 为退化实现；`print_format` 仅 latex 渲染器可用。
+> - `prima check` 先做字面量-注解级静态检查。
+> - 循环优化先覆盖 `0..n` 与 `1..n`。
+
+**v2.0 增量**：
+- **移除 `try/catch`**：解析器删除 `try` 语句产生式；`examples/try_catch.pra` 改写为 `Result` + `match` 版本；`E0010` 对 `try` 关键字给出「改用 Result」提示。
+- **语句分隔**：全仓示例/测试改用 `;`；新增 `W0001` 警告通道。
+- **`?` 运算符**：求值器 `eval_try` 实现（§4.8）。
+- **`Result`/`Option` 一等待遇**：`match`/`if let`/`unwrap` 家族、`Some/None/Ok/Err` 构造器模式。
+- **坍缩族扩展**：`i8…u128/isize/usize` 全部 `to_*`/`try_*`/`checked_*`/`clamped_*`（§九全量）。
+- **编号诊断**：`E`/`R`/`W` 码接入 `DiagnosticCollector` 与 `codespan-reporting` 标题（§16.4/附录 C）。
 
 ### Phase 3：并行与符号微分（对应里程碑 6 + §19.4 MVP）
 
@@ -360,16 +458,29 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 - 符号微分引擎：`derivative`/`partial`/`grad` 递归求导规则（§19.4 MVP）；`limit`（泰勒展开/洛必达起步）。
 - **验收**：`derivative(f, x)` 对 `x^2 + sin(x)` 输出 `2x + cos(x)`；百万级 `@parallel` 广播验证加速（criterion 基准）。
 
+**v2.0 增量**：
+- 自动内联（§10.2）：`InlinePass` 在类型检查后、求值/代码生成前运行；启发式（MFn/无副作用 fn、规模阈值、非递归）由编译器内部判定，不暴露注解。
+- 常量折叠/CSE/循环不变量提升：作为化简/求值旁路增量实现，与 `simplify_level` 协同。
+
 ### Phase 4：标准库与工具链
 
 - `prima-stdlib`：`linalg`（nalgebra：Matrix 构造/运算/分解/求解）、`stats`、`io`（JSON/CSV）、`physics`（§7.3 常数）、`plot`（SVG）。
-- CLI 补齐：`repl`（rustyline，续行检测）、`fmt`（AST printer 复用渲染器）、`check`（纯类型检查）、`test`、`doc`。
+- CLI 补齐：`repl`（rustyline，续行检测）、`fmt`（AST printer 复用渲染器）、`check`（纯类型检查，支持 `--deny W####`）、`test`、`doc`。
 - **验收**：附录 B 函数速查表逐项可用（对应模块 import 后 golden 测试）。
+
+**v2.0 增量**：
+- **`String` 类**（`@builtin`，§18.1）：全方法集（`push/insert/len/...`）+ `format`/`to_string`。
+- **`sys`**（`path`/`env`/`os`）、**`time`**、**`num`** 模块（§18.2/18.3，附录 B.5）。
+- **`ops`**（§18.5）：`impl ops::Add for T` 注册到运算符分派表；调用点按 `overload_policy` 决定 `W0005`/放行/报错。
+- **`@builtin`**（§18.4）：内置注册表（`BuiltinRegistry`），签名绑定 + 可见性校验（`E0055`/`E0056`）。
+- **`@c_api::extern`**（§18.4）：AST 级标注 + 类型校验（`E0071`/`E0072`）；MVP 先产出「导出清单」+ ABI 头文件骨架，实际二进制导出在 Phase 5 AOT 落地。
 
 ### Phase 5：JIT（§19.2）
 
 - `cranelift-codegen` 热点编译：调用计数阈值触发（默认 100）或 `@jit` 注解；`ExprDAG → 字节码 → cranelift IR → 原生码`；符号层保持解释。
 - AD 前向（Dual）与反向（Tape）模式（§19.4 第二、三阶段）；`jit(grad(f))` 组合。
+- 优化管道接入（§10.2 全量）：常量折叠、CSE、循环优化、自动内联、TCO、DCE。
+- C ABI 导出（§18.4）：`--emit-c-abi` 生成动态库 + 头文件。
 - **验收**：`f(to_f64(101))` 走原生路径；criterion 对比解释/编译耗时，阈值调优。
 
 > AOT（§19.3，WASM/独立可执行）不在本路线图内，待 Phase 5 完成后再立项评估。
@@ -381,7 +492,11 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 | 风险 | 缓解 |
 |------|------|
 | 手写 parser 覆盖不全 | 附录 A BNF 是验收清单；insta 快照 + proptest 持续补盲 |
+| 模式解析歧义（构造器 vs 调用） | 模式上下文单独解析器函数 `parse_pattern`，与表达式解析隔离；快照覆盖 `Some(x)`/`Ok(v)`/嵌套 |
+| 换行兼容解析的误判 | `W0001` 触发条件 = 换行后 token 可合法开始新语句；proptest 断言不误报 `E0011` |
 | 化简规则库膨胀（等级 3） | 规则表驱动（`Vec<(Pattern, Rewrite)>`），不写进控制流；等级 3 推迟到 Phase 3+ |
+| 类实例所有权（浅/深拷贝）语义复杂 | 统一 `Rc<RefCell<ClassInstance>>` + 字段值按基本值/类实例分派拷贝（§12.3）；方法参数/返回的拷贝语义做专门集成测试 |
+| `?` 传播的上下文校验遗漏 | 静态检查 `?` 所在函数返回类型；`E0054` 在 check 阶段全量覆盖 |
 | `num-bigint` 性能不达标 | `rug`（GMP）feature flag 替换底层，`Number` 封装层已隔离（§21 决策 30） |
 | `nalgebra` 性能不足 | `faer` 0.24 作为替换后端，stdlib 层 trait 化（`MatrixBackend`） |
 | dashmap 7.0 RC 不稳 | 锁 6.x；7 正式发布后评估升级 |
@@ -401,8 +516,18 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 | §19.2 | inkwell（LLVM）或 cranelift | 优先 cranelift | 纯 Rust、无系统依赖、编译快（§2.4） |
 | §19.2 | 阈值触发 JIT | 默认阈值 100 次 + `@jit` 注解 | 与规范一致，仅将「如 100 次」定为默认值 |
 
-其余所有设计（三世界架构、Number 塔、ExprPool、策略三级、模块系统、错误模型、并行哲学）与规范完全一致。
+**v2.0 ADR 新增**：
+
+| 规范条款 | 规范建议 | 本方案 | 理由 |
+|---------|---------|--------|------|
+| §16.3（v1.0） | `try/catch` 错误处理 | **移除**，`Result` + `?` + `match` | 规范 §16.3（v2.0）定稿：错误是值；`?` 传播、`unwrap` 家族显式兜底；避免隐式异常流对符号求值的干扰 |
+| §4.2（v1.0） | 换行分隔语句 | **`;` 规范，换行弃用（W0001）** | 规范 §4.2（v2.0）定稿：与 Rust 对齐、消除跨行歧义；过渡期警告并逐步移除 |
+| §9.7（v1.0） | `\|>` 管道组合 | **弃用（W0002），由类方法链取代** | 规范 §9.7/4.5（v2.0）定稿：方法与链式调用表达力更强，避免多层管道可读性下降 |
+| §6.1（v1.0） | 坍缩类型 I32/F32/F64 | **扩展为 i8…u128/isize/usize/f32/f64 全量** | 规范 §6.1（v2.0）定稿：与 Rust 基本数值一一对应，互操作与数值控制更细 |
+| §18（v1.0） | stdlib 模块集 | **新增 sys/time/num/ops/c_api** | 规范 §十八（v2.0）定稿：系统层/时间/数值扩展/运算符重载/互操作 |
+
+其余所有设计（三世界架构、Number 塔、ExprPool、策略三级、模块系统、错误模型、并行哲学、类所有权）与规范完全一致。
 
 ---
 
-*实现方案 Prima v1.0 · 与 SPECIFICATIONS-zh_CN.md v1.0 配套 · 实现工作的唯一依据*
+*实现方案 Prima v2.0 · 与 SPECIFICATIONS-zh_CN.md v2.0 配套 · 实现工作的唯一依据*
