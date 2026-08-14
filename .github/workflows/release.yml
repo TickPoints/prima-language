@@ -4,12 +4,17 @@
 #   1. a "release" job that validates the tag against the root package version,
 #      extracts the matching section from docs/CHANGELOG.md and creates a
 #      GitHub Release with it as the body (falling back to [Unreleased]);
-#   2. a "build" job that compiles `prima` for every Rust Tier-1 platform and
-#      attaches the binaries + SHA-256 checksums to that Release.
+#   2. a "build" job that compiles `prima` for every Rust Tier-1 platform plus
+#      selected Tier-2-with-host-tools platforms and attaches the binaries +
+#      SHA-256 checksums to that Release.
 #
-# Tier-1 targets (Rust reference): x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu,
-# x86_64-pc-windows-msvc, aarch64-pc-windows-msvc, x86_64-apple-darwin, aarch64-apple-darwin.
-# Cross-compile helpers: aarch64-linux uses the GNU cross linker; aarch64-windows uses cargo-xwin.
+# Tier-1: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc,
+# aarch64-pc-windows-msvc, x86_64-apple-darwin, aarch64-apple-darwin.
+# Tier 2 (with host tools): x86_64-unknown-linux-musl, aarch64-unknown-linux-musl,
+# riscv64gc-unknown-linux-gnu, armv7-unknown-linux-gnueabihf,
+# powerpc64le-unknown-linux-gnu, s390x-unknown-linux-gnu.
+# Cross-compile helpers: Linux GNU targets use apt cross linkers; x86_64 musl uses the
+# host musl toolchain; aarch64 musl uses a musl.cc cross toolchain; aarch64-windows uses cargo-xwin.
 
 name: release
 
@@ -85,6 +90,36 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
 
+          # Tier 2 with host tools
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            apt_deps: musl-tools
+            linker: musl-gcc
+            linker_env: CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            musl_cross: aarch64
+          - os: ubuntu-latest
+            target: riscv64gc-unknown-linux-gnu
+            apt_deps: gcc-riscv64-linux-gnu
+            linker: riscv64-linux-gnu-gcc
+            linker_env: CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER
+          - os: ubuntu-latest
+            target: armv7-unknown-linux-gnueabihf
+            apt_deps: gcc-arm-linux-gnueabihf
+            linker: arm-linux-gnueabihf-gcc
+            linker_env: CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER
+          - os: ubuntu-latest
+            target: powerpc64le-unknown-linux-gnu
+            apt_deps: gcc-powerpc64le-linux-gnu
+            linker: powerpc64le-linux-gnu-gcc
+            linker_env: CARGO_TARGET_POWERPC64LE_UNKNOWN_LINUX_GNU_LINKER
+          - os: ubuntu-latest
+            target: s390x-unknown-linux-gnu
+            apt_deps: gcc-s390x-linux-gnu
+            linker: s390x-linux-gnu-gcc
+            linker_env: CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_LINKER
+
     steps:
       - uses: actions/checkout@v4
 
@@ -94,6 +129,14 @@ jobs:
       - name: Install Linux cross linker
         if: matrix.apt_deps
         run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt_deps }}
+
+      - name: Install musl cross toolchain (aarch64 musl)
+        if: matrix.musl_cross == 'aarch64'
+        run: |
+          curl -sSL https://musl.cc/aarch64-linux-musl-cross.tgz -o /tmp/musl-cross.tgz
+          mkdir -p "$HOME/musl-cross"
+          tar xzf /tmp/musl-cross.tgz -C "$HOME/musl-cross"
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=$HOME/musl-cross/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc" >> "$GITHUB_ENV"
 
       - name: Configure cross linker
         if: matrix.linker
