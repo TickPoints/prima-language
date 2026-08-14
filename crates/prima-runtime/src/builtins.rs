@@ -1,9 +1,13 @@
 /// Runtime builtin functions (spec §15.5 `core` pre-import): math operators, the collapse function family (spec §9),
-/// string helpers (`format`/`to_string`/`concat`, §18.1) and the `Option`/`Result` constructors (spec §4.4).
+/// string helpers (`format`/`to_string`/`concat`, §18.1), the `Option`/`Result` constructors (spec §4.4),
+/// symbolic differentiation (`derivative`/`partial`/`grad`/`limit`, spec §19.4) and console I/O
+/// (`print`/`println`/`input`/`read_line`, v2.1 §18.1b).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     Print,
     Println,
+    Input,
+    ReadLine,
     Simplify,
     Sqrt,
     Exp,
@@ -13,6 +17,14 @@ pub enum Builtin {
     Cos,
     Tan,
     Abs,
+    /// Symbolic differentiation (spec §19.4): dispatched through `eval_call` (accepts an MFn name
+    /// or a symbolic expression); the variants never reach `call_builtin`.
+    Derivative,
+    Partial,
+    Grad,
+    Limit,
+    /// `range(start, end, step = 1) -> Array` (spec §18.1b convenience): half-open integer range.
+    Range,
     Collapse(&'static str),
 }
 
@@ -21,6 +33,8 @@ impl Builtin {
         match name {
             "print" => Some(Builtin::Print),
             "println" => Some(Builtin::Println),
+            "input" => Some(Builtin::Input),
+            "read_line" => Some(Builtin::ReadLine),
             "simplify" => Some(Builtin::Simplify),
             "sqrt" => Some(Builtin::Sqrt),
             "exp" => Some(Builtin::Exp),
@@ -30,6 +44,13 @@ impl Builtin {
             "cos" => Some(Builtin::Cos),
             "tan" => Some(Builtin::Tan),
             "abs" => Some(Builtin::Abs),
+            // Symbolic differentiation (spec §19.4): handled by `eval_call`, which accepts an MFn name
+            // or a symbolic expression and evaluates the variable argument as a symbol.
+            "derivative" => Some(Builtin::Derivative),
+            "partial" => Some(Builtin::Partial),
+            "grad" => Some(Builtin::Grad),
+            "limit" => Some(Builtin::Limit),
+            "range" => Some(Builtin::Range),
             // Collapse function family (spec §9): `to_/try_/checked_/clamped_/rounded_/truncated_` plus the `unwrap` family.
             "to_i8" => Some(Builtin::Collapse("to_i8")),
             "to_i16" => Some(Builtin::Collapse("to_i16")),
@@ -111,7 +132,10 @@ impl Builtin {
     }
 
     pub fn is_pure(self) -> bool {
-        !matches!(self, Builtin::Print | Builtin::Println | Builtin::Simplify)
+        !matches!(
+            self,
+            Builtin::Print | Builtin::Println | Builtin::Input | Builtin::ReadLine | Builtin::Simplify
+        )
     }
 }
 

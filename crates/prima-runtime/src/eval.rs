@@ -7,7 +7,7 @@ use std::rc::Rc;
 use num_bigint::BigInt;
 use prima_core::render::{render_latex, render_number};
 use prima_core::simplify::simplify;
-use prima_core::{BuiltinSymbols, ExprId, ExprPool, Number, Real, SymbolTable, Value};
+use prima_core::{BuiltinSymbols, ExprData, ExprId, ExprPool, Number, Real, SymbolId, SymbolTable, Value};
 use prima_syntax::ast::{
     Annotation, AssignOp, BinOp, Block, ClassMemberKind, ConfigBlock, Expr, ExprKind, FieldValue,
     ImportItem, ImportKind, ImplOp, IndexItem, Literal, MatchArm, Param, Pattern, Program, Spanned,
@@ -15,6 +15,7 @@ use prima_syntax::ast::{
 };
 use prima_syntax::error::SyntaxError;
 use prima_syntax::{Span, SyntaxWarning};
+use rayon::prelude::*;
 
 use crate::builtins::Builtin;
 use crate::class::{ClassDef, ClassInstance, FieldDef, MethodDef};
@@ -24,10 +25,12 @@ use crate::module::{ModuleGraph, ModuleUnit, ResolvedImport};
 
 /// Function value (spec §11): builtins, pure math functions (MFn/closures), host functions (`fn`),
 /// and a small set of native host functions (`get`). Closures carry their defining environment.
+/// `parallel` (v2.1, spec §17.1) marks `@parallel` MFn: their bodies must be self-contained
+/// (parameters + builtin symbols only), so a broadcast call can be split across rayon threads.
 #[derive(Clone)]
 pub enum Function {
     Builtin(Builtin),
-    User { params: Vec<Param>, body: Expr, env: EnvRef },
+    User { params: Vec<Param>, body: Expr, env: EnvRef, parallel: bool },
     Host { params: Vec<Param>, ret: Option<Type>, body: Block, env: EnvRef },
     /// `get(array, index) -> Option<Number>`: safe array access returning `None` out of range (spec §11.3).
     NativeGet,
@@ -74,7 +77,14 @@ impl Env {
         for name in [
             "print",
             "println",
+            "input",
+            "read_line",
             "simplify",
+            "derivative",
+            "partial",
+            "grad",
+            "limit",
+            "range",
             "sqrt",
             "exp",
             "log",
@@ -316,6 +326,15 @@ impl Evaluator {
         }
     }
 
+    /// Fresh evaluator for a rayon task (spec §17): shares the process-global pool/symbols/builtins,
+    /// inherits a Config snapshot, and discards output — parallel paths only run pure math.
+    pub(crate) fn spawn_task_evaluator(cfg: &Config) -> Evaluator {
+        let mut ev = Evaluator::with_sink(|_| {});
+        ev.config.clear();
+        ev.config.push(cfg.clone());
+        ev
+    }
+
     pub fn pool(&self) -> &'static ExprPool {
         self.pool
     }
@@ -434,8 +453,9 @@ impl Evaluator {
 
     fn collect_pub(&mut self, env: &EnvRef, inner: &Stmt, items: &mut HashMap<String, NamespaceItem>) -> Result<(), RuntimeError> {
         match inner {
-            Stmt::MathDef { name, params, body, .. } => {
-                let f = Function::User { params: params.clone(), body: body.clone(), env: Rc::clone(env) };
+            Stmt::MathDef { name, params, annotations, body, .. } => {
+                let parallel = annotations.contains(&Annotation::Parallel);
+                let f = Function::User { params: params.clone(), body: body.clone(), env: Rc::clone(env), parallel };
                 env.borrow_mut().set_func(&name.value, f.clone());
                 items.insert(name.value.clone(), NamespaceItem::Func(f));
                 Ok(())
@@ -664,7 +684,7 @@ impl Evaluator {
                 if let Pattern::Binding(name) = pat
                     && let ExprKind::Lambda { params, body } = &value.kind
                 {
-                    let f = Function::User { params: params.clone(), body: (**body).clone(), env: Rc::clone(env) };
+                    let f = Function::User { params: params.clone(), body: (**body).clone(), env: Rc::clone(env), parallel: false };
                     env.borrow_mut().set_func(&name.value, f);
                     return Ok(Flow::Continue);
                 }
@@ -687,8 +707,9 @@ impl Evaluator {
                 env.borrow_mut().set_value(&name.value, v);
                 Ok(Flow::Continue)
             }
-            Stmt::MathDef { name, params, body, .. } => {
-                let f = Function::User { params: params.clone(), body: body.clone(), env: Rc::clone(env) };
+            Stmt::MathDef { name, params, annotations, body, .. } => {
+                let parallel = annotations.contains(&Annotation::Parallel);
+                let f = Function::User { params: params.clone(), body: body.clone(), env: Rc::clone(env), parallel };
                 env.borrow_mut().set_func(&name.value, f);
                 Ok(Flow::Continue)
             }
@@ -902,7 +923,7 @@ impl Evaluator {
                 r
             }
             Stmt::Pub(inner) => self.eval_stmt(env, inner),
-            Stmt::ParFor { .. } => crate::error::err("`parfor` is not supported yet"),
+            Stmt::ParFor { var, range, step, body, .. } => self.eval_parfor(env, var, range, step, body),
         }
     }
 
@@ -918,6 +939,174 @@ impl Evaluator {
             }
             _ => crate::error::err("assignment target must be a variable"),
         }
+    }
+
+    /// `parfor` (spec §17.2): explicit parallel loop over a range. The body is statically checked to be
+    /// side-effect free — only index-slot assignments (`A[i] = …`/`+=`) and pure function calls are allowed
+    /// (`E0082`). Each iteration's new slot values are computed on rayon threads with independent evaluators,
+    /// then the whole arrays are written back to their bindings in deterministic order.
+    fn eval_parfor(
+        &mut self,
+        env: &EnvRef,
+        var: &Spanned<String>,
+        range: &(Expr, Expr),
+        step: &Option<Expr>,
+        body: &Block,
+    ) -> Result<Flow, RuntimeError> {
+        let start = self.eval_to_i64(env, &range.0)?;
+        let end = self.eval_to_i64(env, &range.1)?;
+        let step_v = match step {
+            Some(s) => self.eval_to_i64(env, s)?,
+            None => 1,
+        };
+        if step_v == 0 {
+            return crate::error::err("parfor step cannot be zero");
+        }
+        let steps = check_parfor_body(body)?;
+        for s in &steps {
+            if let ParforStep::Eval(e) = s
+                && !self.expr_is_pure_call(env, e)
+            {
+                return crate::error::err(
+                    "parfor iteration body must only call pure functions (E0082)",
+                );
+            }
+        }
+        let cfg = self.current_config().clone();
+        let var_name = var.value.clone();
+
+        // Snapshot the arrays being written (spec §17.2): read once, write back once.
+        let mut arrays: HashMap<String, Vec<Number>> = HashMap::new();
+        let mut read_names: HashSet<String> = HashSet::new();
+        read_names.insert(var_name.clone());
+        for s in &steps {
+            match s {
+                ParforStep::Assign(w) => {
+                    if !arrays.contains_key(&w.array) {
+                        match env.borrow().get_value(&w.array) {
+                            Some(Value::Array(a)) => {
+                                arrays.insert(w.array.clone(), a);
+                            }
+                            _ => return crate::error::err(format!("parfor target `{}` must be an array", w.array)),
+                        }
+                    }
+                    collect_read_names(&w.index, &mut read_names);
+                    collect_read_names(&w.value, &mut read_names);
+                }
+                ParforStep::Eval(e) => collect_read_names(e, &mut read_names),
+            }
+        }
+        let arrays_ro = arrays.clone();
+
+        // Iteration count (closed form, same sequence as the sequential `for` loop, spec §17.2).
+        let n = if step_v > 0 {
+            if start >= end { 0 } else { (end - start - 1) / step_v + 1 }
+        } else if start <= end {
+            0
+        } else {
+            (start - end - 1) / (-step_v) + 1
+        };
+
+        // Materialize the loop-index sequence, then process it in rayon chunks so each task evaluator
+        // (and its read-only array bindings) is created once per thread rather than once per element.
+        let mut indices = Vec::with_capacity(n as usize);
+        if step_v > 0 {
+            let mut i = start;
+            while i < end {
+                indices.push(i);
+                i += step_v;
+            }
+        } else {
+            let mut i = start;
+            while i > end {
+                indices.push(i);
+                i += step_v;
+            }
+        }
+
+        let steps_owned = steps.clone();
+        let arrays_ro_c = arrays_ro.clone();
+        let chunk = (indices.len().max(1) / rayon::current_num_threads().max(1)).max(1);
+        // Pre-resolve the read-only outer values so task threads never touch the (non-`Send`) env chain.
+        let outer_reads: HashMap<String, Value> = read_names
+            .iter()
+            .filter_map(|name| env.borrow().get_value(name).map(|v| (name.clone(), v)))
+            .collect();
+        let writes: Vec<Result<Vec<(String, usize, Number)>, RuntimeError>> = indices
+            .par_chunks(chunk)
+            .map(|chunk| {
+                let mut ev = Evaluator::spawn_task_evaluator(&cfg);
+                let call_env = Rc::new(RefCell::new(Env::new()));
+                // Bind read-only outer values (including the target arrays as pre-loop snapshots) so the
+                // body may read `A[j]`/outer scalars while writing independent slots.
+                for (name, v) in &outer_reads {
+                    call_env.borrow_mut().set_value(name, v.clone());
+                }
+                let mut out: Vec<(String, usize, Number)> = Vec::new();
+                for &i in chunk {
+                    call_env.borrow_mut().set_value(&var_name, Value::Number(Number::from(i)));
+                    for s in &steps_owned {
+                        match s {
+                            ParforStep::Eval(e) => {
+                                ev.eval_expr(&call_env, e)?;
+                            }
+                            ParforStep::Assign(w) => {
+                                let idx = match ev.eval_expr(&call_env, &w.index)? {
+                                    Value::Number(n) => n.as_usize().ok_or_else(|| {
+                                        RuntimeError::Message("parfor index must be a non-negative integer".into())
+                                    })?,
+                                    _ => return Err(RuntimeError::Message("parfor index must be an integer".into())),
+                                };
+                                let nv = match ev.eval_expr(&call_env, &w.value)? {
+                                    Value::Number(n) => n,
+                                    _ => return Err(RuntimeError::Message("parfor assignment value must be numeric".into())),
+                                };
+                                let merged = match w.op {
+                                    AssignOp::Assign => nv,
+                                    AssignOp::AddAssign | AssignOp::SubAssign => {
+                                        let old = match arrays_ro_c.get(&w.array).and_then(|a| a.get(idx)) {
+                                            Some(old) => old.clone(),
+                                            None => {
+                                                return Err(RuntimeError::IndexOutOfBounds(format!(
+                                                    "index {idx} (length {})",
+                                                    arrays_ro_c.get(&w.array).map(|a| a.len()).unwrap_or(0)
+                                                )));
+                                            }
+                                        };
+                                        let op = if w.op == AssignOp::AddAssign { BinOp::Add } else { BinOp::Sub };
+                                        match ev.eval_number_binary(op, old, nv)? {
+                                            Value::Number(n) => n,
+                                            _ => return Err(RuntimeError::Message("parfor assignment result must be numeric".into())),
+                                        }
+                                    }
+                                };
+                                out.push((w.array.clone(), idx, merged));
+                            }
+                        }
+                    }
+                }
+                Ok(out)
+            })
+            .collect();
+
+        // Deterministic merge: apply each index write to its array, bounds-checked (R0003).
+        for r in writes {
+            for (name, idx, val) in r? {
+                let arr = arrays.get_mut(&name).expect("parfor arrays snapshot above");
+                if idx >= arr.len() {
+                    return Err(RuntimeError::IndexOutOfBounds(format!("index {idx} (length {})", arr.len())));
+                }
+                arr[idx] = val;
+            }
+        }
+        // Write the arrays back along the shared chain (spec §12.2), creating locally if undefined.
+        let mut e = env.borrow_mut();
+        for (name, arr) in arrays {
+            if !e.set_existing(&name, Value::Array(arr.clone())) {
+                e.set_value(&name, Value::Array(arr));
+            }
+        }
+        Ok(Flow::Continue)
     }
 
     fn scalar_value(&self, v: Value) -> Result<Number, RuntimeError> {
@@ -1377,6 +1566,16 @@ impl Evaluator {
     }
 
     fn eval_call(&mut self, env: &EnvRef, callee: &Expr, args: &[Expr]) -> Result<Value, RuntimeError> {
+        // Symbolic differentiation (spec §19.4): `derivative`/`partial`/`grad`/`limit` are intercepted
+        // before generic argument evaluation, so the first argument may be an MFn *name* (functions are
+        // not first-class values) as well as a symbolic expression.
+        if let ExprKind::Path { segments } = &callee.kind
+            && segments.len() == 1
+            && let Some(Function::Builtin(b)) = self.resolve_func(env, segments)
+            && matches!(b, Builtin::Derivative | Builtin::Partial | Builtin::Grad | Builtin::Limit)
+        {
+            return self.eval_calc_call(env, b, args);
+        }
         // Class associated functions `T::name(args)` and `mod::T::name(args)` (spec §4.5).
         if let ExprKind::Path { segments } = &callee.kind {
             if let Some(v) = self.try_string_associated(env, segments, args)? {
@@ -1406,6 +1605,81 @@ impl Evaluator {
         self.apply_function(&func, arg_values)
     }
 
+    /// `derivative`/`partial`/`grad`/`limit` (spec §19.4): lower the argument expressions to the symbolic
+    /// DAG, resolve the variable symbol, and delegate to `crate::diff`.
+    fn eval_calc_call(&mut self, env: &EnvRef, b: Builtin, args: &[Expr]) -> Result<Value, RuntimeError> {
+        match b {
+            Builtin::Derivative | Builtin::Partial => {
+                if args.len() != 2 {
+                    return crate::error::err("`derivative`/`partial` expect (expr, var)");
+                }
+                let expr = self.lower_symbolic(env, &args[0])?;
+                let x = self.eval_var_symbol(env, &args[1])?;
+                let d = crate::diff::derivative(self.pool, self.builtins, expr, x);
+                Ok(self.value_from_expr(simplify(self.pool, self.builtins, d)))
+            }
+            Builtin::Grad => {
+                if args.len() != 1 {
+                    return crate::error::err("`grad` expects (expr)");
+                }
+                let expr = self.lower_symbolic(env, &args[0])?;
+                let grads = crate::diff::grad(self.pool, self.builtins, expr);
+                let vals: Vec<Value> = grads
+                    .into_iter()
+                    .map(|g| self.value_from_expr(simplify(self.pool, self.builtins, g)))
+                    .collect();
+                Ok(Value::Tuple(vals))
+            }
+            Builtin::Limit => {
+                if args.len() != 3 {
+                    return crate::error::err("`limit` expects (expr, var, value)");
+                }
+                let expr = self.lower_symbolic(env, &args[0])?;
+                let x = self.eval_var_symbol(env, &args[1])?;
+                let a_val = self.eval_expr(env, &args[2])?;
+                let a = self.to_expr_id(&a_val)?;
+                let lim = crate::diff::limit(self.pool, self.builtins, expr, x, a);
+                Ok(self.value_from_expr(lim))
+            }
+            _ => unreachable!("eval_calc_call only handles the calc builtins"),
+        }
+    }
+
+    /// Lower an argument to a symbolic `ExprId` (spec §19.4): a single-segment path resolving to an MFn
+    /// (`Function::User`) lowers the function body with each parameter bound to its symbol; anything else
+    /// is evaluated normally and collapsed to the DAG.
+    fn lower_symbolic(&mut self, env: &EnvRef, e: &Expr) -> Result<ExprId, RuntimeError> {
+        if let ExprKind::Path { segments } = &e.kind
+            && segments.len() == 1
+            && let Some(Function::User { params, body, env: f_env, .. }) = self.resolve_func(env, segments)
+        {
+            let call_env = Env::child(&f_env);
+            for p in params.iter() {
+                let sym = self.pool.symbol(self.symbols.intern(&p.name.value));
+                call_env.borrow_mut().set_value(&p.name.value, Value::Expr(sym));
+            }
+            let v = self.eval_expr(&call_env, &body)?;
+            return self.to_expr_id(&v);
+        }
+        let v = self.eval_expr(env, e)?;
+        self.to_expr_id(&v)
+    }
+
+    /// Evaluate a variable argument to a `SymbolId` (spec §19.4): accepts a symbolic expression
+    /// (`Value::Expr`/`Value::Symbol`) or a `String` naming the variable.
+    fn eval_var_symbol(&mut self, env: &EnvRef, e: &Expr) -> Result<SymbolId, RuntimeError> {
+        let v = self.eval_expr(env, e)?;
+        match v {
+            Value::Expr(id) => match self.pool.get(id) {
+                Some(ExprData::Symbol(s)) => Ok(s),
+                _ => crate::error::err("derivative variable must be a symbol"),
+            },
+            Value::Symbol(s) => Ok(SymbolId(s)),
+            Value::String(name) => Ok(self.symbols.intern(&name)),
+            _ => crate::error::err("derivative variable must be a symbol"),
+        }
+    }
+
     fn resolve_func(&self, env: &EnvRef, segments: &[Spanned<String>]) -> Option<Function> {
         if segments.len() == 1 {
             env.borrow().get_func(&segments[0].value)
@@ -1415,6 +1689,22 @@ impl Evaluator {
                 Some(NamespaceItem::Func(f)) => Some(f),
                 _ => None,
             }
+        }
+    }
+
+    /// Static purity check for a `parfor` effect call (spec §17.2, E0082): the top-level must be a call
+    /// to a pure builtin (`Builtin::is_pure`) or an MFn (`Function::User`); host `fn` and `print` are rejected.
+    fn expr_is_pure_call(&self, env: &EnvRef, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Call { callee, .. } => match &callee.kind {
+                ExprKind::Path { segments } if segments.len() == 1 => match env.borrow().get_func(&segments[0].value) {
+                    Some(Function::Builtin(b)) => b.is_pure(),
+                    Some(Function::User { .. }) => true,
+                    _ => false,
+                },
+                _ => false,
+            },
+            _ => false,
         }
     }
 
@@ -1953,7 +2243,7 @@ impl Evaluator {
                 self.apply_function(&func, cargs)
             }
             ExprKind::Lambda { params, body } => {
-                let func = Function::User { params: params.clone(), body: (**body).clone(), env: Rc::clone(env) };
+                let func = Function::User { params: params.clone(), body: (**body).clone(), env: Rc::clone(env), parallel: false };
                 self.apply_function(&func, vec![v])
             }
             _ => crate::error::err("pipeline right-hand side must be a function"),
@@ -1981,7 +2271,7 @@ impl Evaluator {
                 }
                 self.call_array_get(args[0].clone(), args[1].clone())
             }
-            Function::User { params, body, env: f_env } => {
+            Function::User { params, body, env: f_env, .. } => {
                 if args.len() != params.len() {
                     return crate::error::err(format!("expected {} arguments, got {}", params.len(), args.len()));
                 }
@@ -2004,7 +2294,8 @@ impl Evaluator {
         }
     }
 
-    /// Broadcast (spec §11.4): pure functions are applied elementwise to array arguments; **nested/empty arrays are rejected** (error code), scalars align automatically.
+    /// Broadcast (spec §11.4): pure functions are applied elementwise to array arguments; **empty arrays are rejected** (`R0014`),
+    /// non-numeric elements/scalars error (`R0009`). `@parallel` MFn (spec §17.1) over large arrays are split across rayon threads.
     fn broadcast_call(&mut self, func: &Function, args: Vec<Value>, positions: &[usize]) -> Result<Value, RuntimeError> {
         let mut len = 0usize;
         let mut first = true;
@@ -2020,6 +2311,12 @@ impl Evaluator {
         }
         if len == 0 {
             return crate::error::err("cannot broadcast over an empty array");
+        }
+        if let Function::User { params, body, parallel: true, .. } = func
+            && len >= PARALLEL_BROADCAST_THRESHOLD
+            && rayon::current_num_threads() > 1
+        {
+            return self.broadcast_parallel(params, body, &args, positions, len);
         }
         let mut results = Vec::with_capacity(len);
         for i in 0..len {
@@ -2042,6 +2339,57 @@ impl Evaluator {
             }
         }
         Ok(Value::Array(results))
+    }
+
+    /// Parallel broadcast of a `@parallel` MFn (spec §17.1/17.4): each rayon thread block runs an
+    /// independent `Evaluator` over a chunk of the array. The body must be self-contained — parameters
+    /// are bound in a fresh root environment, so no captured (non-`Send`) closure environment is shared.
+    fn broadcast_parallel(
+        &mut self,
+        params: &[Param],
+        body: &Expr,
+        args: &[Value],
+        positions: &[usize],
+        len: usize,
+    ) -> Result<Value, RuntimeError> {
+        let cfg = self.current_config().clone();
+        let params_owned = params.to_vec();
+        let body_owned = body.clone();
+        let positions_owned = positions.to_vec();
+        let results: Vec<Result<Number, RuntimeError>> = (0..len)
+            .into_par_iter()
+            .map(|i| {
+                let mut cargs = Vec::with_capacity(args.len());
+                for (j, v) in args.iter().enumerate() {
+                    if positions_owned.contains(&j) {
+                        if let Value::Array(a) = v {
+                            cargs.push(Value::Number(a[i].clone()));
+                        } else {
+                            return Err(RuntimeError::Message("cannot broadcast a non-numeric scalar".into()));
+                        }
+                    } else {
+                        match v {
+                            Value::Number(_) => cargs.push(v.clone()),
+                            _ => return Err(RuntimeError::Message("cannot broadcast a non-numeric scalar".into())),
+                        }
+                    }
+                }
+                let mut ev = Evaluator::spawn_task_evaluator(&cfg);
+                let call_env = Rc::new(RefCell::new(Env::new()));
+                for (p, a) in params_owned.iter().zip(cargs) {
+                    call_env.borrow_mut().set_value(&p.name.value, a);
+                }
+                match ev.eval_expr(&call_env, &body_owned)? {
+                    Value::Number(n) => Ok(n),
+                    _ => Err(RuntimeError::Message("broadcast result must be numeric".into())),
+                }
+            })
+            .collect();
+        let mut out = Vec::with_capacity(len);
+        for r in results {
+            out.push(r?);
+        }
+        Ok(Value::Array(out))
     }
 
     /// Binary array operation broadcast (spec §11.4): array×array is elementwise (lengths must match), array×scalar broadcasts the scalar; empty arrays error.
@@ -2266,6 +2614,7 @@ impl Evaluator {
 
     fn call_builtin(&mut self, b: Builtin, args: Vec<Value>) -> Result<Value, RuntimeError> {
         match b {
+            // `print` outputs without a trailing newline; `println` appends one (v2.1, spec §18.1b).
             Builtin::Print | Builtin::Println => {
                 let mut s = String::new();
                 for (i, v) in args.iter().enumerate() {
@@ -2274,15 +2623,47 @@ impl Evaluator {
                     }
                     s.push_str(&self.format_value(v));
                 }
-                s.push('\n');
+                if matches!(b, Builtin::Println) {
+                    s.push('\n');
+                }
                 (self.output)(s);
                 Ok(Value::Nil)
+            }
+            Builtin::Input | Builtin::ReadLine => self.call_input(b, args),
+            // Symbolic differentiation is intercepted in `eval_call` (spec §19.4); reaching here means
+            // it was used indirectly (e.g. as a value), which the interpreter does not support.
+            Builtin::Derivative | Builtin::Partial | Builtin::Grad | Builtin::Limit => {
+                crate::error::err("`derivative`/`partial`/`grad`/`limit` must be called directly with a variable")
             }
             Builtin::Simplify => {
                 let arg = args.first().ok_or_else(|| RuntimeError::Message("simplify expects one argument".into()))?;
                 let id = self.to_expr_id(arg)?;
                 let simp = simplify(self.pool, self.builtins, id);
                 Ok(self.value_from_expr(simp))
+            }
+            Builtin::Range => {
+                if args.len() < 2 || args.len() > 3 {
+                    return crate::error::err("`range` expects (start, end, step?)");
+                }
+                let start = self.scalar_value(args[0].clone())?;
+                let end = self.scalar_value(args[1].clone())?;
+                let step = match args.get(2) {
+                    Some(s) => self.scalar_value(s.clone())?,
+                    None => Number::from(1),
+                };
+                let start_i = start.as_i64().ok_or_else(|| RuntimeError::Type(format!("range bounds must be integers, got {start}")))?;
+                let end_i = end.as_i64().ok_or_else(|| RuntimeError::Type(format!("range bounds must be integers, got {end}")))?;
+                let step_i = step.as_i64().ok_or_else(|| RuntimeError::Type(format!("range step must be an integer, got {step}")))?;
+                if step_i == 0 {
+                    return crate::error::err("`range` step cannot be zero");
+                }
+                let mut out = Vec::new();
+                let mut i = start_i;
+                while if step_i > 0 { i < end_i } else { i > end_i } {
+                    out.push(Number::from(i));
+                    i += step_i;
+                }
+                Ok(Value::Array(out))
             }
             Builtin::Collapse(name) => crate::collapse::call(name, &args, self.pool, self.builtins),
             // Math operators: build an `Apply` node, then simplify the whole thing (spec §8.3 level 2 constant folding).
@@ -2325,6 +2706,33 @@ impl Evaluator {
             Value::Expr(id)
         }
     }
+
+    /// `input(prompt?)` / `read_line()` (spec §18.1b): optional prompt written without a trailing newline,
+    /// then one line read from stdin (trailing `\r\n`/`\n` stripped). EOF or I/O errors return "".
+    fn call_input(&mut self, b: Builtin, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return crate::error::err(if matches!(b, Builtin::ReadLine) {
+                "`read_line` takes no arguments"
+            } else {
+                "`input` takes at most one (prompt) argument"
+            });
+        }
+        if let Some(prompt) = args.first() {
+            let s = self.format_value(prompt);
+            (self.output)(s);
+        }
+        use std::io::BufRead;
+        let mut line = String::new();
+        match std::io::stdin().lock().read_line(&mut line) {
+            Ok(_) => {
+                while line.ends_with('\n') || line.ends_with('\r') {
+                    line.pop();
+                }
+                Ok(Value::String(line))
+            }
+            Err(_) => Ok(Value::String(String::new())),
+        }
+    }
 }
 
 /// Source span of a statement, used to locate errors (spec §16.4).
@@ -2364,8 +2772,135 @@ static DEFAULT_CONFIG: Config = Config {
     overload_policy: OverloadPolicy::Warn,
 };
 
+/// Minimum array length for which a `@parallel` MFn broadcast is split across rayon threads (spec §17.1);
+/// smaller arrays keep the sequential path to avoid thread-spawn overhead.
+const PARALLEL_BROADCAST_THRESHOLD: usize = 1024;
+
 fn path_key(segments: &[Spanned<String>]) -> String {
     segments.iter().map(|s| s.value.as_str()).collect::<Vec<_>>().join("::")
+}
+
+/// Collect every single-segment variable path referenced in `e` (spec §17.2 read set): used to bind
+/// read-only outer values into `parfor` task environments without touching the non-`Send` env chain.
+fn collect_read_names(e: &Expr, out: &mut HashSet<String>) {
+    match &e.kind {
+        ExprKind::Path { segments } if segments.len() == 1 => {
+            out.insert(segments[0].value.clone());
+        }
+        ExprKind::Call { callee, args } => {
+            collect_read_names(callee, out);
+            for a in args {
+                collect_read_names(a, out);
+            }
+        }
+        ExprKind::MethodCall { receiver, args, .. } => {
+            collect_read_names(receiver, out);
+            for a in args {
+                collect_read_names(a, out);
+            }
+        }
+        ExprKind::Field { receiver, .. } => collect_read_names(receiver, out),
+        ExprKind::StructLiteral { fields, base, .. } => {
+            if let Some(b) = base {
+                collect_read_names(b, out);
+            }
+            for f in fields {
+                if let Some(v) = &f.value {
+                    collect_read_names(v, out);
+                }
+            }
+        }
+        ExprKind::Index { base, index } => {
+            collect_read_names(base, out);
+            for it in &index.items {
+                match it {
+                    IndexItem::Elem(e) => collect_read_names(e, out),
+                    IndexItem::Slice { start, end } => {
+                        if let Some(s) = start {
+                            collect_read_names(s, out);
+                        }
+                        if let Some(s) = end {
+                            collect_read_names(s, out);
+                        }
+                    }
+                }
+            }
+        }
+        ExprKind::Binary { lhs, rhs, .. } | ExprKind::Pipeline { lhs, rhs } => {
+            collect_read_names(lhs, out);
+            collect_read_names(rhs, out);
+        }
+        ExprKind::Unary { operand, .. } | ExprKind::Try(operand) => collect_read_names(operand, out),
+        ExprKind::Array(items) | ExprKind::Tuple(items) => {
+            for it in items {
+                collect_read_names(it, out);
+            }
+        }
+        ExprKind::Lambda { body, .. } => collect_read_names(body, out),
+        ExprKind::Match { scrutinee, arms } => {
+            collect_read_names(scrutinee, out);
+            for a in arms {
+                if let Some(g) = &a.guard {
+                    collect_read_names(g, out);
+                }
+                collect_read_names(&a.body, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// One unit of work inside a `parfor` iteration body (spec §17.2): either an index-slot assignment
+/// (`A[i] = …`/`A[i] += …`) or a pure function call evaluated for effect.
+#[derive(Clone)]
+enum ParforStep {
+    Assign(ParforWrite),
+    Eval(Expr),
+}
+
+#[derive(Clone)]
+struct ParforWrite {
+    array: String,
+    index: Expr,
+    op: AssignOp,
+    value: Expr,
+}
+
+/// Static side-effect check for a `parfor` body (spec §17.2, `E0082`): only index-slot assignments
+/// (`A[i] = …`/`A[i] += …`/`A[i] -= …`) and pure function calls are allowed; anything else (external
+/// variable assignment, `let`, `print`, class mutation, …) is an error.
+fn check_parfor_body(body: &Block) -> Result<Vec<ParforStep>, RuntimeError> {
+    let mut steps = Vec::new();
+    for stmt in &body.stmts {
+        match stmt {
+            Stmt::Assign { target, op, value, .. } => {
+                if let ExprKind::Index { base, index } = &target.kind
+                    && let ExprKind::Path { segments } = &base.kind
+                    && segments.len() == 1
+                    && index.items.len() == 1
+                    && let IndexItem::Elem(idx) = &index.items[0]
+                {
+                    steps.push(ParforStep::Assign(ParforWrite {
+                        array: segments[0].value.clone(),
+                        index: idx.clone(),
+                        op: *op,
+                        value: value.clone(),
+                    }));
+                } else {
+                    return crate::error::err(
+                        "parfor iteration body may only assign to index slots `A[i]` (E0082)",
+                    );
+                }
+            }
+            Stmt::Expr(e) => steps.push(ParforStep::Eval(e.clone())),
+            _ => {
+                return crate::error::err(
+                    "parfor iteration body must be side-effect free (E0082): only index-slot assignments and pure calls allowed",
+                );
+            }
+        }
+    }
+    Ok(steps)
 }
 
 /// Operator-overload registry key: `"<class>::<Op>"` (spec §18.5; `ImplOp` has no `Hash`).

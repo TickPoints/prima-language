@@ -33,6 +33,7 @@ assert_cmd = "2"
 predicates = "3"
 proptest = "1"
 codespan-reporting = "0.13"
+rayon = "1.12"
 
 [dependencies]
 prima-syntax = { path = "crates/prima-syntax" }
