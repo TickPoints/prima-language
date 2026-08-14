@@ -41,10 +41,10 @@ serde_json = "1"
 rustyline = "15"
 
 [dependencies]
-prima-syntax = { path = "crates/prima-syntax" }
-prima-core = { path = "crates/prima-core" }
-prima-runtime = { path = "crates/prima-runtime" }
-prima-stdlib = { path = "crates/prima-stdlib" }
+prima-syntax = { path = "crates/prima-syntax", version = "0.1.0" }
+prima-core = { path = "crates/prima-core", version = "0.1.0" }
+prima-runtime = { path = "crates/prima-runtime", version = "0.1.0" }
+prima-stdlib = { path = "crates/prima-stdlib", version = "0.1.0" }
 clap = { workspace = true }
 codespan-reporting = { workspace = true }
 rustyline = { workspace = true }
