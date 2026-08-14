@@ -1,0 +1,12 @@
+// `sys::env` module signatures (spec §18.4 / appendix B.5).
+// `@builtin` declarations are signature-only: each binds to the Rust-hosted implementation
+// registered under `sys::env::<name>` (spec §18.4).
+
+@builtin
+pub fn home_dir() -> Option<String>;
+@builtin
+pub fn get(name: String) -> Option<String>;
+@builtin
+pub fn args() -> Array<String>;
+@builtin
+pub fn current_dir() -> String;

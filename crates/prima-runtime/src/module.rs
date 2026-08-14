@@ -23,13 +23,16 @@ pub struct ModuleUnit {
 }
 
 /// A fully resolved import (spec §15.1). `host == true` marks a Rust-hosted stdlib namespace
-/// (spec §18) that has no backing file; `file` is then empty.
+/// (spec §18) that has no backing file; `embedded == true` marks an embedded stdlib signature
+/// module (spec §18.4) whose source is compiled in; `file` is empty for host imports and a
+/// `<stdlib>/…` marker for embedded ones.
 #[derive(Debug)]
 pub struct ResolvedImport {
     pub path: Vec<String>,
     pub file: PathBuf,
     pub kind: ImportKind,
     pub host: bool,
+    pub embedded: bool,
 }
 
 /// Module dependency graph (spec §15.3 file mapping); resolution only, no evaluation.
@@ -59,6 +62,9 @@ impl ModuleGraph {
 struct Loader {
     /// Modules already loaded (canonical absolute paths), used for dedup.
     done: HashSet<PathBuf>,
+    /// Embedded stdlib signature modules already loaded (joined paths), used for dedup.
+    /// Embedded modules never import, so this set needs no cycle detection.
+    done_embedded: HashSet<String>,
     /// Stack of modules currently loading (canonical absolute paths), used for cycle detection.
     stack: Vec<(Vec<String>, PathBuf)>,
     /// Dependency-order result (post-order: imported modules precede their importers).
@@ -89,8 +95,8 @@ impl Loader {
         for imp in &program.imports {
             let segments = import_segments(imp);
             let key = segments.join("::");
-            match resolve(dir, &segments) {
-                Some(resolved) => {
+            match self.resolve_import(dir, &segments) {
+                Resolution::File(resolved) => {
                     let target = fs::canonicalize(&resolved).map_err(|e| {
                         format!("cannot access module `{key}` (`{}`): {e}", resolved.display())
                     })?;
@@ -98,13 +104,49 @@ impl Loader {
                         let unit = self.load_module(segments.clone(), &target)?;
                         self.deps.push(unit);
                     }
-                    imports.push(ResolvedImport { path: segments, file: target, kind: imp.kind.clone(), host: false });
+                    imports.push(ResolvedImport {
+                        path: segments,
+                        file: target,
+                        kind: imp.kind.clone(),
+                        host: false,
+                        embedded: false,
+                    });
+                }
+                // An embedded stdlib signature module (spec §18.4): the `.pra` source is compiled in,
+                // never on disk, so parse it directly. Embedded modules declare no imports, so they
+                // can never form a cycle; dedup is by joined path (the synthetic `file` is not real).
+                Resolution::Embedded { path } => {
+                    if !self.done_embedded.contains(&key) {
+                        let src = crate::stdlib::get_module_source(&key)
+                            .expect("embedded stdlib source present at resolution time");
+                        let program = parse(src).map_err(|errs| {
+                            let details = errs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(", ");
+                            format!("embedded stdlib module `{key}` failed to parse: {details}")
+                        })?;
+                        let file = embedded_file(&path);
+                        let unit = ModuleUnit { path, file, program, imports: Vec::new() };
+                        self.deps.push(unit);
+                        self.done_embedded.insert(key.clone());
+                    }
+                    imports.push(ResolvedImport {
+                        path: segments.clone(),
+                        file: embedded_file(&segments),
+                        kind: imp.kind.clone(),
+                        host: false,
+                        embedded: true,
+                    });
                 }
                 // A Rust-hosted stdlib namespace (spec §18): no file on disk, no dependency.
-                None if crate::stdlib::has_namespace(&key) => {
-                    imports.push(ResolvedImport { path: segments, file: PathBuf::new(), kind: imp.kind.clone(), host: true });
+                Resolution::Host { path } => {
+                    imports.push(ResolvedImport {
+                        path,
+                        file: PathBuf::new(),
+                        kind: imp.kind.clone(),
+                        host: true,
+                        embedded: false,
+                    });
                 }
-                None => {
+                Resolution::None => {
                     return Err(format!(
                         "module `{key}` not found relative to `{}` (tried `{}.pra` and `{}/main.pra`)",
                         dir.display(),
@@ -118,6 +160,22 @@ impl Loader {
         self.done.insert(file.clone());
 
         Ok(ModuleUnit { path, file, program, imports })
+    }
+
+    /// Resolve one import path: (1) a filesystem file relative to the importing module, (2) an
+    /// embedded stdlib signature source, (3) a registered Rust-hosted namespace, else `None`
+    /// (spec §15.3 / §18.4 / §18).
+    fn resolve_import(&self, dir: &Path, segments: &[String]) -> Resolution {
+        let key = segments.join("::");
+        if let Some(file) = resolve(dir, segments) {
+            Resolution::File(file)
+        } else if crate::stdlib::get_module_source(&key).is_some() {
+            Resolution::Embedded { path: segments.to_vec() }
+        } else if crate::stdlib::has_namespace(&key) {
+            Resolution::Host { path: segments.to_vec() }
+        } else {
+            Resolution::None
+        }
     }
 
     /// Build the cycle error message, e.g. `import cycle: a -> a::b -> a`.
@@ -150,6 +208,21 @@ fn resolve(dir: &Path, segments: &[String]) -> Option<PathBuf> {
         let main = base.join("main.pra");
         main.is_file().then_some(main)
     }
+}
+
+/// One resolved import target (spec §15.3 / §18.4 / §18): a file, an embedded stdlib signature
+/// source, a Rust-hosted namespace, or nothing.
+enum Resolution {
+    File(PathBuf),
+    Embedded { path: Vec<String> },
+    Host { path: Vec<String> },
+    None,
+}
+
+/// Synthetic marker path for an embedded stdlib module, e.g. `<stdlib>/linalg` (spec §18.4).
+/// Distinct from any real file path so the module loader and diagnostics can recognise it.
+pub(crate) fn embedded_file(path: &[String]) -> PathBuf {
+    PathBuf::from(format!("<stdlib>/{}", path.join("::")))
 }
 
 /// Module display name: the file path for the root module (empty path), otherwise the `::`-joined path.
@@ -300,7 +373,40 @@ mod tests {
         assert_eq!(g.root.imports.len(), 1);
         let imp = &g.root.imports[0];
         assert!(imp.host, "host import must be flagged, got {imp:?}");
+        assert!(!imp.embedded, "host import must not be flagged as embedded, got {imp:?}");
         assert!(imp.file.as_os_str().is_empty(), "host import must not map to a file");
         assert_eq!(g.deps.len(), 0, "host import must not load a file dependency");
+    }
+
+    #[test]
+    fn embedded_source_import_resolves_as_dep() {
+        // The source registry is global; use a unique module name for this test.
+        crate::stdlib::register_module_source("testem", "@builtin pub fn answer() -> Integer;");
+        let tmp = TempDir::new("embedded");
+        let root = write(tmp.dir(), "main.pra", "import testem\n");
+
+        let g = ModuleGraph::load(&root).unwrap();
+        assert_eq!(g.root.imports.len(), 1);
+        let imp = &g.root.imports[0];
+        assert!(imp.embedded, "embedded import must be flagged, got {imp:?}");
+        assert!(!imp.host, "embedded import must not be flagged as host, got {imp:?}");
+        assert_eq!(imp.file, embedded_file(&["testem".to_string()]), "embedded import must carry the synthetic marker");
+        assert_eq!(g.deps.len(), 1, "embedded import must produce a dependency unit");
+        let dep = &g.deps[0];
+        assert_eq!(dep.path, ["testem".to_string()]);
+        assert_eq!(dep.file, embedded_file(&["testem".to_string()]));
+        assert!(dep.imports.is_empty(), "embedded modules declare no imports");
+        assert_eq!(dep.program.stmts.len(), 1, "embedded source must parse to its `@builtin` declaration");
+    }
+
+    #[test]
+    fn embedded_source_import_dedups() {
+        crate::stdlib::register_module_source("testem2", "@builtin pub fn f() -> Integer;");
+        let tmp = TempDir::new("embedded-dedup");
+        let root = write(tmp.dir(), "main.pra", "import testem2\nimport testem2\n");
+
+        let g = ModuleGraph::load(&root).unwrap();
+        assert_eq!(g.deps.len(), 1, "duplicate embedded imports must dedup to a single dependency");
+        assert!(g.root.imports.iter().all(|i| i.embedded));
     }
 }

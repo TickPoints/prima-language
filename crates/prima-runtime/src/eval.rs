@@ -406,6 +406,34 @@ impl Evaluator {
         self.warnings.push(SyntaxWarning { span, code, message });
     }
 
+    /// Fully-qualified registry key for an `@builtin` declared in the module currently being
+    /// evaluated (spec §18.4): `"<module>::<name>"` in a stdlib module, plain `<name>` at the root.
+    fn builtin_key(&self, name: &str) -> String {
+        if self.current_module.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}::{name}", self.current_module)
+        }
+    }
+
+    /// Bind an `@builtin` function declaration to its implementation (spec §18.4).
+    /// At the root a core builtin of the same name wins; inside a module the registered stdlib
+    /// implementation (`"<module>::<name>"`) takes precedence — core builtins must NOT shadow a
+    /// module's own `@builtin` (e.g. `sys::path::join` must not become the core `join`). Otherwise E0055.
+    fn bind_builtin(&self, name: &str) -> Result<Function, RuntimeError> {
+        if self.current_module.is_empty()
+            && let Some(b) = Builtin::from_name(name)
+        {
+            return Ok(Function::Builtin(b));
+        }
+        let key = self.builtin_key(name);
+        if let Some(call) = crate::stdlib::get_impl(&key) {
+            let leaked: &'static str = Box::leak(key.into_boxed_str());
+            return Ok(Function::Native { name: leaked, call });
+        }
+        crate::error::err(format!("unregistered `@builtin` function `{name}` (E0055)"))
+    }
+
     /// Interpret a file as the root module (spec §15.3 module system plus the pre-imported `core`).
     pub fn eval_file(&mut self, path: &Path) -> Result<(), RuntimeError> {
         let graph = ModuleGraph::load(path).map_err(RuntimeError::Message)?;
@@ -488,8 +516,16 @@ impl Evaluator {
                 items.insert(name.value.clone(), NamespaceItem::Func(f));
                 Ok(())
             }
-            Stmt::FnDef { name, params, ret, body, .. } => {
-                let f = Function::Host { params: params.clone(), ret: ret.clone(), body: body.clone(), env: Rc::clone(env) };
+            Stmt::FnDef { name, params, ret, annotations, body, .. } => {
+                // `@builtin pub fn` (spec §18.4): the exported item binds to the core builtin or the
+                // registered stdlib implementation (keyed `"<module>::<name>"`), keeping the typed
+                // signature for later call-site checking. Path names like `Matrix::zeros` are exported
+                // under the joined key so module-qualified calls resolve.
+                let f = if annotations.contains(&Annotation::Builtin) {
+                    self.bind_builtin(&name.value)?
+                } else {
+                    Function::Host { params: params.clone(), ret: ret.clone(), body: body.clone(), env: Rc::clone(env) }
+                };
                 env.borrow_mut().set_func(&name.value, f.clone());
                 items.insert(name.value.clone(), NamespaceItem::Func(f));
                 Ok(())
@@ -581,7 +617,13 @@ impl Evaluator {
     pub fn eval_program(&mut self, program: &Program) -> Result<(), RuntimeError> {
         self.reset_config();
         if !program.imports.is_empty() {
-            return crate::error::err("`import` requires running from a file (`prima run <file>`)");
+            // In-memory evaluation supports embedded stdlib modules (spec §18.4) and Rust-hosted
+            // namespaces (spec §18); file modules require the module graph (`eval_file`).
+            let env = Env::new().into_ref();
+            self.bind_host_imports(&env, &program.imports)?;
+            let r = self.eval_program_in(&env, program);
+            self.reset_config();
+            return r;
         }
         let env = Env::new().into_ref();
         let r = self.eval_program_in(&env, program);
@@ -626,8 +668,10 @@ impl Evaluator {
         r
     }
 
-    /// Bind in-memory imports that resolve to Rust-hosted stdlib namespaces (spec §18). Any other
-    /// import is rejected with the same message as before (file modules need `eval_file`).
+    /// Bind in-memory imports that resolve to embedded stdlib modules (spec §18.4) or Rust-hosted
+    /// stdlib namespaces (spec §18). Embedded modules are evaluated first (like `eval_module` for a
+    /// dependency), populating `module_items` so `bind_imports` finds their `@builtin` items. Any
+    /// other import (a file module) is rejected as before — file modules need `eval_file`.
     fn bind_host_imports(&mut self, env: &EnvRef, imports: &[prima_syntax::ast::Import]) -> Result<(), RuntimeError> {
         let mut resolved = Vec::with_capacity(imports.len());
         for imp in imports {
@@ -635,15 +679,40 @@ impl Evaluator {
                 ImportKind::Namespace { path, .. } | ImportKind::From { path, .. } => path,
             };
             let key = segments.iter().map(|s| s.value.as_str()).collect::<Vec<_>>().join("::");
-            if !crate::stdlib::has_namespace(&key) {
+            let path: Vec<String> = segments.iter().map(|s| s.value.clone()).collect();
+            if let Some(src) = crate::stdlib::get_module_source(&key) {
+                if !self.module_items.contains_key(&key) {
+                    let program = prima_syntax::parse(src).map_err(|errs| {
+                        let details = errs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(", ");
+                        RuntimeError::Message(format!("embedded stdlib module `{key}` failed to parse: {details}"))
+                    })?;
+                    let unit = ModuleUnit {
+                        path: path.clone(),
+                        file: crate::module::embedded_file(&path),
+                        program,
+                        imports: Vec::new(),
+                    };
+                    self.eval_module(&unit)?;
+                }
+                let file = crate::module::embedded_file(&path);
+                resolved.push(ResolvedImport {
+                    path,
+                    file,
+                    kind: imp.kind.clone(),
+                    host: false,
+                    embedded: true,
+                });
+            } else if crate::stdlib::has_namespace(&key) {
+                resolved.push(ResolvedImport {
+                    path,
+                    file: PathBuf::new(),
+                    kind: imp.kind.clone(),
+                    host: true,
+                    embedded: false,
+                });
+            } else {
                 return crate::error::err("`import` requires running from a file (`prima run <file>`)");
             }
-            resolved.push(ResolvedImport {
-                path: segments.iter().map(|s| s.value.clone()).collect(),
-                file: PathBuf::new(),
-                kind: imp.kind.clone(),
-                host: true,
-            });
         }
         self.bind_imports(env, &resolved)
     }
@@ -787,18 +856,12 @@ impl Evaluator {
                 Ok(Flow::Continue)
             }
             Stmt::FnDef { name, params, ret, annotations, body, .. } => {
-                // `@builtin fn` (spec §18.4): bind to the Rust host builtin of the same name; unregistered → E0055.
+                // `@builtin fn` (spec §18.4): bind, in order, to the core builtin of the same name,
+                // then to a registered stdlib implementation keyed `"<module>::<name>"`; unregistered → E0055.
                 if annotations.contains(&Annotation::Builtin) {
-                    match Builtin::from_name(&name.value) {
-                        Some(b) => {
-                            env.borrow_mut().set_func(&name.value, Function::Builtin(b));
-                            Ok(Flow::Continue)
-                        }
-                        None => crate::error::err(format!(
-                            "unregistered `@builtin` function `{}` (E0055)",
-                            name.value
-                        )),
-                    }
+                    let f = self.bind_builtin(&name.value)?;
+                    env.borrow_mut().set_func(&name.value, f);
+                    Ok(Flow::Continue)
                 } else {
                     let f = Function::Host { params: params.clone(), ret: ret.clone(), body: body.clone(), env: Rc::clone(env) };
                     env.borrow_mut().set_func(&name.value, f);
@@ -2122,16 +2185,22 @@ impl Evaluator {
         }
     }
 
-    /// Look up a module item, flattening a nested namespace: `time::Duration::from_secs` resolves either
-    /// as module `time::Duration` item `from_secs`, or as module `time` item `Duration::from_secs`
-    /// (spec §18.3). The exact module-path form (e.g. `sys::path::join`) always wins.
+    /// Look up a module item, flattening a nested namespace of any depth (spec §18.3): the exact
+    /// module `a::b` item `c` wins; otherwise every prefix is tried as the module and the remainder
+    /// plus the item as the flattened key — `time::Duration::from_secs` resolves as module `time`
+    /// item `Duration::from_secs`, `linalg::Matrix::zeros` as module `linalg` item `Matrix::zeros`,
+    /// `sys::path::join` as module `sys` item `path::join`. Shorter module prefixes are tried first.
     fn lookup_module_item_flat(&self, env: &EnvRef, ns: &str, item: &str) -> Option<NamespaceItem> {
         if let Some(it) = env.borrow().lookup_module_item(ns, item) {
             return Some(it);
         }
-        if let Some((head, rest)) = ns.split_once("::") {
-            let joined = format!("{rest}::{item}");
-            return env.borrow().lookup_module_item(head, &joined);
+        let segments: Vec<&str> = ns.split("::").collect();
+        for i in 1..segments.len() {
+            let mod_key = segments[..i].join("::");
+            let item_key = format!("{}::{item}", segments[i..].join("::"));
+            if let Some(it) = env.borrow().lookup_module_item(&mod_key, &item_key) {
+                return Some(it);
+            }
         }
         None
     }
@@ -2141,11 +2210,13 @@ impl Evaluator {
     fn expr_is_pure_call(&self, env: &EnvRef, e: &Expr) -> bool {
         match &e.kind {
             ExprKind::Call { callee, .. } => match &callee.kind {
-                ExprKind::Path { segments } if segments.len() == 1 => match env.borrow().get_func(&segments[0].value) {
-                    Some(Function::Builtin(b)) => b.is_pure(),
-                    Some(Function::User { .. }) => true,
-                    _ => false,
-                },
+            ExprKind::Path { segments } if segments.len() == 1 => match env.borrow().get_func(&segments[0].value) {
+                Some(Function::Builtin(b)) => b.is_pure(),
+                Some(Function::User { .. }) => true,
+                // Rust-hosted stdlib functions (spec §18/§18.4) may have side effects; never pure.
+                Some(Function::Native { .. }) => false,
+                _ => false,
+            },
                 _ => false,
             },
             _ => false,

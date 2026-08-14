@@ -1,18 +1,11 @@
 //! `sys` module (spec §18.2 / appendix B.5): cross-platform path helpers (`sys::path`),
 //! environment access (`sys::env`), and OS/platform queries (`sys::os`).
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use prima_core::Value;
-use prima_runtime::stdlib::register_namespace;
-use prima_runtime::{Evaluator, Function, NamespaceItem, RuntimeError};
-
-type Native = fn(&mut Evaluator, &[Value]) -> Result<Value, RuntimeError>;
-
-fn native(name: &'static str, call: Native) -> NamespaceItem {
-    NamespaceItem::Func(Function::Native { name, call })
-}
+use prima_runtime::stdlib::register_impl;
+use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
     if args.len() == n {
@@ -32,29 +25,27 @@ fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeEr
     }
 }
 
-/// Register `sys::path`, `sys::env`, and `sys::os` (spec §18.2).
+/// Register the `sys::path`, `sys::env`, and `sys::os` `@builtin` implementations (spec §18.4 /
+/// §18.2). Each `@builtin` declaration in the embedded `sys_path.pra` / `sys_env.pra` / `sys_os.pra`
+/// signature modules binds to the implementation registered under its fully-qualified
+/// `sys::path::<name>` / `sys::env::<name>` / `sys::os::<name>` key (spec §18.4).
 pub fn register() {
-    let mut path = HashMap::new();
-    path.insert("join".into(), native("sys::path::join", path_join));
-    path.insert("file_name".into(), native("sys::path::file_name", path_file_name));
-    path.insert("extension".into(), native("sys::path::extension", path_extension));
-    path.insert("parent".into(), native("sys::path::parent", path_parent));
-    path.insert("is_absolute".into(), native("sys::path::is_absolute", path_is_absolute));
-    path.insert("canonicalize".into(), native("sys::path::canonicalize", path_canonicalize));
-    register_namespace("sys::path", path);
-
-    let mut env = HashMap::new();
-    env.insert("home_dir".into(), native("sys::env::home_dir", env_home_dir));
-    env.insert("get".into(), native("sys::env::get", env_get));
-    env.insert("args".into(), native("sys::env::args", env_args));
-    env.insert("current_dir".into(), native("sys::env::current_dir", env_current_dir));
-    register_namespace("sys::env", env);
-
-    let mut os = HashMap::new();
-    os.insert("name".into(), native("sys::os::name", os_name));
-    os.insert("arch".into(), native("sys::os::arch", os_arch));
-    os.insert("exit".into(), native("sys::os::exit", os_exit));
-    register_namespace("sys::os", os);
+    // sys::path
+    register_impl("sys::path::join", path_join);
+    register_impl("sys::path::file_name", path_file_name);
+    register_impl("sys::path::extension", path_extension);
+    register_impl("sys::path::parent", path_parent);
+    register_impl("sys::path::is_absolute", path_is_absolute);
+    register_impl("sys::path::canonicalize", path_canonicalize);
+    // sys::env
+    register_impl("sys::env::home_dir", env_home_dir);
+    register_impl("sys::env::get", env_get);
+    register_impl("sys::env::args", env_args);
+    register_impl("sys::env::current_dir", env_current_dir);
+    // sys::os
+    register_impl("sys::os::name", os_name);
+    register_impl("sys::os::arch", os_arch);
+    register_impl("sys::os::exit", os_exit);
 }
 
 fn path_join(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {

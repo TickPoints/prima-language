@@ -5,18 +5,10 @@
 //! `Value::Number`; a vector is a flat `Value::Array` of `Value::Number`. The matrix layer is
 //! numeric, so every value is collapsed to `F64` as it enters and leaves the module.
 
-use std::collections::HashMap;
-
 use nalgebra::{DMatrix, DVector};
 use prima_core::{Number, Real, Value};
-use prima_runtime::stdlib::register_namespace;
-use prima_runtime::{Evaluator, Function, NamespaceItem, RuntimeError};
-
-type Native = fn(&mut Evaluator, &[Value]) -> Result<Value, RuntimeError>;
-
-fn native(name: &'static str, call: Native) -> NamespaceItem {
-    NamespaceItem::Func(Function::Native { name, call })
-}
+use prima_runtime::stdlib::register_impl;
+use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
     if args.len() == n {
@@ -29,33 +21,33 @@ fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
     }
 }
 
-/// Register the `linalg` namespace (spec appendix B.2). `Matrix::*` items resolve through the
-/// flattened module-item lookup (`linalg::Matrix::zeros`, see `eval::resolve_func`).
+/// Register the `linalg` `@builtin` implementations (spec §18.4 / appendix B.2). Each `@builtin`
+/// declaration in the embedded `linalg.pra` signature module binds to the implementation registered
+/// under its fully-qualified key (`linalg::Matrix::zeros` resolves `Matrix::zeros` via the flattened
+/// module-item lookup, see `eval::resolve_func`).
 pub fn register() {
-    let mut items = HashMap::new();
-    items.insert("Matrix::zeros".into(), native("linalg::Matrix::zeros", matrix_zeros));
-    items.insert("Matrix::ones".into(), native("linalg::Matrix::ones", matrix_ones));
-    items.insert("Matrix::identity".into(), native("linalg::Matrix::identity", matrix_identity));
-    items.insert("Matrix::diagonal".into(), native("linalg::Matrix::diagonal", matrix_diagonal));
-    items.insert("Matrix::from_rows".into(), native("linalg::Matrix::from_rows", matrix_from_rows));
-    items.insert("Matrix::from_cols".into(), native("linalg::Matrix::from_cols", matrix_from_cols));
-    items.insert("transpose".into(), native("linalg::transpose", transpose));
-    items.insert("inverse".into(), native("linalg::inverse", inverse));
-    items.insert("determinant".into(), native("linalg::determinant", determinant));
-    items.insert("trace".into(), native("linalg::trace", trace));
-    items.insert("rank".into(), native("linalg::rank", rank));
-    items.insert("norm".into(), native("linalg::norm", norm));
-    items.insert("cond".into(), native("linalg::cond", cond));
-    items.insert("dot".into(), native("linalg::dot", dot));
-    items.insert("cross".into(), native("linalg::cross", cross));
-    items.insert("lu".into(), native("linalg::lu", lu));
-    items.insert("qr".into(), native("linalg::qr", qr));
-    items.insert("svd".into(), native("linalg::svd", svd));
-    items.insert("eigen".into(), native("linalg::eigen", eigen));
-    items.insert("cholesky".into(), native("linalg::cholesky", cholesky));
-    items.insert("solve".into(), native("linalg::solve", solve));
-    items.insert("lstsq".into(), native("linalg::lstsq", lstsq));
-    register_namespace("linalg", items);
+    register_impl("linalg::Matrix::zeros", matrix_zeros);
+    register_impl("linalg::Matrix::ones", matrix_ones);
+    register_impl("linalg::Matrix::identity", matrix_identity);
+    register_impl("linalg::Matrix::diagonal", matrix_diagonal);
+    register_impl("linalg::Matrix::from_rows", matrix_from_rows);
+    register_impl("linalg::Matrix::from_cols", matrix_from_cols);
+    register_impl("linalg::transpose", transpose);
+    register_impl("linalg::inverse", inverse);
+    register_impl("linalg::determinant", determinant);
+    register_impl("linalg::trace", trace);
+    register_impl("linalg::rank", rank);
+    register_impl("linalg::norm", norm);
+    register_impl("linalg::cond", cond);
+    register_impl("linalg::dot", dot);
+    register_impl("linalg::cross", cross);
+    register_impl("linalg::lu", lu);
+    register_impl("linalg::qr", qr);
+    register_impl("linalg::svd", svd);
+    register_impl("linalg::eigen", eigen);
+    register_impl("linalg::cholesky", cholesky);
+    register_impl("linalg::solve", solve);
+    register_impl("linalg::lstsq", lstsq);
 }
 
 // —— value conversion helpers (spec §11.3 representation) ——

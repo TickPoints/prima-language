@@ -1,0 +1,10 @@
+// `sys::os` module signatures (spec §18.4 / appendix B.5).
+// `@builtin` declarations are signature-only: each binds to the Rust-hosted implementation
+// registered under `sys::os::<name>` (spec §18.4).
+
+@builtin
+pub fn name() -> String;
+@builtin
+pub fn arch() -> String;
+@builtin
+pub fn exit(code: Integer);

@@ -2,18 +2,11 @@
 //! and parsing. Times are `Value::Number` unix seconds (`Number::I64` for whole seconds); durations
 //! are also seconds and may be fractional (`Rational`/`F64`).
 
-use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use prima_core::{Number, Real, Value};
-use prima_runtime::stdlib::register_namespace;
-use prima_runtime::{Evaluator, Function, NamespaceItem, RuntimeError};
-
-type Native = fn(&mut Evaluator, &[Value]) -> Result<Value, RuntimeError>;
-
-fn native(name: &'static str, call: Native) -> NamespaceItem {
-    NamespaceItem::Func(Function::Native { name, call })
-}
+use prima_runtime::stdlib::register_impl;
+use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
     if args.len() == n {
@@ -43,18 +36,18 @@ fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeEr
     }
 }
 
-/// Register the `time` namespace (spec §18.3).
+/// Register the `time` `@builtin` implementations (spec §18.4 / §18.3). Each `@builtin`
+/// declaration in the embedded `time.pra` signature module binds to the implementation registered
+/// under its fully-qualified key (`time::Duration::from_secs` resolves `Duration::from_secs` via the
+/// flattened module-item lookup, see `eval::resolve_func`).
 pub fn register() {
-    let mut items = HashMap::new();
-    items.insert("now".into(), native("time::now", time_now));
-    items.insert("sleep".into(), native("time::sleep", time_sleep));
-    items.insert("unix_timestamp".into(), native("time::unix_timestamp", time_unix_timestamp));
-    items.insert("format".into(), native("time::format", time_format));
-    items.insert("parse".into(), native("time::parse", time_parse));
-    // `time::Duration::from_secs` resolves via the flattened module-item lookup (see `eval::resolve_func`).
-    items.insert("Duration::from_secs".into(), native("time::Duration::from_secs", duration_from_secs));
-    items.insert("Duration::from_millis".into(), native("time::Duration::from_millis", duration_from_millis));
-    register_namespace("time", items);
+    register_impl("time::now", time_now);
+    register_impl("time::sleep", time_sleep);
+    register_impl("time::unix_timestamp", time_unix_timestamp);
+    register_impl("time::format", time_format);
+    register_impl("time::parse", time_parse);
+    register_impl("time::Duration::from_secs", duration_from_secs);
+    register_impl("time::Duration::from_millis", duration_from_millis);
 }
 
 fn time_now(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {

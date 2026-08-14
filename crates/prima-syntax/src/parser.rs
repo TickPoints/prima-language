@@ -314,7 +314,7 @@ impl Parser {
         let stmt = match self.peek().clone() {
             TokenKind::KwLet => self.parse_let_stmt()?,
             TokenKind::KwConst => self.parse_const_stmt()?,
-            TokenKind::KwFn => self.parse_fn_stmt(annotations.contains(&Annotation::Builtin))?,
+            TokenKind::KwFn => self.parse_fn_stmt(&annotations)?,
             TokenKind::KwClass => self.parse_class_def()?,
             TokenKind::KwImpl => self.parse_impl_stmt()?,
             TokenKind::KwFor => self.parse_for_stmt(false)?,
@@ -332,10 +332,18 @@ impl Parser {
                 });
             }
             TokenKind::KwWith => self.parse_with_stmt()?,
-            TokenKind::KwPub => self.parse_pub_stmt()?,
+            TokenKind::KwPub => self.parse_pub_stmt(&annotations)?,
             _ => self.parse_expr_or_assign_stmt()?,
         };
-        let stmt = if annotations.is_empty() { stmt } else { self.apply_annotations(stmt, &annotations)? };
+        // `@builtin fn` / `@builtin pub fn` fold the statement-level annotations into the `FnDef`
+        // during parsing (they drive path names and the signature-only body, spec §18.4); classes
+        // and other annotated items still attach them here. A `pub` wraps the item, which has
+        // already handled the annotations itself.
+        let stmt = match &stmt {
+            Stmt::FnDef { .. } | Stmt::Pub(_) => stmt,
+            _ if !annotations.is_empty() => self.apply_annotations(stmt, &annotations)?,
+            _ => stmt,
+        };
         // Statement terminator (spec §4.2): block-level statements may omit `;`; the rest require `;` (newline is deprecated, W0001).
         match &stmt {
             Stmt::FnDef { .. }
@@ -447,10 +455,25 @@ impl Parser {
         Ok(Stmt::Const { name, type_ann, value, span })
     }
 
-    fn parse_fn_stmt(&mut self, builtin_signature_only: bool) -> Result<Stmt, SyntaxError> {
+    fn parse_fn_stmt(&mut self, stmt_annotations: &[Annotation]) -> Result<Stmt, SyntaxError> {
         let start = self.bump().span;
         self.skip_newlines();
         let name = self.parse_ident("function name")?;
+        // A `@builtin` fn carries an optional `::`-joined path name (`Matrix::zeros`, spec §18.4),
+        // which is exported under that joined key for module-qualified calls. Only `@builtin` fns
+        // accept the path form; a plain `fn a::b() {}` stays an error (`expected `(``).
+        let name = if stmt_annotations.contains(&Annotation::Builtin) && self.at(&TokenKind::ColonColon) {
+            let mut joined = name.value;
+            while self.eat(&TokenKind::ColonColon).is_some() {
+                self.skip_newlines();
+                let seg = self.parse_ident("`@builtin` function name segment")?;
+                joined.push_str("::");
+                joined.push_str(&seg.value);
+            }
+            Spanned { value: joined, span: name.span }
+        } else {
+            name
+        };
         let params = self.parse_params()?;
         self.skip_newlines();
         let ret = if self.at(&TokenKind::Arrow) {
@@ -461,11 +484,18 @@ impl Parser {
         } else {
             None
         };
-        let annotations = self.parse_annotations()?;
+        let mut annotations = self.parse_annotations()?;
+        // Fold in the statement-level annotations (`@builtin fn` / `@builtin pub fn`), so the
+        // signature-only body decision and the binding step see one merged set (spec §18.4).
+        for a in stmt_annotations {
+            if !annotations.contains(a) {
+                annotations.push(*a);
+            }
+        }
         // Signature-only `@builtin fn` (spec §18.4): no body — the implementation is the Rust host
         // builtin of the same name. A `@builtin` before the signature (statement level) or after it
         // both mark the signature-only form.
-        let is_builtin = annotations.contains(&Annotation::Builtin) || builtin_signature_only;
+        let is_builtin = annotations.contains(&Annotation::Builtin);
         let body = if is_builtin && !self.at(&TokenKind::LBrace) {
             self.end_statement();
             Block { stmts: Vec::new(), span: start }
@@ -952,7 +982,7 @@ impl Parser {
         Ok(Stmt::WithConfig { entries, body, span })
     }
 
-    fn parse_pub_stmt(&mut self) -> Result<Stmt, SyntaxError> {
+    fn parse_pub_stmt(&mut self, outer_annotations: &[Annotation]) -> Result<Stmt, SyntaxError> {
         let start = self.bump().span;
         self.skip_newlines();
         // `pub(mod)` at statement level (spec §15.2): consumed and ignored for statements (visibility matters for class members).
@@ -967,7 +997,17 @@ impl Parser {
             self.skip_newlines();
         }
         let inner = match self.peek().clone() {
-            TokenKind::KwLet | TokenKind::KwConst | TokenKind::KwFn | TokenKind::KwClass => self.parse_stmt()?,
+            // `fn` folds in the outer statement-level annotations (e.g. `@builtin pub fn`) during
+            // parsing, since the signature-only body and `::`-joined names depend on them (spec §18.4).
+            TokenKind::KwFn => self.parse_fn_stmt(outer_annotations)?,
+            TokenKind::KwLet | TokenKind::KwConst | TokenKind::KwClass => {
+                let stmt = self.parse_stmt()?;
+                if outer_annotations.is_empty() {
+                    stmt
+                } else {
+                    self.apply_annotations(stmt, outer_annotations)?
+                }
+            }
             _ => return Err(self.err(self.span(), "expected `let`, `const`, `fn`, or `class` after `pub`".into())),
         };
         let _ = start;
@@ -1959,5 +1999,63 @@ mod tests {
     #[test]
     fn negative_set_literal_with_colon() {
         assert!(parse_err("{1, 2: 3}"));
+    }
+
+    #[test]
+    fn builtin_fn_accepts_path_name() {
+        // Spec §18.4: a signature-only `@builtin pub fn` may carry a `::`-joined name, exported
+        // under that joined key for module-qualified calls (`linalg::Matrix::zeros`).
+        let program = crate::parse("@builtin pub fn Matrix::zeros(rows: Integer, cols: Integer) -> Matrix<F64>;")
+            .expect("parse failed");
+        let stmt = program.stmts.into_iter().next().expect("expected a statement");
+        match stmt {
+            Stmt::Pub(inner) => match *inner {
+                Stmt::FnDef { name, params, annotations, body, ret, .. } => {
+                    assert_eq!(name.value, "Matrix::zeros");
+                    assert!(annotations.contains(&Annotation::Builtin));
+                    assert_eq!(params.len(), 2);
+                    assert!(matches!(ret, Some(Type::Matrix(_))));
+                    assert!(body.stmts.is_empty(), "signature-only builtin must have an empty body");
+                }
+                other => panic!("expected FnDef, got {other:?}"),
+            },
+            other => panic!("expected Pub, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn builtin_fn_accepts_path_name_without_pub() {
+        let program = crate::parse("@builtin fn Util::twice(x: Integer) -> Integer;").expect("parse failed");
+        let stmt = program.stmts.into_iter().next().expect("expected a statement");
+        match stmt {
+            Stmt::FnDef { name, annotations, body, .. } => {
+                assert_eq!(name.value, "Util::twice");
+                assert!(annotations.contains(&Annotation::Builtin));
+                assert!(body.stmts.is_empty());
+            }
+            other => panic!("expected FnDef, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn non_builtin_fn_rejects_path_name() {
+        assert!(parse_err("fn a::b() {}"), "path names are only allowed on `@builtin` fns");
+    }
+
+    #[test]
+    fn builtin_pub_fn_signature_only_without_path() {
+        // `@builtin pub fn` (annotation before `pub`) must also parse the signature-only form.
+        let program = crate::parse("@builtin pub fn answer() -> Integer;").expect("parse failed");
+        match program.stmts.into_iter().next().expect("expected a statement") {
+            Stmt::Pub(inner) => match *inner {
+                Stmt::FnDef { name, annotations, body, .. } => {
+                    assert_eq!(name.value, "answer");
+                    assert!(annotations.contains(&Annotation::Builtin));
+                    assert!(body.stmts.is_empty());
+                }
+                other => panic!("expected FnDef, got {other:?}"),
+            },
+            other => panic!("expected Pub, got {other:?}"),
+        }
     }
 }

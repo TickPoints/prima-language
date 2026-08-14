@@ -1,20 +1,13 @@
 //! `num` module (spec §18.3 note / appendix B.5): integer number theory (`gcd`/`lcm`/`is_prime`/
 //! `next_prime`), a self-contained PRNG (`random_integer`), and base conversion (`to_base`/`from_base`).
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use num_bigint::BigInt;
 use prima_core::{Number, Value};
-use prima_runtime::stdlib::register_namespace;
-use prima_runtime::{Evaluator, Function, NamespaceItem, RuntimeError};
-
-type Native = fn(&mut Evaluator, &[Value]) -> Result<Value, RuntimeError>;
-
-fn native(name: &'static str, call: Native) -> NamespaceItem {
-    NamespaceItem::Func(Function::Native { name, call })
-}
+use prima_runtime::stdlib::register_impl;
+use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
     if args.len() == n {
@@ -58,17 +51,17 @@ fn radix_arg(args: &[Value], i: usize, fname: &str) -> Result<u32, RuntimeError>
     }
 }
 
-/// Register the `num` namespace (spec §18.3 note / appendix B.5).
+/// Register the `num` `@builtin` implementations (spec §18.4 / §18.3 note / appendix B.5). Each
+/// `@builtin` declaration in the embedded `num.pra` signature module binds to the implementation
+/// registered under its fully-qualified `num::<name>` key (spec §18.4).
 pub fn register() {
-    let mut items = HashMap::new();
-    items.insert("gcd".into(), native("num::gcd", gcd));
-    items.insert("lcm".into(), native("num::lcm", lcm));
-    items.insert("is_prime".into(), native("num::is_prime", is_prime));
-    items.insert("next_prime".into(), native("num::next_prime", next_prime));
-    items.insert("random_integer".into(), native("num::random_integer", random_integer));
-    items.insert("to_base".into(), native("num::to_base", to_base));
-    items.insert("from_base".into(), native("num::from_base", from_base));
-    register_namespace("num", items);
+    register_impl("num::gcd", gcd);
+    register_impl("num::lcm", lcm);
+    register_impl("num::is_prime", is_prime);
+    register_impl("num::next_prime", next_prime);
+    register_impl("num::random_integer", random_integer);
+    register_impl("num::to_base", to_base);
+    register_impl("num::from_base", from_base);
 }
 
 fn gcd(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {

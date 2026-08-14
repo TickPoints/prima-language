@@ -1,0 +1,16 @@
+// `sys::path` module signatures (spec §18.4 / appendix B.5).
+// `@builtin` declarations are signature-only: each binds to the Rust-hosted implementation
+// registered under `sys::path::<name>` (spec §18.4).
+
+@builtin
+pub fn join(a: String, b: String) -> String;
+@builtin
+pub fn file_name(p: String) -> Option<String>;
+@builtin
+pub fn extension(p: String) -> Option<String>;
+@builtin
+pub fn parent(p: String) -> Option<String>;
+@builtin
+pub fn is_absolute(p: String) -> Bool;
+@builtin
+pub fn canonicalize(p: String) -> Result<String, String>;

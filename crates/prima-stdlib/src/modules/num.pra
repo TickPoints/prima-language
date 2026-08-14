@@ -1,0 +1,18 @@
+// `num` module signatures (spec §18.4 / appendix B.5).
+// `@builtin` declarations are signature-only: each binds to the Rust-hosted implementation
+// registered under `num::<name>` (spec §18.4).
+
+@builtin
+pub fn gcd(a: Integer, b: Integer) -> Integer;
+@builtin
+pub fn lcm(a: Integer, b: Integer) -> Integer;
+@builtin
+pub fn is_prime(n: Integer) -> Bool;
+@builtin
+pub fn next_prime(n: Integer) -> Integer;
+@builtin
+pub fn random_integer(a: Integer, b: Integer) -> Integer;
+@builtin
+pub fn to_base(n: Integer, radix: Integer) -> String;
+@builtin
+pub fn from_base(s: String, radix: Integer) -> Result<Integer, String>;

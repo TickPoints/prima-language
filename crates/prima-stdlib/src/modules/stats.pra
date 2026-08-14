@@ -1,0 +1,49 @@
+// `stats` module signatures (spec §18.4 / appendix B.3).
+// `@builtin` declarations are signature-only: each binds to the Rust-hosted implementation
+// registered under `stats::<name>` (spec §18.4). Distribution constructors return a descriptor
+// `Dict`; `quantile` is overloaded on a data array or a distribution descriptor.
+
+@builtin
+pub fn mean(data: Array<F64>) -> F64;
+@builtin
+pub fn median(data: Array<F64>) -> F64;
+@builtin
+pub fn mode(data: Array<F64>) -> F64;
+@builtin
+pub fn variance(data: Array<F64>) -> F64;
+@builtin
+pub fn std(data: Array<F64>) -> F64;
+@builtin
+pub fn quantile(data: Array<F64>, q: F64) -> F64;
+@builtin
+pub fn percentile(data: Array<F64>, p: F64) -> F64;
+@builtin
+pub fn range(data: Array<F64>) -> F64;
+@builtin
+pub fn min(data: Array<F64>) -> F64;
+@builtin
+pub fn max(data: Array<F64>) -> F64;
+@builtin
+pub fn cov(x: Array<F64>, y: Array<F64>) -> F64;
+@builtin
+pub fn corr(x: Array<F64>, y: Array<F64>) -> F64;
+@builtin
+pub fn spearman(x: Array<F64>, y: Array<F64>) -> F64;
+@builtin
+pub fn Normal(mu: F64, sigma: F64) -> Dict;
+@builtin
+pub fn Uniform(a: F64, b: F64) -> Dict;
+@builtin
+pub fn Exponential(lambda: F64) -> Dict;
+@builtin
+pub fn Binomial(n: Integer, p: F64) -> Dict;
+@builtin
+pub fn Poisson(lambda: F64) -> Dict;
+@builtin
+pub fn pdf(dist: Dict, x: F64) -> F64;
+@builtin
+pub fn cdf(dist: Dict, x: F64) -> F64;
+@builtin
+pub fn quantile(dist: Dict, p: F64) -> F64;
+@builtin
+pub fn sample(dist: Dict, n: Integer) -> Array<F64>;

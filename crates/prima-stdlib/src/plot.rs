@@ -4,19 +4,12 @@
 //! `savefig` renders the whole figure at once. State is process-global (`OnceLock<Mutex<PlotState>>`)
 //! because the interpreter calls the `plot` functions sequentially; the module never runs inside rayon.
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use prima_core::Value;
-use prima_runtime::stdlib::register_namespace;
-use prima_runtime::{Evaluator, Function, NamespaceItem, RuntimeError};
-
-type Native = fn(&mut Evaluator, &[Value]) -> Result<Value, RuntimeError>;
-
-fn native(name: &'static str, call: Native) -> NamespaceItem {
-    NamespaceItem::Func(Function::Native { name, call })
-}
+use prima_runtime::stdlib::register_impl;
+use prima_runtime::{Evaluator, RuntimeError};
 
 /// Plot series kind (spec §B.4): `plot`/`line` draw lines, `scatter` draws point markers,
 /// `bar` draws per-x rectangles.
@@ -162,24 +155,24 @@ fn label(text: String) -> Option<String> {
     }
 }
 
-/// Register the `plot` namespace (spec §18 / appendix B.4).
+/// Register the `plot` `@builtin` implementations (spec §18.4 / appendix B.4). Each `@builtin`
+/// declaration in the embedded `plot.pra` signature module binds to the implementation registered
+/// under its fully-qualified `plot::<name>` key (spec §18.4).
 pub fn register() {
-    let mut items = HashMap::new();
-    items.insert("plot".into(), native("plot::plot", plot));
-    items.insert("scatter".into(), native("plot::scatter", scatter));
-    items.insert("line".into(), native("plot::line", line));
-    items.insert("bar".into(), native("plot::bar", bar));
-    items.insert("xlabel".into(), native("plot::xlabel", xlabel));
-    items.insert("ylabel".into(), native("plot::ylabel", ylabel));
-    items.insert("title".into(), native("plot::title", title));
-    items.insert("legend".into(), native("plot::legend", legend));
-    items.insert("xlim".into(), native("plot::xlim", xlim));
-    items.insert("ylim".into(), native("plot::ylim", ylim));
-    items.insert("grid".into(), native("plot::grid", grid));
-    items.insert("savefig".into(), native("plot::savefig", savefig));
-    items.insert("show".into(), native("plot::show", show));
-    items.insert("clear".into(), native("plot::clear", clear));
-    register_namespace("plot", items);
+    register_impl("plot::plot", plot);
+    register_impl("plot::scatter", scatter);
+    register_impl("plot::line", line);
+    register_impl("plot::bar", bar);
+    register_impl("plot::xlabel", xlabel);
+    register_impl("plot::ylabel", ylabel);
+    register_impl("plot::title", title);
+    register_impl("plot::legend", legend);
+    register_impl("plot::xlim", xlim);
+    register_impl("plot::ylim", ylim);
+    register_impl("plot::grid", grid);
+    register_impl("plot::savefig", savefig);
+    register_impl("plot::show", show);
+    register_impl("plot::clear", clear);
 }
 
 /// `plot(x, y, label = "", color = "blue")` — line series (spec §B.4).

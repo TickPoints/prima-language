@@ -54,8 +54,7 @@ fn time_unix_timestamp_of_now_is_positive() {
 
 #[test]
 fn time_format_epoch_year() {
-    let v = eval("import time;\ntime::format(0, \"%Y\")");
-    assert_eq!(v, Value::String("1970".into()));
+    assert_eq!(eval("import time;\ntime::format(0, \"%Y\")"), Value::String("1970".into()));
 }
 
 #[test]

@@ -1,0 +1,34 @@
+// `plot` module signatures (spec §18.4 / appendix B.4).
+// `@builtin` declarations are signature-only: each binds to the Rust-hosted implementation
+// registered under `plot::<name>` (spec §18.4). Plotting accumulates state until `savefig`/`show`;
+// the optional trailing series arguments are declared as required here and the implementation
+// fills defaults when a call omits them.
+
+@builtin
+pub fn plot(x: Array<F64>, y: Array<F64>, label: String, color: String);
+@builtin
+pub fn scatter(x: Array<F64>, y: Array<F64>, label: String, marker: String);
+@builtin
+pub fn line(x: Array<F64>, y: Array<F64>, label: String, linestyle: String);
+@builtin
+pub fn bar(x: Array<F64>, y: Array<F64>, label: String);
+@builtin
+pub fn xlabel(text: String);
+@builtin
+pub fn ylabel(text: String);
+@builtin
+pub fn title(text: String);
+@builtin
+pub fn legend(location: String);
+@builtin
+pub fn xlim(min: F64, max: F64);
+@builtin
+pub fn ylim(min: F64, max: F64);
+@builtin
+pub fn grid(visible: Bool);
+@builtin
+pub fn savefig(filename: String, format: String, dpi: Integer);
+@builtin
+pub fn show();
+@builtin
+pub fn clear();

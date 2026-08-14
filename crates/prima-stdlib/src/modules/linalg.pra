@@ -1,0 +1,48 @@
+// `linalg` module signatures (spec §18.4 / appendix B.2).
+// `@builtin` declarations are signature-only: the implementations are the Rust-hosted functions
+// registered under `linalg::<name>` / `linalg::Matrix::<name>` (spec §18.4).
+
+@builtin
+pub fn Matrix::zeros(rows: Integer, cols: Integer) -> Matrix<F64>;
+@builtin
+pub fn Matrix::ones(rows: Integer, cols: Integer) -> Matrix<F64>;
+@builtin
+pub fn Matrix::identity(n: Integer) -> Matrix<F64>;
+@builtin
+pub fn Matrix::diagonal(values: Array<F64>) -> Matrix<F64>;
+@builtin
+pub fn Matrix::from_rows(data: Array<Array<F64>>) -> Matrix<F64>;
+@builtin
+pub fn Matrix::from_cols(data: Array<Array<F64>>) -> Matrix<F64>;
+@builtin
+pub fn transpose(M: Matrix<F64>) -> Matrix<F64>;
+@builtin
+pub fn inverse(M: Matrix<F64>) -> Matrix<F64>;
+@builtin
+pub fn determinant(M: Matrix<F64>) -> F64;
+@builtin
+pub fn trace(M: Matrix<F64>) -> F64;
+@builtin
+pub fn rank(M: Matrix<F64>) -> Integer;
+@builtin
+pub fn norm(M: Matrix<F64>, p: Integer) -> F64;
+@builtin
+pub fn cond(M: Matrix<F64>) -> F64;
+@builtin
+pub fn dot(v1: Array<F64>, v2: Array<F64>) -> F64;
+@builtin
+pub fn cross(v1: Array<F64>, v2: Array<F64>) -> Array<F64>;
+@builtin
+pub fn lu(M: Matrix<F64>) -> Tuple<Matrix<F64>, Matrix<F64>>;
+@builtin
+pub fn qr(M: Matrix<F64>) -> Tuple<Matrix<F64>, Matrix<F64>>;
+@builtin
+pub fn svd(M: Matrix<F64>) -> Tuple<Matrix<F64>, Array<F64>, Matrix<F64>>;
+@builtin
+pub fn eigen(M: Matrix<F64>) -> Tuple<Array<F64>, Matrix<F64>>;
+@builtin
+pub fn cholesky(M: Matrix<F64>) -> Matrix<F64>;
+@builtin
+pub fn solve(A: Matrix<F64>, b: Array<F64>) -> Array<F64>;
+@builtin
+pub fn lstsq(A: Matrix<F64>, b: Array<F64>) -> Array<F64>;

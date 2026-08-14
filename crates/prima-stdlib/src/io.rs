@@ -10,14 +10,8 @@ use std::fs;
 use std::path::Path;
 
 use prima_core::{Number, Value, ValueKey};
-use prima_runtime::stdlib::register_namespace;
-use prima_runtime::{Evaluator, Function, NamespaceItem, RuntimeError};
-
-type Native = fn(&mut Evaluator, &[Value]) -> Result<Value, RuntimeError>;
-
-fn native(name: &'static str, call: Native) -> NamespaceItem {
-    NamespaceItem::Func(Function::Native { name, call })
-}
+use prima_runtime::stdlib::register_impl;
+use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
     if args.len() == n {
@@ -65,22 +59,22 @@ fn err(msg: String) -> Value {
     Value::Result(Err(msg))
 }
 
-/// Register the `io` namespace (spec §18): file I/O, JSON, and CSV helpers.
+/// Register the `io` `@builtin` implementations (spec §18.4 / appendix B.2): file I/O, JSON, and
+/// CSV helpers. Each `@builtin` declaration in the embedded `io.pra` signature module binds to the
+/// implementation registered under its fully-qualified `io::<name>` key (spec §18.4).
 pub fn register() {
-    let mut items = HashMap::new();
-    items.insert("read_file".into(), native("io::read_file", read_file));
-    items.insert("write_file".into(), native("io::write_file", write_file));
-    items.insert("read_lines".into(), native("io::read_lines", read_lines));
-    items.insert("exists".into(), native("io::exists", exists));
-    items.insert("json_parse".into(), native("io::json_parse", json_parse));
-    items.insert("json_stringify".into(), native("io::json_stringify", json_stringify));
-    items.insert("read_json".into(), native("io::read_json", read_json));
-    items.insert("write_json".into(), native("io::write_json", write_json));
-    items.insert("csv_parse".into(), native("io::csv_parse", csv_parse));
-    items.insert("csv_stringify".into(), native("io::csv_stringify", csv_stringify));
-    items.insert("read_csv".into(), native("io::read_csv", read_csv));
-    items.insert("write_csv".into(), native("io::write_csv", write_csv));
-    register_namespace("io", items);
+    register_impl("io::read_file", read_file);
+    register_impl("io::write_file", write_file);
+    register_impl("io::read_lines", read_lines);
+    register_impl("io::exists", exists);
+    register_impl("io::json_parse", json_parse);
+    register_impl("io::json_stringify", json_stringify);
+    register_impl("io::read_json", read_json);
+    register_impl("io::write_json", write_json);
+    register_impl("io::csv_parse", csv_parse);
+    register_impl("io::csv_stringify", csv_stringify);
+    register_impl("io::read_csv", read_csv);
+    register_impl("io::write_csv", write_csv);
 }
 
 // ——— file I/O (spec §18) ———

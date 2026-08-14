@@ -12,14 +12,8 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use prima_core::{Number, Real, Value, ValueKey};
-use prima_runtime::stdlib::register_namespace;
-use prima_runtime::{Evaluator, Function, NamespaceItem, RuntimeError};
-
-type Native = fn(&mut Evaluator, &[Value]) -> Result<Value, RuntimeError>;
-
-fn native(name: &'static str, call: Native) -> NamespaceItem {
-    NamespaceItem::Func(Function::Native { name, call })
-}
+use prima_runtime::stdlib::register_impl;
+use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
     if args.len() == n {
@@ -124,31 +118,31 @@ fn ranks(d: &[f64]) -> Vec<f64> {
     r
 }
 
-/// Register the `stats` namespace (spec §18.4 / appendix B.3).
+/// Register the `stats` `@builtin` implementations (spec §18.4 / appendix B.3). Each `@builtin`
+/// declaration in the embedded `stats.pra` signature module binds to the implementation registered
+/// under its fully-qualified `stats::<name>` key (spec §18.4).
 pub fn register() {
-    let mut items = HashMap::new();
-    items.insert("mean".into(), native("stats::mean", mean));
-    items.insert("median".into(), native("stats::median", median));
-    items.insert("mode".into(), native("stats::mode", mode));
-    items.insert("variance".into(), native("stats::variance", variance));
-    items.insert("std".into(), native("stats::std", std_dev));
-    items.insert("quantile".into(), native("stats::quantile", quantile));
-    items.insert("percentile".into(), native("stats::percentile", percentile));
-    items.insert("range".into(), native("stats::range", range));
-    items.insert("min".into(), native("stats::min", min_val));
-    items.insert("max".into(), native("stats::max", max_val));
-    items.insert("cov".into(), native("stats::cov", cov));
-    items.insert("corr".into(), native("stats::corr", corr));
-    items.insert("spearman".into(), native("stats::spearman", spearman));
-    items.insert("Normal".into(), native("stats::Normal", normal_dist));
-    items.insert("Uniform".into(), native("stats::Uniform", uniform_dist));
-    items.insert("Exponential".into(), native("stats::Exponential", exponential_dist));
-    items.insert("Binomial".into(), native("stats::Binomial", binomial_dist));
-    items.insert("Poisson".into(), native("stats::Poisson", poisson_dist));
-    items.insert("pdf".into(), native("stats::pdf", pdf));
-    items.insert("cdf".into(), native("stats::cdf", cdf));
-    items.insert("sample".into(), native("stats::sample", sample));
-    register_namespace("stats", items);
+    register_impl("stats::mean", mean);
+    register_impl("stats::median", median);
+    register_impl("stats::mode", mode);
+    register_impl("stats::variance", variance);
+    register_impl("stats::std", std_dev);
+    register_impl("stats::quantile", quantile);
+    register_impl("stats::percentile", percentile);
+    register_impl("stats::range", range);
+    register_impl("stats::min", min_val);
+    register_impl("stats::max", max_val);
+    register_impl("stats::cov", cov);
+    register_impl("stats::corr", corr);
+    register_impl("stats::spearman", spearman);
+    register_impl("stats::Normal", normal_dist);
+    register_impl("stats::Uniform", uniform_dist);
+    register_impl("stats::Exponential", exponential_dist);
+    register_impl("stats::Binomial", binomial_dist);
+    register_impl("stats::Poisson", poisson_dist);
+    register_impl("stats::pdf", pdf);
+    register_impl("stats::cdf", cdf);
+    register_impl("stats::sample", sample);
 }
 
 fn mean(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
