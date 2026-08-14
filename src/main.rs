@@ -4,10 +4,15 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use prima_runtime::check::check_src;
 use prima_runtime::Evaluator;
+use prima_syntax::parse_checked;
 
 mod diagnostics;
+mod doc;
+mod fmt;
+mod repl;
+mod testcmd;
 
-/// Prima toolchain CLI (spec §20): `run`/`parse`/`check` are available; the remaining subcommands are placeholders.
+/// Prima toolchain CLI (spec §20): `run`/`parse`/`compile`/`check`/`repl`/`fmt`/`test`/`doc`.
 #[derive(Parser)]
 #[command(name = "prima", version, about = "Prima language toolchain")]
 struct Cli {
@@ -27,10 +32,23 @@ enum Command {
         emit_headers: bool,
     },
     Repl,
-    Fmt { path: PathBuf },
-    Check { file: PathBuf },
-    Test,
-    Doc,
+    Fmt {
+        path: PathBuf,
+        #[arg(short, long)]
+        write: bool,
+        #[arg(long)]
+        check: bool,
+    },
+    Check {
+        file: PathBuf,
+        /// Promote the given warning codes (e.g. `W0001`) to errors (spec §16.5).
+        #[arg(long = "deny")]
+        deny: Vec<String>,
+    },
+    Test {
+        path: Option<PathBuf>,
+    },
+    Doc { path: PathBuf },
 }
 
 fn main() -> ExitCode {
@@ -39,16 +57,20 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Run { file } => run_file(&file),
         Command::Parse { file } => parse_file(&file),
-        Command::Check { file } => check_file(&file),
+        Command::Check { file, deny } => check_file(&file, &deny),
         Command::Compile { file, output, emit_headers: true } => compile_headers(&file, output.as_deref()),
-        _ => {
-            eprintln!("not implemented yet");
+        Command::Compile { emit_headers: false, .. } => {
+            diagnostics::print_colored_error("compilation requires `--emit-headers` in this build (spec §20)");
             ExitCode::FAILURE
         }
+        Command::Repl => repl::run(),
+        Command::Fmt { path, write, check } => fmt::run(&path, write, check),
+        Command::Test { path } => testcmd::run(&path.unwrap_or_else(|| PathBuf::from(testcmd::DEFAULT_DIR))),
+        Command::Doc { path } => doc::run(&path),
     }
 }
 
-fn read_src(file: &Path) -> Result<String, ExitCode> {
+pub(crate) fn read_src(file: &Path) -> Result<String, ExitCode> {
     match std::fs::read_to_string(file) {
         Ok(s) => Ok(s),
         Err(e) => {
@@ -79,18 +101,47 @@ fn run_file(file: &Path) -> ExitCode {
     }
 }
 
-// Static check (spec §16.2/§16.4): collect syntax and statically detectable type errors without executing.
-fn check_file(file: &Path) -> ExitCode {
+// Static check (spec §16.2/§16.4/§16.5): collect syntax and statically detectable type errors
+// without executing. All parse warnings are rendered; a warning whose code is in the `--deny`
+// set is promoted to an error and makes the check fail.
+fn check_file(file: &Path, deny: &[String]) -> ExitCode {
     let source = match read_src(file) {
         Ok(s) => s,
         Err(code) => return code,
     };
-    let errors = check_src(&source);
-    if errors.is_empty() {
-        return ExitCode::SUCCESS;
+    let (_, syntax_errors, warnings) = parse_checked(&source);
+    if !syntax_errors.is_empty() {
+        diagnostics::report_syntax_errors(file, &source, &syntax_errors);
+        return ExitCode::FAILURE;
     }
-    diagnostics::report_type_errors(file, &source, &errors);
-    ExitCode::FAILURE
+
+    let errors = check_src(&source);
+    let denied: Vec<_> = warnings
+        .iter()
+        .filter(|w| deny.iter().any(|d| d == w.code))
+        .cloned()
+        .collect();
+    let allowed: Vec<_> = warnings
+        .iter()
+        .filter(|w| !deny.iter().any(|d| d == w.code))
+        .cloned()
+        .collect();
+
+    if !allowed.is_empty() {
+        diagnostics::report_warnings(file, &source, &allowed);
+    }
+    if !denied.is_empty() {
+        diagnostics::report_denied_warnings(file, &source, &denied);
+    }
+    if !errors.is_empty() {
+        diagnostics::report_type_errors(file, &source, &errors);
+    }
+
+    if errors.is_empty() && denied.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 fn parse_file(file: &Path) -> ExitCode {

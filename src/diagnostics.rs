@@ -8,24 +8,27 @@
 use std::io::Write;
 use std::path::Path;
 
-use codespan_reporting::diagnostic::{Diagnostic, Label};
+use codespan_reporting::diagnostic::{Diagnostic, Label, Severity};
 use codespan_reporting::files::SimpleFile;
 use codespan_reporting::term::termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 use codespan_reporting::term::{emit_to_write_style, Chars, Config};
 use prima_runtime::check::TypeError;
 use prima_runtime::error::RuntimeError;
-use prima_syntax::error::SyntaxError;
+use prima_syntax::error::{SyntaxError, SyntaxWarning};
 
 /// rustc-style rendering (`--> file:line:col`, spec §16.4).
 fn term_config() -> Config {
     Config { chars: Chars::ascii(), ..Config::default() }
 }
 
-/// Render a full diagnostic: `error: <message>` header, `--> file:line:col`,
-/// and a caret over the offending span (spec §16.4).
-fn emit(file: &Path, source: &str, message: String, span: Option<(u32, u32)>, notes: Vec<String>) {
+/// Render a full diagnostic: `<severity>[<code>]: <message>` header (code optional),
+/// `--> file:line:col`, and a caret over the offending span (spec §16.4).
+fn emit(file: &Path, source: &str, severity: Severity, code: Option<&str>, message: String, span: Option<(u32, u32)>, notes: Vec<String>) {
     let files = SimpleFile::new(file.display().to_string(), source.to_string());
-    let mut diagnostic = Diagnostic::error().with_message(message);
+    let mut diagnostic = Diagnostic::new(severity).with_message(message);
+    if let Some(code) = code {
+        diagnostic = diagnostic.with_code(code);
+    }
     if let Some((start, end)) = span {
         diagnostic = diagnostic.with_labels(vec![Label::primary((), start as usize..end as usize)]);
     }
@@ -49,7 +52,7 @@ pub fn print_colored_error(message: &str) {
 /// Report collected parse errors (spec §16.4 diagnostic format).
 pub fn report_syntax_errors(file: &Path, source: &str, errors: &[SyntaxError]) {
     for e in errors {
-        emit(file, source, e.message.clone(), Some((e.span.start, e.span.end)), Vec::new());
+        emit(file, source, Severity::Error, None, e.message.clone(), Some((e.span.start, e.span.end)), Vec::new());
     }
 }
 
@@ -62,7 +65,31 @@ pub fn report_type_errors(file: &Path, source: &str, errors: &[TypeError]) {
         } else {
             Vec::new()
         };
-        emit(file, source, e.message.clone(), Some((e.span.start, e.span.end)), notes);
+        emit(file, source, Severity::Error, None, e.message.clone(), Some((e.span.start, e.span.end)), notes);
+    }
+}
+
+/// Report non-fatal warnings (spec §16.5): `warning[W####]: message` + caret. Warnings
+/// do not affect the exit code; `prima check --deny W####` promotes a subset to errors.
+pub fn report_warnings(file: &Path, source: &str, warnings: &[SyntaxWarning]) {
+    for w in warnings {
+        emit(file, source, Severity::Warning, Some(w.code), w.message.clone(), Some((w.span.start, w.span.end)), Vec::new());
+    }
+}
+
+/// Report warnings promoted to errors by `--deny W####` (spec §16.5): re-render the same
+/// diagnostic with an error severity and the numbered code, so the promoted failure is visible.
+pub fn report_denied_warnings(file: &Path, source: &str, warnings: &[SyntaxWarning]) {
+    for w in warnings {
+        emit(
+            file,
+            source,
+            Severity::Error,
+            Some(w.code),
+            w.message.clone(),
+            Some((w.span.start, w.span.end)),
+            vec![format!("help: `{}` is denied by `--deny` and promoted to an error", w.code)],
+        );
     }
 }
 
@@ -77,7 +104,7 @@ pub fn report_runtime_error(file: &Path, source: &str, e: &RuntimeError) {
     };
     match e.location() {
         Some(span) if (span.end as usize) <= source.len() => {
-            emit(file, source, e.to_string(), Some((span.start, span.end)), notes);
+            emit(file, source, Severity::Error, None, e.to_string(), Some((span.start, span.end)), notes);
         }
         _ => print_colored_error(&e.to_string()),
     }
