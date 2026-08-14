@@ -1,17 +1,17 @@
 // Patterns and destructuring (spec §4.4): tuple/struct destructuring, `if let`/`while let`, and full `match` patterns.
 let (a, b) = (1, 2);
-print(a + b);
+println(a + b);
 
 let v = [10, 20, 30];
 if let Some(x) = v.get(0) {
-    print(x);
+    println(x);
 } else {
-    print("none");
+    println("none");
 }
 
 let i = 0;
 while let Some(x) = v.get(i) {
-    print(x);
+    println(x);
     i = i + 1;
 }
 
@@ -25,30 +25,30 @@ fn classify(n: Integer) -> String {
     };
     return r;
 }
-print(classify(5));
-print(classify(1));
-print(classify(200));
-print(classify(-4));
+println(classify(5));
+println(classify(1));
+println(classify(200));
+println(classify(-4));
 
 // Matching on `Result` (spec §16.3) and `Option`.
 let res = match try_i32(7) {
     Ok(n) => n,
     Err(e) => -1
 };
-print(res);
+println(res);
 
 let opt = match Some(42) {
     Some(x) => x,
     None => 0
 };
-print(opt);
+println(opt);
 
 // `?` propagates `Err`/`None` inside a `Result`-returning function (spec §16.3).
 fn try_parse(s: String) -> Result<Integer, Error> {
     let v = try_i32(s)?;
     return Ok(v);
 }
-print(try_parse("9").unwrap());
+println(try_parse("9").unwrap());
 
 // Struct pattern destructuring (spec §4.4).
 class Point {
@@ -58,7 +58,7 @@ class Point {
 }
 let p = Point::new(3, 4);
 let Point { x, y } = p;
-print(x + y);
+println(x + y);
 
 // Expected output:
 // 3

@@ -8,11 +8,11 @@ class Counter {
 
 let c = Counter::new(10);
 let d = c.increment();
-print(c.value());
-print(d.value());
+println(c.value());
+println(d.value());
 
 let e = Counter { count: 5 };
-print(e.count);
+println(e.count);
 
 // Method chaining (spec §4.5, §9.7): each method returns a new instance.
 class Accumulator {
@@ -23,7 +23,7 @@ class Accumulator {
 }
 
 let s = Accumulator::new().add(1).add(2).add(3);
-print(s.total());
+println(s.total());
 
 // Expected output:
 // 10

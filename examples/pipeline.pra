@@ -6,7 +6,7 @@ class Float {
 }
 
 let x = Float::new(3.0);
-print(x.square().value);
+println(x.square().value);
 
 // Expected output:
 // 9

@@ -1,6 +1,6 @@
 // Broadcast (spec §11.4): pure functions and binary ops apply elementwise over arrays; enabled by default (broadcast := true).
 let f(x) = x^2;
 let v = [1, 2, 3];
-print(f(v));
-print(v + 10);
-print([1, 2, 3] + [10, 20, 30]);
+println(f(v));
+println(v + 10);
+println([1, 2, 3] + [10, 20, 30]);

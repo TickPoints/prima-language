@@ -28,7 +28,7 @@ fn sum_0_to_n_closed_form() {
 
 #[test]
 fn non_accumulating_body_not_optimized() {
-    assert_eq!(run_src("for i in 0..3 {\n    print(i)\n}"), "0\n1\n2\n");
+    assert_eq!(run_src("for i in 0..3 {\n    println(i)\n}"), "0\n1\n2\n");
 }
 
 #[test]

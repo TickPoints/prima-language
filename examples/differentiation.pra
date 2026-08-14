@@ -1,0 +1,14 @@
+// Symbolic differentiation (spec §19.4, v2.1): `derivative`/`partial`/`grad`/`limit` over the ExprDAG.
+// Accepts an MFn name or a symbolic expression; the variable is given as a symbol or string.
+let f(x) = x^2 + sin(x);
+println(derivative(f, x));                 // → 2x + \cos(x)
+println(derivative(derivative(f, x), x));  // → -\sin(x) + 2   (higher-order derivative)
+
+let g(x, y) = x^2*y + y^3;
+println(partial(g, x));                    // → 2xy
+println(partial(g, y));                    // → x^2 + 3y^2
+
+println(grad(x^2 + y^2));                  // → (2x, 2y)  (free-variable gradient)
+
+println(limit(sin(x)/x, x, 0));            // → 1  (direct substitution + l'Hôpital)
+println(limit(x^2, x, 3));                 // → 9

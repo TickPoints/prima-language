@@ -68,6 +68,39 @@ fn run_rational_arithmetic_example() {
 }
 
 #[test]
+fn run_differentiation_example() {
+    Command::cargo_bin("prima")
+        .unwrap()
+        .arg("run")
+        .arg("examples/differentiation.pra")
+        .assert()
+        .success()
+        .stdout("2 x + \\cos\\left(x\\right)\n-\\left(\\sin\\left(x\\right)\\right) + 2\n2 x y\nx^{2} + 3 \\left(y^{2}\\right)\n(2 x, 2 y)\n1\n9\n");
+}
+
+#[test]
+fn run_parfor_example() {
+    Command::cargo_bin("prima")
+        .unwrap()
+        .arg("run")
+        .arg("examples/parfor.pra")
+        .assert()
+        .success()
+        .stdout("[0, 1, 4, 9, 16, 25]\n[100, 0, 104, 0, 116, 0]\n[0, 1, 2, 3] [10, 9, 8, 7]\n");
+}
+
+#[test]
+fn run_parallel_broadcast_example() {
+    Command::cargo_bin("prima")
+        .unwrap()
+        .arg("run")
+        .arg("examples/parallel.pra")
+        .assert()
+        .success()
+        .stdout("1 3996002\n1 8994002\n");
+}
+
+#[test]
 fn run_all_examples_succeed() {
     let examples = [
         "broadcast.pra",
@@ -87,6 +120,10 @@ fn run_all_examples_succeed() {
         "for_step.pra",
         "classes.pra",
         "patterns.pra",
+        "differentiation.pra",
+        "parfor.pra",
+        "parallel.pra",
+        "console_io.pra",
     ];
     for name in examples {
         Command::cargo_bin("prima")

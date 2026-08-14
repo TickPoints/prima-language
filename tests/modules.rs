@@ -42,35 +42,35 @@ fn run(dir: &TempDir, main: &str) -> Result<String, prima_runtime::RuntimeError>
 fn import_namespace_access() {
     let dir = TempDir::new();
     dir.write("mymath.pra", "pub let square(x) = x^2\nlet helper(x) = x + 1");
-    assert_eq!(run(&dir, "import mymath\nprint(mymath::square(3))").unwrap(), "9\n");
+    assert_eq!(run(&dir, "import mymath\nprintln(mymath::square(3))").unwrap(), "9\n");
 }
 
 #[test]
 fn private_item_not_exported() {
     let dir = TempDir::new();
     dir.write("mymath.pra", "pub let square(x) = x^2\nlet helper(x) = x + 1");
-    assert!(run(&dir, "import mymath\nprint(mymath::helper(3))").is_err());
+    assert!(run(&dir, "import mymath\nprintln(mymath::helper(3))").is_err());
 }
 
 #[test]
 fn import_with_alias() {
     let dir = TempDir::new();
     dir.write("mymath.pra", "pub let square(x) = x^2");
-    assert_eq!(run(&dir, "import mymath as m\nprint(m::square(4))").unwrap(), "16\n");
+    assert_eq!(run(&dir, "import mymath as m\nprintln(m::square(4))").unwrap(), "16\n");
 }
 
 #[test]
 fn from_import_with_alias() {
     let dir = TempDir::new();
     dir.write("mymath.pra", "pub let square(x) = x^2");
-    assert_eq!(run(&dir, "from mymath import square as sq\nprint(sq(4))").unwrap(), "16\n");
+    assert_eq!(run(&dir, "from mymath import square as sq\nprintln(sq(4))").unwrap(), "16\n");
 }
 
 #[test]
 fn from_import_star() {
     let dir = TempDir::new();
     dir.write("mymath.pra", "pub let square(x) = x^2\npub const K: Integer = 3");
-    assert_eq!(run(&dir, "from mymath import *\nprint(square(2))\nprint(K)").unwrap(), "4\n3\n");
+    assert_eq!(run(&dir, "from mymath import *\nprintln(square(2))\nprintln(K)").unwrap(), "4\n3\n");
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn conflicting_imports_rejected() {
 fn polluting_config_rejected_in_module() {
     let dir = TempDir::new();
     dir.write("bad.pra", "config { domain := real }\npub let f(x) = x");
-    assert!(run(&dir, "import bad\nprint(1)").is_err());
+    assert!(run(&dir, "import bad\nprintln(1)").is_err());
 }
 
 #[test]
@@ -93,12 +93,12 @@ fn nested_module_path() {
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.0.join("linalg")).unwrap();
     dir.write("linalg/fft.pra", "pub let double(x) = x * 2");
-    assert_eq!(run(&dir, "import linalg::fft\nprint(linalg::fft::double(21))").unwrap(), "42\n");
+    assert_eq!(run(&dir, "import linalg::fft\nprintln(linalg::fft::double(21))").unwrap(), "42\n");
 }
 
 #[test]
 fn module_config_fraction_applies() {
     let dir = TempDir::new();
     dir.write("frac.pra", "config { fraction := false }\npub let third = 1/3");
-    assert_eq!(run(&dir, "from frac import third\nprint(third)").unwrap(), "0.3333333333333333\n");
+    assert_eq!(run(&dir, "from frac import third\nprintln(third)").unwrap(), "0.3333333333333333\n");
 }

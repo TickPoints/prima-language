@@ -2,8 +2,8 @@
 config { fraction := false }
 
 let x = 1/3;
-print(x);
-print(1/3 + 1/3);
+println(x);
+println(1/3 + 1/3);
 
 // Expected output:
 // 0.3333333333333333

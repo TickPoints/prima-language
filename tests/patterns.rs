@@ -24,19 +24,19 @@ fn tuple_destructuring() {
 
 #[test]
 fn if_let_binds_some() {
-    let out = run_src("let v = [10];\nif let Some(x) = v.get(0) {\n    print(x);\n} else {\n    print(-1);\n}");
+    let out = run_src("let v = [10];\nif let Some(x) = v.get(0) {\n    println(x);\n} else {\n    println(-1);\n}");
     assert_eq!(out, "10\n");
 }
 
 #[test]
 fn if_let_falls_to_else_on_none() {
-    let out = run_src("let v = [1];\nif let Some(x) = v.get(5) {\n    print(x);\n} else {\n    print(-1);\n}");
+    let out = run_src("let v = [1];\nif let Some(x) = v.get(5) {\n    println(x);\n} else {\n    println(-1);\n}");
     assert_eq!(out, "-1\n");
 }
 
 #[test]
 fn while_let_consumes_iterator() {
-    let out = run_src("let v = [1, 2, 3];\nlet i = 0;\nwhile let Some(x) = v.get(i) {\n    print(x);\n    i = i + 1;\n}");
+    let out = run_src("let v = [1, 2, 3];\nlet i = 0;\nwhile let Some(x) = v.get(i) {\n    println(x);\n    i = i + 1;\n}");
     assert_eq!(out, "1\n2\n3\n");
 }
 

@@ -1,9 +1,9 @@
 // Collapse function family (spec §9.2, §9.3, §9.6): explicit numeric conversion via `to_f64` / `try_i32` + `unwrap_or` / `truncated_i32`.
 let a = sqrt(2);
-print(to_f64(a));
+println(to_f64(a));
 let c = try_i32(1e20);
-print(c |> unwrap_or(0));
-print(truncated_i32(7/2));
+println(c |> unwrap_or(0));
+println(truncated_i32(7/2));
 
 // Expected output:
 // 1.4142135623730951

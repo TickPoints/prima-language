@@ -1,0 +1,23 @@
+// parfor (spec §17.2): explicit parallel loop over a range (rayon). Iteration bodies must be
+// side-effect free — only index-slot assignments (`A[i] = …`) and pure function calls (E0082).
+let A = [0, 0, 0, 0, 0, 0];
+parfor i in 0..6 {
+    A[i] = i * i;
+}
+println(A);                       // → [0, 1, 4, 9, 16, 25]
+
+// With a step.
+let B = [0, 0, 0, 0, 0, 0];
+parfor i in 0..6 step 2 {
+    B[i] = A[i] + 100;
+}
+println(B);                       // → [100, 0, 104, 0, 116, 0]
+
+// Multiple arrays per iteration are allowed; each slot is computed independently.
+let C = [0, 0, 0, 0];
+let D = [0, 0, 0, 0];
+parfor i in 0..4 {
+    C[i] = i;
+    D[i] = 10 - i;
+}
+println(C, D);                    // → [0, 1, 2, 3] [10, 9, 8, 7]

@@ -1,7 +1,7 @@
 // Import system (spec §15.1, §15.2): after `import mymath`, the public function `square` is accessed with `::` qualification.
 import mymath
 
-print(mymath::square(3));
+println(mymath::square(3));
 
 // Expected output:
 // 9

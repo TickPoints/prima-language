@@ -1,0 +1,11 @@
+// Console I/O (spec §18.1b, v2.1): `print` (no trailing newline) vs `println` (trailing newline),
+// and `input`/`read_line` for reading from stdin (EOF in non-interactive runs yields "").
+print("hello");
+print(" ", "world");              // multiple args are space-separated
+println("!");
+println("value:", 42);
+
+let name = input("Name: ");       // prompt written without a newline, then one line read
+println("hi", name);              // → "hi " (empty line at EOF)
+let n = read_line();              // no-prompt variant
+println("read:", n);

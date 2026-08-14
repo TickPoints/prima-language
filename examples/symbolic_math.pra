@@ -1,5 +1,5 @@
 // Symbolic world (spec §7, §8): an unbound `x` stays symbolic; operators like `sqrt`/`sin` output LaTeX after simplification.
-print(sqrt(2));
-print(sin(\pi));
-print(x^2 + 1);
-print(simplify(x^2 + 1 - 1));
+println(sqrt(2));
+println(sin(\pi));
+println(x^2 + 1);
+println(simplify(x^2 + 1 - 1));

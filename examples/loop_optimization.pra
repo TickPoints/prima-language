@@ -1,7 +1,7 @@
 // Loop closed-form optimization (spec §19.1, §10): a `for` accumulation optimizes to an arithmetic-series closed form; the result is still 5050.
 let s = 0;
 for i in 1..100 { s += i; }
-print(s);
+println(s);
 
 // Expected output:
 // 5050
