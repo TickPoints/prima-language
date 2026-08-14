@@ -1,0 +1,18 @@
+// io (spec §18, appendix B): file I/O and JSON/CSV serialization.
+import io;
+
+// JSON round-trip.
+let obj = io::json_parse("{\"a\": 1, \"b\": [true, null]}").unwrap_or({});
+println(obj["a"]);                    // → 1
+println(obj["b"]);                    // → [true, nil]
+
+// CSV parsing handles quoted fields.
+let rows = io::csv_parse("a,b\n1,\"x, y\"\n").unwrap_or([[]]);
+println(rows[1]);                     // → [1, x, y]
+println(io::csv_stringify([["x", "y"], ["1", "a, b"]]));
+
+// File I/O (Result-typed).
+let p = "prima_io_demo.tmp";
+println(io::write_file(p, "hello world"));  // → Ok(true)
+println(io::read_file(p));                  // → Ok("hello world")
+println(io::exists(p));                     // → true

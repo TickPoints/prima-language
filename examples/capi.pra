@@ -1,0 +1,11 @@
+// C-ABI interop (spec §18.4): `@c_api::extern` exports a C-callable prototype list.
+// `prima compile --emit-headers capi.pra` prints the generated C header.
+@c_api::extern
+pub fn add(a: c_api::double, b: c_api::double) -> c_api::double {
+    return a + b;
+}
+
+@c_api::extern
+pub fn hello(name: c_api::cstring) -> c_api::cstring {
+    return name;
+}

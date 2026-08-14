@@ -1,0 +1,19 @@
+// Stats (spec §B.3, appendix): descriptive statistics and distributions.
+import stats;
+
+println(stats::mean([1.0, 2.0, 3.0]));       // → 2
+println(stats::median([3.0, 1.0, 2.0]));     // → 2
+println(stats::median([1.0, 2.0, 3.0, 4.0])); // → 2.5
+println(stats::variance([2.0, 4.0, 6.0]));   // → 4 (sample, n−1)
+println(stats::std([2.0, 4.0, 6.0]));        // → 2
+println(stats::quantile([1.0, 2.0, 3.0, 4.0], 0.5)); // → 2.5
+println(stats::range([3.0, 1.0, 4.0]));      // → 3
+println(stats::cov([1.0, 2.0, 3.0], [2.0, 4.0, 6.0])); // → 2
+println(stats::corr([1.0, 2.0, 3.0], [2.0, 4.0, 6.0])); // → 1
+
+// Distributions are dict descriptors; pdf/cdf/quantile/sample operate on them.
+let N = stats::Normal(0.0, 1.0);
+println(stats::pdf(N, 0.0));                  // → 0.39894228…
+println(stats::cdf(N, 0.0));                  // → 0.5
+println(stats::quantile(N, 0.5));             // → ~0
+println(stats::sample(stats::Uniform(0.0, 1.0), 5)); // → 5 samples in [0, 1)

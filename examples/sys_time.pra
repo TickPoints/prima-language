@@ -1,0 +1,19 @@
+// sys & time (spec §18.2/§18.3): path/env/os and time helpers.
+// Nested imports bind by full path (spec §15.3): `import sys::path` → `sys::path::join`.
+import sys::path;
+import sys::os;
+import sys::env;
+import time;
+
+println(sys::path::join("a", "b"));            // → "a/b" on unix
+println(sys::path::file_name("a/b/c.txt"));    // → Some("c.txt")
+println(sys::path::extension("a/b/c.txt"));    // → Some("txt")
+println(sys::path::is_absolute("/tmp"));       // → true
+println(sys::os::name(), sys::os::arch());     // → "linux" "x86_64"
+println(sys::env::get("PRIMA_UNSET_VAR_XXX")); // → None
+
+println(time::format(0, "%Y-%m-%d"));         // → "1970-01-01"
+println(time::parse("2024-01-15", "%Y-%m-%d")); // → Ok(unix seconds)
+println(time::Duration::from_secs(5));        // → 5
+let now = time::now();
+println(time::unix_timestamp(now) > 0);       // → true

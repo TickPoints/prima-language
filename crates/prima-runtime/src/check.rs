@@ -58,8 +58,8 @@ pub fn check_src(src: &str) -> Vec<TypeError> {
 /// imports additionally expose the imported bare name (and any alias). Flattened `::`-joined item
 /// names (e.g. `Matrix::zeros`) are keyed under the joined module path, mirroring how the runtime
 /// registers and resolves them (`module.rs`/`eval.rs` `lookup_module_item_flat`).
-fn build_signature_table(program: &Program) -> HashMap<String, Signature> {
-    let mut table = HashMap::new();
+fn build_signature_table(program: &Program) -> HashMap<String, Vec<Signature>> {
+    let mut table: HashMap<String, Vec<Signature>> = HashMap::new();
     for imp in &program.imports {
         let segments: Vec<String> = match &imp.kind {
             ImportKind::Namespace { path, .. } | ImportKind::From { path, .. } => {
@@ -84,8 +84,9 @@ fn build_signature_table(program: &Program) -> HashMap<String, Signature> {
                 .collect();
             sigs.push((name.value.clone(), (param_types, ret.clone())));
         }
+        // A name may have multiple signatures (overloads, e.g. `stats::quantile`); keep them all.
         for (name, sig) in &sigs {
-            table.insert(format!("{module_key}::{name}"), sig.clone());
+            table.entry(format!("{module_key}::{name}")).or_default().push(sig.clone());
         }
         match &imp.kind {
             ImportKind::From { items, .. } => {
@@ -99,7 +100,7 @@ fn build_signature_table(program: &Program) -> HashMap<String, Signature> {
                             let target = alias
                                 .as_ref()
                                 .map_or_else(|| item_name.value.clone(), |a| a.value.clone());
-                            table.entry(target).or_insert_with(|| sig.clone());
+                            table.entry(target).or_default().push(sig.clone());
                         }
                     }
                 }
@@ -107,7 +108,7 @@ fn build_signature_table(program: &Program) -> HashMap<String, Signature> {
             ImportKind::Namespace { alias, .. } => {
                 if let Some(a) = alias {
                     for (name, sig) in &sigs {
-                        table.insert(format!("{}::{name}", a.value), sig.clone());
+                        table.entry(format!("{}::{name}", a.value)).or_default().push(sig.clone());
                     }
                 }
             }
@@ -116,9 +117,9 @@ fn build_signature_table(program: &Program) -> HashMap<String, Signature> {
     table
 }
 
-/// Look up the signature for a `Path` callee, mirroring the runtime's flattened module-item lookup
+/// Look up the signatures for a `Path` callee, mirroring the runtime's flattened module-item lookup
 /// (`eval.rs` `lookup_module_item_flat`): the joined segments first, then every module prefix.
-fn lookup_call_signature<'a>(segments: &[Spanned<String>], sigs: &'a HashMap<String, Signature>) -> Option<&'a Signature> {
+fn lookup_call_signature<'a>(segments: &[Spanned<String>], sigs: &'a HashMap<String, Vec<Signature>>) -> Option<&'a Vec<Signature>> {
     if segments.is_empty() {
         return None;
     }
@@ -139,18 +140,39 @@ fn lookup_call_signature<'a>(segments: &[Spanned<String>], sigs: &'a HashMap<Str
     None
 }
 
-/// Check a call against the harvested stdlib signature (spec §18.4, §16.2 `E0050`): positive arity
-/// and per-argument type mismatches only — unknown/unresolved types never error.
+/// Whether a call matches one signature (spec §18.4): arity at most the param count (stdlib functions
+/// may have optional trailing args) and every provided argument assignable (unknown types never reject).
+fn signature_accepts(params: &[Type], args: &[Expr], sigs: &HashMap<String, Vec<Signature>>) -> bool {
+    if args.len() > params.len() {
+        return false;
+    }
+    args.iter().enumerate().all(|(i, arg)| assignable(&params[i], &infer(arg, sigs)))
+}
+
+/// Check a call against the harvested stdlib signatures (spec §18.4, §16.2 `E0050`): a call is valid
+/// when ANY overload accepts it; positive arity and per-argument type mismatches only — unknown or
+/// unresolved types never error.
 fn check_call_signature(
     src: &str,
     call_span: Span,
     segments: &[Spanned<String>],
     args: &[Expr],
     errors: &mut Vec<TypeError>,
-    sigs: &HashMap<String, Signature>,
+    sigs: &HashMap<String, Vec<Signature>>,
 ) {
-    let Some((params, _)) = lookup_call_signature(segments, sigs) else { return };
+    let Some(candidates) = lookup_call_signature(segments, sigs) else { return };
+    if candidates.iter().any(|(params, _)| signature_accepts(params, args, sigs)) {
+        return;
+    }
     let name = segments.iter().map(|s| s.value.as_str()).collect::<Vec<_>>().join("::");
+    // Report against the best-fitting signature: the one with the most parameters that still covers
+    // the given arity, else the first candidate (for the arity error).
+    let (params, _) = candidates
+        .iter()
+        .filter(|(params, _)| args.len() <= params.len())
+        .max_by_key(|(params, _)| params.len())
+        .or_else(|| candidates.first())
+        .expect("candidates is non-empty");
     if args.len() > params.len() {
         push_err(
             src,
@@ -158,6 +180,7 @@ fn check_call_signature(
             call_span,
             format!("function `{name}` expects {} argument(s), got {} (E0050)", params.len(), args.len()),
         );
+        return;
     }
     for (i, arg) in args.iter().enumerate().take(params.len()) {
         let got = infer(arg, sigs);
@@ -168,6 +191,7 @@ fn check_call_signature(
                 arg.span,
                 format!("argument {} of `{name}` expects {}, got {} (E0050)", i + 1, type_name(&params[i]), got),
             );
+            return;
         }
     }
 }
@@ -182,7 +206,7 @@ fn collect_stmt_errors(
     errors: &mut Vec<TypeError>,
     ctx: Ctx,
     is_pub: bool,
-    sigs: &HashMap<String, Signature>,
+    sigs: &HashMap<String, Vec<Signature>>,
 ) {
     match stmt {
         Stmt::Let { pat, type_ann, value, span, .. } => {
@@ -307,13 +331,13 @@ fn collect_stmt_errors(
     }
 }
 
-fn collect_block_errors(src: &str, block: &prima_syntax::ast::Block, errors: &mut Vec<TypeError>, ctx: Ctx, sigs: &HashMap<String, Signature>) {
+fn collect_block_errors(src: &str, block: &prima_syntax::ast::Block, errors: &mut Vec<TypeError>, ctx: Ctx, sigs: &HashMap<String, Vec<Signature>>) {
     for s in &block.stmts {
         collect_stmt_errors(src, s, errors, ctx, false, sigs);
     }
 }
 
-fn collect_arms_errors(src: &str, arms: &[MatchArm], errors: &mut Vec<TypeError>, ctx: Ctx, sigs: &HashMap<String, Signature>) {
+fn collect_arms_errors(src: &str, arms: &[MatchArm], errors: &mut Vec<TypeError>, ctx: Ctx, sigs: &HashMap<String, Vec<Signature>>) {
     for arm in arms {
         if let Some(g) = &arm.guard {
             collect_expr_errors(src, g, errors, ctx, sigs);
@@ -393,7 +417,7 @@ fn push_err(src: &str, errors: &mut Vec<TypeError>, span: Span, message: String)
 
 /// Descend an expression tree, flagging `?` outside a `Result`/`Option`-returning function (spec
 /// §16.3 `E0054`) and validating stdlib call sites against harvested signatures (spec §18.4).
-fn collect_expr_errors(src: &str, expr: &Expr, errors: &mut Vec<TypeError>, ctx: Ctx, sigs: &HashMap<String, Signature>) {
+fn collect_expr_errors(src: &str, expr: &Expr, errors: &mut Vec<TypeError>, ctx: Ctx, sigs: &HashMap<String, Vec<Signature>>) {
     match &expr.kind {
         ExprKind::Try(inner) => {
             if !ctx.allow_try {
@@ -516,7 +540,7 @@ fn pattern_is_refutable(p: &Pattern) -> bool {
 /// Static type name of a literal/simple expression (spec §6.3 literal type inference). Returns
 /// `"unknown"` for anything not statically decidable; stdlib calls resolve through the harvested
 /// signature table. `"Expr"` is the symbolic catch-all for builtin math functions.
-fn infer(expr: &Expr, sigs: &HashMap<String, Signature>) -> String {
+fn infer(expr: &Expr, sigs: &HashMap<String, Vec<Signature>>) -> String {
     match &expr.kind {
         ExprKind::Literal(lit) => match lit {
             Literal::Integer(_) | Literal::Hex(_) | Literal::Binary(_) => "Integer".into(),
@@ -529,7 +553,9 @@ fn infer(expr: &Expr, sigs: &HashMap<String, Signature>) -> String {
         ExprKind::Symbol(_) => "Expr".into(),
         ExprKind::Call { callee, .. } => {
             if let ExprKind::Path { segments } = &callee.kind {
-                if let Some((_, ret)) = lookup_call_signature(segments, sigs) {
+                if let Some(candidates) = lookup_call_signature(segments, sigs)
+                    && let Some((_, ret)) = candidates.first()
+                {
                     return match ret {
                         Some(t) => type_name(t),
                         None => "unit".into(),

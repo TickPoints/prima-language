@@ -128,6 +128,11 @@ fn run_all_examples_succeed() {
         "dict_set.pra",
         "comprehension.pra",
         "convenience.pra",
+        "linear_algebra.pra",
+        "stats.pra",
+        "io.pra",
+        "physics.pra",
+        "sys_time.pra",
     ];
     for name in examples {
         Command::cargo_bin("prima")

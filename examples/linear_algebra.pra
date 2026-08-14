@@ -1,0 +1,22 @@
+// Linear algebra (spec §B.2, appendix): matrix construction, operations, decompositions and solvers., appendix): matrix construction, operations, decompositions and solvers.
+// The module is declared as an embedded `@builtin` signature file (spec §18.4) and backed by nalgebra.
+import linalg;
+
+let A = linalg::Matrix::from_rows([[1.0, 2.0], [3.0, 4.0]]);
+println(linalg::determinant(A));        // → -2
+println(linalg::trace(A));              // → 5
+println(linalg::inverse(A));            // → [[-2, 1], [1.5, -0.5]]
+println(linalg::transpose(A));          // → [[1, 3], [2, 4]]
+println(linalg::Matrix::identity(3));   // → [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+println(linalg::Matrix::zeros(2, 2));   // → [[0, 0], [0, 0]]
+println(linalg::Matrix::diagonal([1.0, 2.0])); // → [[1, 0], [0, 2]]
+
+println(linalg::dot([1.0, 2.0], [3.0, 4.0]));  // → 11
+println(linalg::cross([1.0, 0.0, 0.0], [0.0, 1.0, 0.0])); // → [0, 0, 1]
+println(linalg::norm([3.0, 4.0]));              // → 5
+println(linalg::solve([[2.0, 0.0], [0.0, 4.0]], [2.0, 8.0])); // → [1, 2]
+
+// Decompositions return tuples: lu → (L, U), qr → (Q, R), svd → (U, S, Vt), eigen → (values, vectors).
+let (L, U) = linalg::lu([[4.0, 3.0], [6.0, 3.0]]);
+println(L);
+println(U);

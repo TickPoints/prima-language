@@ -1,0 +1,10 @@
+// Physics constants (spec §7.3, CODATA 2022): high-precision values, qualified access.
+import physics;
+from physics import elementary_charge as e;
+
+println(physics::speed_of_light);            // → 299792458 (exact)
+println(physics::standard_gravity);          // → 9.80665
+let E = physics::planck_const * physics::speed_of_light;
+println(E);                                  // → h·c as an exact rational
+println(physics::avogadro_const);            // → 6.02214076×10^23
+println(e);                                  // → 1.602176634×10^-19

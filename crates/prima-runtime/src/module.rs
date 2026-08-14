@@ -162,17 +162,18 @@ impl Loader {
         Ok(ModuleUnit { path, file, program, imports })
     }
 
-    /// Resolve one import path: (1) a filesystem file relative to the importing module, (2) an
-    /// embedded stdlib signature source, (3) a registered Rust-hosted namespace, else `None`
-    /// (spec §15.3 / §18.4 / §18).
+    /// Resolve one import path: (1) an embedded stdlib signature source, (2) a registered Rust-hosted
+    /// namespace, (3) a filesystem file relative to the importing module, else `None`
+    /// (spec §18.4 / §18 / §15.3). Registered stdlib paths take precedence over local files — like
+    /// Rust's `std`, a stdlib module name is reserved (a local `linalg.pra` cannot shadow `import linalg`).
     fn resolve_import(&self, dir: &Path, segments: &[String]) -> Resolution {
         let key = segments.join("::");
-        if let Some(file) = resolve(dir, segments) {
-            Resolution::File(file)
-        } else if crate::stdlib::get_module_source(&key).is_some() {
+        if crate::stdlib::get_module_source(&key).is_some() {
             Resolution::Embedded { path: segments.to_vec() }
         } else if crate::stdlib::has_namespace(&key) {
             Resolution::Host { path: segments.to_vec() }
+        } else if let Some(file) = resolve(dir, segments) {
+            Resolution::File(file)
         } else {
             Resolution::None
         }
@@ -299,14 +300,14 @@ mod tests {
     #[test]
     fn directory_module_resolution() {
         let tmp = TempDir::new("dir-module");
-        let root = write(tmp.dir(), "main.pra", "import linalg\n");
-        write(tmp.dir(), "linalg/main.pra", "z = 3\n");
+        let root = write(tmp.dir(), "main.pra", "import util\n");
+        write(tmp.dir(), "util/main.pra", "z = 3\n");
 
         let g = ModuleGraph::load(&root).unwrap();
         assert_eq!(g.deps.len(), 1);
-        assert_eq!(g.deps[0].path, ["linalg".to_string()]);
-        assert_eq!(g.deps[0].file, abs(&tmp.dir().join("linalg/main.pra")));
-        assert_eq!(g.root.imports[0].file, abs(&tmp.dir().join("linalg/main.pra")));
+        assert_eq!(g.deps[0].path, ["util".to_string()]);
+        assert_eq!(g.deps[0].file, abs(&tmp.dir().join("util/main.pra")));
+        assert_eq!(g.root.imports[0].file, abs(&tmp.dir().join("util/main.pra")));
     }
 
     #[test]

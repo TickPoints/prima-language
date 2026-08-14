@@ -25,7 +25,7 @@ pub fn trace(M: Matrix<F64>) -> F64;
 @builtin
 pub fn rank(M: Matrix<F64>) -> Integer;
 @builtin
-pub fn norm(M: Matrix<F64>, p: Integer) -> F64;
+pub fn norm(M: Value, p: Integer) -> F64;   // accepts a matrix or a vector
 @builtin
 pub fn cond(M: Matrix<F64>) -> F64;
 @builtin
@@ -43,6 +43,6 @@ pub fn eigen(M: Matrix<F64>) -> Tuple<Array<F64>, Matrix<F64>>;
 @builtin
 pub fn cholesky(M: Matrix<F64>) -> Matrix<F64>;
 @builtin
-pub fn solve(A: Matrix<F64>, b: Array<F64>) -> Array<F64>;
+pub fn solve(A: Matrix<F64>, b: Value) -> Value;      // b: vector or matrix RHS
 @builtin
-pub fn lstsq(A: Matrix<F64>, b: Array<F64>) -> Array<F64>;
+pub fn lstsq(A: Matrix<F64>, b: Value) -> Value;
