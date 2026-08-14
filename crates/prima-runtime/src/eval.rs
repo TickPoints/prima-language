@@ -1032,7 +1032,7 @@ impl Evaluator {
             .iter()
             .filter_map(|name| env.borrow().get_value(name).map(|v| (name.clone(), v)))
             .collect();
-        let writes: Vec<Result<Vec<(String, usize, Number)>, RuntimeError>> = indices
+        let writes: Vec<Result<ParforWriteVec, RuntimeError>> = indices
             .par_chunks(chunk)
             .map(|chunk| {
                 let mut ev = Evaluator::spawn_task_evaluator(&cfg);
@@ -2865,6 +2865,9 @@ struct ParforWrite {
     op: AssignOp,
     value: Expr,
 }
+
+/// One index write produced by a `parfor` iteration: (array name, index, merged value).
+type ParforWriteVec = Vec<(String, usize, Number)>;
 
 /// Static side-effect check for a `parfor` body (spec §17.2, `E0082`): only index-slot assignments
 /// (`A[i] = …`/`A[i] += …`/`A[i] -= …`) and pure function calls are allowed; anything else (external

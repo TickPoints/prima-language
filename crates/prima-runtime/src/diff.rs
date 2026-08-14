@@ -140,8 +140,8 @@ pub fn free_symbols(pool: &ExprPool, builtins: &BuiltinSymbols, expr: ExprId) ->
 pub fn limit(pool: &ExprPool, builtins: &BuiltinSymbols, expr: ExprId, x: SymbolId, at: ExprId) -> ExprId {
     let (mut num, mut den) = split_ratio(pool, expr);
     for _ in 0..=L_HOPITAL_MAX_ITER {
-        let sub_num = simplify(pool, builtins, substitute(pool, builtins, num, x, at));
-        let sub_den = simplify(pool, builtins, substitute(pool, builtins, den, x, at));
+        let sub_num = simplify(pool, builtins, substitute(pool, num, x, at));
+        let sub_den = simplify(pool, builtins, substitute(pool, den, x, at));
         match (pool.const_number(sub_num), pool.const_number(sub_den)) {
             (Some(n), Some(d)) if !d.is_zero() => return pool.number(&(n / d)),
             (Some(n), _) if !n.is_zero() => {
@@ -158,7 +158,7 @@ pub fn limit(pool: &ExprPool, builtins: &BuiltinSymbols, expr: ExprId, x: Symbol
 }
 
 /// Replace every occurrence of symbol `x` in `expr` with `value` (spec §19.4 substitution).
-pub fn substitute(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId, x: SymbolId, value: ExprId) -> ExprId {
+pub fn substitute(pool: &ExprPool, id: ExprId, x: SymbolId, value: ExprId) -> ExprId {
     match pool.get(id) {
         None => id,
         Some(ExprData::Symbol(s)) => {
@@ -169,20 +169,20 @@ pub fn substitute(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId, x: Sym
             }
         }
         Some(ExprData::Add(items)) => {
-            let new_items: Vec<ExprId> = items.iter().map(|&it| substitute(pool, builtins, it, x, value)).collect();
+            let new_items: Vec<ExprId> = items.iter().map(|&it| substitute(pool, it, x, value)).collect();
             pool.add_n(&new_items)
         }
         Some(ExprData::Mul(items)) => {
-            let new_items: Vec<ExprId> = items.iter().map(|&it| substitute(pool, builtins, it, x, value)).collect();
+            let new_items: Vec<ExprId> = items.iter().map(|&it| substitute(pool, it, x, value)).collect();
             pool.mul_n(&new_items)
         }
         Some(ExprData::Pow { base, exp }) => {
-            let b = substitute(pool, builtins, base, x, value);
-            let e = substitute(pool, builtins, exp, x, value);
+            let b = substitute(pool, base, x, value);
+            let e = substitute(pool, exp, x, value);
             pool.pow2(b, e)
         }
         Some(ExprData::Apply { f, args }) => {
-            let new_args: Vec<ExprId> = args.iter().map(|&a| substitute(pool, builtins, a, x, value)).collect();
+            let new_args: Vec<ExprId> = args.iter().map(|&a| substitute(pool, a, x, value)).collect();
             pool.apply(f, &new_args)
         }
         _ => id,
