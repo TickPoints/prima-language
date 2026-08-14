@@ -1,7 +1,8 @@
-# **Prima** —— 语言规范 v2.0
+# **Prima** —— 语言规范 v2.1
 
-> **声明**：本规范为 **Prima 语言** 的正式语言规范 v2.0，是设计与实现统一的最终依据。
+> **声明**：本规范为 **Prima 语言** 的正式语言规范 v2.1，是设计与实现统一的最终依据。
 > **v2.0 变更摘要**：①错误处理改为 Rust 式 `Result`/`?`/`match`（移除 `try/catch`）；②语句统一以 `;` 划分（换行分隔进入弃用流程，逐步移除）；③引入 Rust 式模式与解构（`if let`/`while let`/`match` 全模式）；④引入 Class（类）与所有权语义；⑤建立编号错误/警告码表（英文，附录 C）；⑥完整字符串支持与 `format`；⑦坍缩后数值类型与 Rust 基本数值类型一一对应；⑧互操作（`@c_api::extern` 导出 C ABI、`@builtin` Rust 实现）；⑨标准库扩充 `sys`/`time`/`num`/`ops`。
+> **v2.1 变更摘要（基础类型可用性增强，偏向 Python 风格）**：⑩`Array` 改为**可变长度**序列，支持 `push`/`pop`/`append`/`insert`/`remove`/`extend`/切片赋值/拼接/成员测试（`in`）/负索引/可嵌套（作为数据）；⑪新增**映射类型 `Dict`** 与**集合类型 `Set`**（字面量、索引、方法、迭代）；⑫常用集合便捷函数：`len`/`enumerate`/`sorted`/`reversed`/`sum`/`prod`/`min`/`max`/`all`/`any`/`join`/`count` 等；⑬`print` 与 `println` **区分**（前者不换行，后者换行）；⑭控制台输入 `input`/`read_line`；⑮列表/字典/集合**推导式**（`[x^2 for x in v if x > 0]`）；⑯符号微分原语 `derivative`/`partial`/`grad`/`limit` 纳入 core（§十九）。
 
 ## 标识
 
@@ -52,7 +53,7 @@
 - **错误是值**：可失败的运算返回 `Result`，由调用方用 `match`/`?`/`unwrap` 显式处理，语言不提供隐式异常吞并机制；
 - 后续设计决策以**实现可行性 + 用户便捷性 + 上手难度**为准。
 
-**参考系**：Julia（数值/多重分派/提升规则）+ Mathematica/SymPy（符号优先）+ Rust（类型/模块/内存/所有权/错误处理）+ Python（import 语法）。
+**参考系**：Julia（数值/多重分派/提升规则）+ Mathematica/SymPy（符号优先）+ Rust（类型/模块/内存/所有权/错误处理）+ Python（import 语法；v2.1 起基本类型可用性：可变长 `Array`、`Dict`/`Set`、推导式、`print`/`println`/`input`）。
 
 ---
 
@@ -89,11 +90,12 @@ AST
 - **数字字面量**：`123`、`3.14`、`1e-9`、`0x1F`、`0b1010`。
 - **字符串**：`"..."`（转义，含 `\u{XXXX}`）+ 原始字符串 `r"..."`。
 - **TeX 字面量**：``tex"..."``。
-- **运算符**：`+ - * / ^ ** @ % == != < <= > >= && || ! = += -= ?`。其中 `^` 与 `**` 均表示幂运算（互为别名）；`?` 为 **try 运算符**（错误传播，§16.3）。
+- **运算符**：`+ - * / ^ ** @ % == != < <= > >= && || ! = += -= ?`。其中 `^` 与 `**` 均表示幂运算（互为别名）；`?` 为 **try 运算符**（错误传播，§16.3）；`in` 在**表达式位置**为**成员测试**（§11.3），在 `for`/`parfor` 中为迭代关键字。
 - **注释**：`//` 行注释、`/* */` 块注释。
 - **保留关键字**（未来扩展）：`async`、`yield`、`macro`、`trait`。
 - **生效关键字**：`let`、`const`、`fn`、`class`、`pub`、`self`、`Self`、`if`、`else`、`while`、`for`、`in`、`step`、`parfor`、`return`、`match`、`impl`、`with`、`config`、`import`、`from`、`as`、`true`、`false`。
 - **语句分隔符**：`;`（规范、§4.2）；换行分隔为**弃用形式**（§16.5 W0001）。
+- **集合字面量**：`{ ... }` 按上下文区分为 `Dict`/`Set` 字面量（§4.6）与代码块；推导式复用 `[ ... ]`/`{ ... }`/`( ... )` 外框（§11.7）。
 
 ---
 
@@ -262,6 +264,36 @@ class Float {
 let r = Float::new(sqrt(2) + \pi).to_f64().rounded(3);   // 方法链
 ```
 
+### 4.6 集合字面量与推导式（v2.1）
+
+`Dict` 与 `Set` 使用花括号字面量；推导式复用 `[ ]`/`{ }`/`( )` 外框，由 `for` 从句区分：
+
+```prima
+// Dict 字面量：{ key: value, ... }（键可为数字/字符串/布尔/符号等不可变值）
+let d = { "a": 1, "b": 2, "c": 3 };
+let d2 = Dict::new();                 // 空字典（类型可变长）
+
+// Set 字面量：{ value, ... }（元素必须可哈希，默认数字/字符串/布尔）
+let s = {1, 2, 3, 2};                 // 重复元素去重 → {1, 2, 3}
+let s2 = Set::new();                  // 空集合
+
+// 空花括号 {} 默认是空 Dict（与 Rust 字面量习惯一致）
+let e = {};
+
+// 推导式（§11.7）：外框决定产出类型
+let squares = [x^2 for x in range(0, 10) if x % 2 == 0];   // Array
+let lookup  = {x: x^2 for x in range(0, 5)};               // Dict
+let odds    = {x for x in range(0, 10) if x % 2 == 1};     // Set
+let pairs   = ((x, x+1) for x in range(0, 3));             // Tuple（惰性生成器）
+```
+
+**规则**：
+1. `{ k: v }` 判定为 Dict 字面量（键值对形式）；`{ a, b }` 判定为 Set 字面量；`{}` 为空 Dict。
+2. Dict 键必须是**不可变且可哈希**的值（`Number`/`String`/`Char`/`Bool`/`Expr`/`Symbol`）；Set 元素同理。
+3. 集合字面量在**表达式位置**才有效；`{` 紧跟控制流关键字时仍是代码块。
+4. 推导式语法：`<外框> <元素表达式> for <变量> in <可迭代> [if <条件>]`，可多重 `for`（笛卡尔积）。`Dict` 推导式元素为 `key: value` 对；`Set` 推导式元素为单值。
+5. 花括号在 `Dict`/`Set` 字面量与 `match`/`class`/`impl`/`config`/`with config` 后代码块之间按位置消歧（详见附录 A BNF）。
+
 ---
 
 ## 五、值系统（Value）
@@ -270,7 +302,9 @@ let r = Float::new(sqrt(2) + \pi).to_f64().rounded(3);   // 方法链
 enum Value {
     Number(Number),
     Bool(bool), Char(char), String(String),
-    Array(Array),           // 同构数值数组，拒绝嵌套（§11）
+    Array(Array),           // 可变长序列（v2.1：元素可为任意值，§11.3）
+    Dict(Dict),             // v2.1：映射类型，键不可变可哈希，§11.6
+    Set(Set),               // v2.1：集合类型，元素不可变可哈希，§11.6
     Matrix(Matrix),
     Function(Function),
     Expr(ExprId),           // hash-consed 表达式句柄
@@ -286,7 +320,7 @@ enum Value {
 }
 ```
 
-**不可变性**：数学值（`Number`/`Expr`/`Symbol`）默认不可变；`W_host` 对象（类实例）按 §12.3 的浅拷贝/深拷贝语义管理。
+**不可变性**：数学值（`Number`/`Expr`/`Symbol`）默认不可变；`Array`/`Dict`/`Set` 是**可变宿主值**（长度/内容可变，§12.1）；`W_host` 对象（类实例）按 §12.3 的浅拷贝/深拷贝语义管理。
 
 ---
 
@@ -834,14 +868,85 @@ fn process(x: F64) -> F64 {
 ```
 **特性**：可有副作用、控制流、I/O。可返回 `Result`（§16.3）。
 
-### 11.3 数组与索引
+### 11.3 数组（Array，v2.1 可变长序列）
 
-#### 数组字面量
+**`Array` 是可变长度、可变的同质或异质序列**（v2.1，效仿 Python `list`）：长度可增长/收缩，元素可为任意值（数字/字符串/布尔/`Expr`/类实例/嵌套数组等）。广播与矩阵接口仍要求**同质数值数组**（§11.4 调用点校验）。
+
+#### 字面量与构造
 ```prima
-let v = [1, 2, 3];           // Array<Integer>
-let w = [1.0, 2.0, 3.0];     // Array<F64>
-let x = [1, 2.0];            // Array<F64>（提升到公共类型）
-let y = [[1, 2], [3, 4]];    // 错误：拒绝嵌套数组
+let v = [1, 2, 3];            // Array：可含任意值
+let w = [1.0, 2.0, 3.0];
+let m = ["a", "b"];           // Array<String>
+let nested = [[1, 2], [3, 4]]; // v2.1 合法：作为数据的嵌套数组（广播仍拒绝，§11.4）
+let e = Array::new();         // 空数组（可变长）
+let f = [x^2 for x in range(0, 5)];  // 推导式（§11.7）
+```
+
+#### 索引与切片（含负索引）
+```prima
+let v = [10, 20, 30, 40];
+let a = v[0];                 // → 10
+let b = v[-1];                // → 40（负索引从末尾数，越界报 R0003）
+let c = v[1..3];              // → [20, 30]（切片，左闭右开）
+let d = v[..2];               // → [10, 20]
+let e = v[2..];               // → [30, 40]
+let f = v[-2..];              // → [30, 40]
+```
+
+#### 切片赋值（v2.1）
+```prima
+let v = [1, 2, 3, 4];
+v[1..3] = [20, 30];           // v == [1, 20, 30, 4]
+v[0..1] = [];                 // 删除元素：v == [20, 30, 4]
+```
+
+#### 拼接与成员测试
+```prima
+let a = [1, 2];
+let b = [3, 4];
+let c = a + b;                // → [1, 2, 3, 4]（拼接）
+a += b;                       // a == [1, 2, 3, 4]（原地扩展，等价 extend）
+let has2 = 2 in c;            // → true（成员测试，`in` 运算符）
+let has5 = 5 in c;            // → false
+```
+
+#### 可变方法（在持有者可变绑定上调用）
+```prima
+let mut v = [1, 2, 3];
+v.push(4);                    // [1, 2, 3, 4]
+let last = v.pop();           // → 4（Some）；v == [1, 2, 3]
+v.append(5);                  // 追加单个元素
+v.extend([6, 7]);             // 追加序列
+v.insert(0, 0);               // 头部插入：v == [0, 1, 2, 3, 5, 6, 7]
+let removed = v.remove(0);    // → 0（删除并返回）；v 前移
+v.clear();                    // v == []
+```
+
+#### 只读方法与便捷函数
+```prima
+let v = [3, 1, 2];
+v.len()                       // → 3
+v.is_empty()                  // → false
+v.get(1)                      // → Some(1)（安全索引，§4.4）
+v.contains(2)                 // → true（等价 `2 in v`）
+v.index(2)                    // → 1（元素下标，找不到报 R0013）
+v.count(2)                    // → 1（出现次数）
+v.first()                     // → Some(3)
+v.last()                      // → Some(2)
+let s = sorted(v);            // → [1, 2, 3]（新数组）
+let r = reversed(v);          // → [2, 1, 3]
+let total = sum(v);           // → 6
+let prod_v = prod(v);         // → 6
+let m = min(v);               // → 1
+let M = max(v);               // → 3
+```
+
+#### 越界处理
+```prima
+let v = [1, 2, 3];
+let x = v[10];                // 运行时错误 R0003：索引越界
+let y = v.get(10);            // → None（安全访问，Option）
+let z = v.get(1);             // → Some(2)
 ```
 
 #### 矩阵构造
@@ -849,39 +954,23 @@ let y = [[1, 2], [3, 4]];    // 错误：拒绝嵌套数组
 let M = Matrix::from_rows([[1, 2], [3, 4]]);  // 2×2 矩阵
 let N = Matrix::zeros(3, 3);                  // 3×3 零矩阵
 let I = Matrix::identity(4);                  // 4×4 单位矩阵
-```
-
-#### 索引语法（效仿 Rust）
-```prima
-// 数组索引
-let v = [10, 20, 30, 40];
-let a = v[0];                // → 10
-let b = v[1..3];             // → [20, 30]（切片，左闭右开）
-let c = v[..2];              // → [10, 20]
-let d = v[2..];              // → [30, 40]
 
 // 矩阵索引
-let M = Matrix::from_rows([[1, 2, 3], [4, 5, 6], [7, 8, 9]]);
-let e = M[0, 1];             // → 2（单元素）
-let f = M[0, ..];            // → [1, 2, 3]（第 0 行）
-let g = M[.., 1];            // → [2, 5, 8]（第 1 列）
-let h = M[0..2, 1..3];       // → [[2, 3], [5, 6]]（子矩阵）
-```
-
-#### 越界处理
-```prima
-let v = [1, 2, 3];
-let x = v[10];               // 运行时错误 R0003：索引越界
-let y = v.get(10);           // → None（安全访问，Option）
-let z = v.get(1);            // → Some(2)
+let A = Matrix::from_rows([[1, 2, 3], [4, 5, 6], [7, 8, 9]]);
+let e = A[0, 1];              // → 2（单元素）
+let f = A[0, ..];             // → [1, 2, 3]（第 0 行）
+let g = A[.., 1];             // → [2, 5, 8]（第 1 列）
+let h = A[0..2, 1..3];        // → [[2, 3], [5, 6]]（子矩阵）
 ```
 
 ### 11.4 广播（Broadcast）
 
-**规则**：
-- **拒绝嵌套数组**：广播仅作用于同构标量数组/矩阵的一层；遇到嵌套数组（数组的数组）**报错**，不递归。
-- **空数组报错**：广播遇到空数组即报错，不产生静默空结果。
+**规则**（v2.1 收紧为「数值同质数组」）：
+- **仅作用于同质数值数组**：广播要求数组元素为 `Number`；元素含非数值（字符串/数组/类等）即**报错**（`R0009`），不静默降级。
+- **拒绝嵌套数值数组**：广播遇到「数组的数组」**报错**，不递归；一般嵌套数组仅作数据（§11.3）不参与广播。
+- **空数组报错**：广播遇到空数组即报错（`R0014`），不产生静默空结果。
 - **默认广播** `broadcast := true`（默认）：纯函数传数组逐元素；`false` 时需显式 `map` 或广播算子。
+- **并行广播**：`@parallel` 纯函数 + 大数组自动走 rayon 并行（§17.4）。
 
 **示例**：
 ```prima
@@ -900,11 +989,9 @@ let c = a + b;               // → [11, 22, 33]
 let d = a * 10;              // → [10, 20, 30]
 
 // 错误示例
-let e = [[1, 2], [3, 4]];
-let g = f(e);                // 错误：拒绝嵌套数组
-
+let g = f(["a", "b"]);       // 错误 R0009：数组元素非数值
 let h = [];
-let i = f(h);                // 错误：空数组
+let i = f(h);                // 错误 R0014：空数组
 ```
 
 **显式控制**（`broadcast := false` 时）：
@@ -921,6 +1008,87 @@ let x = v @. f;              // 广播算子（语法糖）
 - 纯函数体 → W_symbol（表达式形态，保持精确）。
 - 功能函数体 → 默认数值，显式坍缩按需。
 
+### 11.6 映射 `Dict` 与集合 `Set`（v2.1）
+
+`Dict` 是键 → 值的可变映射（效仿 Python `dict`），`Set` 是去重的可变集合（效仿 Python `set`）。两者均要求键/元素**不可变且可哈希**（`Number`/`String`/`Char`/`Bool`/`Expr`/`Symbol`）。
+
+#### 字面量与构造
+```prima
+let d = { "a": 1, "b": 2 };   // Dict：{ key: value }
+let d0 = Dict::new();         // 空 Dict
+let s = {1, 2, 3, 2};         // Set：去重 → {1, 2, 3}
+let s0 = Set::new();          // 空 Set
+let t = {};                   // 空花括号 → 空 Dict
+```
+
+#### Dict 索引与成员测试
+```prima
+let d = { "a": 1, "b": 2 };
+let a = d["a"];               // → 1
+let missing = d["x"];         // 运行时错误 R0012：键不存在
+let m = d.get("x");           // → None（安全访问）
+let m2 = d.get("a");          // → Some(1)
+let has = "a" in d;           // → true（成员测试）
+let n = d.len();              // → 2（条目数）
+```
+
+#### Dict 方法
+```prima
+let d = { "a": 1 };
+d["b"] = 2;                   // 插入/更新键（元素赋值）
+d.insert("c", 3);             // 等价 d["c"] = 3
+let v = d.remove("a");        // → Some(1)；键不存在 → None
+d.clear();
+d["a"] = 1;
+let keys = d.keys();          // → ["a"]（Array，任意序）
+let vals = d.values();        // → [1]
+let items = d.items();        // → [("a", 1)]（Tuple 数组）
+let dd = d.update({ "x": 9 }); // 合并：d + { "x": 9 }（后者覆盖前者）
+```
+
+#### Set 方法与集合代数
+```prima
+let s = {1, 2, 3};
+s.add(4);                     // 添加元素
+s.remove(2);                  // 删除元素；不存在则报 R0013
+s.discard(99);                // 删除元素；不存在静默
+let c = s.contains(1);        // → true（等价 `1 in s`）
+let n = s.len();              // → 元素个数
+let u = s ∪ {5, 6};           // 并集（∪ 为 Set 专属算符）
+let i = s ∩ {2, 3};           // 交集
+let diff = s \ {3};           // 差集
+```
+
+#### 迭代与通用便捷
+```prima
+for k in d.keys() { print(k); }      // 遍历键
+for (k, v) in d.items() { ... }      // 遍历键值对
+for x in s { ... }                   // 遍历集合
+
+let n = len(d);                      // 等价 d.len()
+let m = len("hello");                // → 5（`len` 为多态便捷函数，§18.1）
+let e = enumerate(["a", "b"]);       // → [(0, "a"), (1, "b")]（Tuple 数组）
+let z = zip([1, 2], ["a", "b"]);     // → [(1, "a"), (2, "b")]
+let all = all([true, true]);         // → true
+let any = any([false, true]);        // → true
+```
+
+### 11.7 推导式与迭代协议（v2.1）
+
+推导式把「构造 + 过滤 + 映射」写成一个表达式（效仿 Python）。语法：`<外框> <元素表达式> for <变量> in <可迭代> [if <条件>]`，可多重 `for`（笛卡尔积）。
+
+```prima
+let squares = [x^2 for x in range(0, 10)];              // Array：[0, 1, 4, ..., 81]
+let evens   = [x for x in range(0, 10) if x % 2 == 0];  // 带过滤
+let pairs   = [(x, y) for x in range(0, 2) for y in range(0, 2)];  // 嵌套
+let table   = {x: x^2 for x in range(0, 5)};            // Dict 推导式
+let odds    = {x for x in range(0, 10) if x % 2 == 1};  // Set 推导式
+
+let n = len(squares);         // → 10
+```
+
+**可迭代对象**：`Array`、`Dict`（键）、`Set`、`range`、`String`（字符序列）、`Tuple`。`for`/`parfor`/`in`/推导式统一使用迭代协议。
+
 ---
 
 ## 十二、变量、作用域与所有权
@@ -933,9 +1101,10 @@ const c: Expr = \e^{i\pi};    // 常量：类型必须标注，不可变、可�
 let d: Number = 0;            // 显式类型注解
 ```
 
-**可变性规则**：
+**可变性规则**（v2.1）：
 - **数值标量**：`let mut` 作用域内可变。
-- **复合数学值**（`Expr`/`Array`/`Matrix`）：默认不可变，共享引用。
+- **集合**（`Array`/`Dict`/`Set`）：**可变宿主值**——长度/内容可变（`push`/`pop`/`d[k]=v`/`add`/…，§11.3/11.6）；可变方法要求绑定为 `let mut`（`let` 绑定也可就地调用只读方法）。
+- **复合数学值**（`Expr`/`Matrix`/`Symbol`）：默认不可变，共享引用。
 - **常量**：全局不可变、编译期可内联。
 
 ### 12.2 作用域与可见性
@@ -992,7 +1161,7 @@ Prima 采用**三级策略系统**，从全局到局部逐层覆盖：
  策略 | 类型 | 默认 | 说明 |
 ------|------|------|------|
  `fraction` | bool | `true` | 有理数偏好分数 vs 浮点 |
- `broadcast` | bool | `true` | 纯函数自动逐元素（拒嵌套/空数组） |
+ `broadcast` | bool | `true` | 纯函数自动逐元素（v2.1：仅限数值同质数组，拒嵌套/空数组，§11.4） |
  `loop_optimization` | bool | `true` | 循环闭式公式优化 |
  `simplify_level` | int 0-3 | `2` | 默认化简等级 |
  `num_to_big` | bool | `true` | 整数溢出自动升级 BigInt（否则报错） |
@@ -1227,8 +1396,10 @@ let b = custom_math::sin(x);
 - 坍缩函数：`to_*`/`try_*`/`checked_*`/`clamped_*`/`rounded_*` 全族（§九）
 - 内置符号：`\e`、`\pi`、`\i`、`\infty`、`\gamma`、`\phi`
 - 基础算子：`sqrt`、`sin`、`cos`、`log`、`exp` 等
-- 化简函数：`simplify`、`limit`、`derivative`
-- 工具函数：`print`、`format`、`range`、`map`、`filter`、`Some`、`None`、`Ok`、`Err`
+- 化简函数：`simplify`、`limit`、`derivative`、`partial`、`grad`（§19.4）
+- 集合：`Array`/`Dict`/`Set` 及方法（§11）、`len`/`enumerate`/`sorted`/`reversed`/`sum`/`prod`/`min`/`max`/`all`/`any`/`zip`/`join` 等便捷函数
+- 控制台：`print`（不换行）、`println`（换行）、`input`、`read_line`（§18.1b）
+- 工具函数：`format`、`range`、`map`、`filter`、`Some`、`None`、`Ok`、`Err`
 
 ---
 
@@ -1276,6 +1447,18 @@ pub enum Error {
     IndexOutOfBounds {
         index: usize,
         length: usize,
+        location: SourceLocation,
+    },
+
+    // 键不存在（Dict/Set，v2.1，§11.6）
+    KeyNotFound {
+        key: String,
+        location: SourceLocation,
+    },
+
+    // 元素/键不存在（v2.1，§11.3/11.6）
+    NotFound {
+        value: String,
         location: SourceLocation,
     },
 
@@ -1446,8 +1629,10 @@ let f(x): MFn @parallel = x^2;          // 纯函数并行（安全）
 // fn process(x) @parallel { ... }     // 功能函数并行（需手动保证线程安全）
 ```
 
-**规则**：
+**规则**（v2.1 定稿）：
 - `@parallel` 仅可标注**纯数学函数**（安全，编译器验证无副作用）。
+- `@parallel` 函数体必须**自包含**：只依赖形参与内置数学符号/常数，不得引用外部自由变量（并行子任务各自求值，无共享环境）。
+- 调用点在**广播上下文**（数组参数）下并行：数组长度 ≥ 阈值（默认 1024）时按线程数分块交给 rayon；小数组走顺序路径（避免开销）。
 - 功能函数并行标记为 `[EXPERIMENTAL]`，需用户手动保证线程安全。
 
 ### 17.2 `parfor` 显式并行循环
@@ -1462,8 +1647,9 @@ parfor i in 0..n step 2 {
 }
 ```
 
-**规则**：
-- 仅限**无副作用**迭代体，否则编译报错。
+**规则**（v2.1 定稿）：
+- 仅限**无副作用**迭代体，否则编译报错（`E0082`）。允许的语句形态：对**索引槽**的赋值（`A[i] = …`/`A[i] += …`，`i` 为循环变量或其纯函数，越界报 `R0003`）与纯函数调用；禁止 `print`、外部变量赋值、`let` 绑定、类实例修改等。
+- 结果写入：各数组槽位独立计算，结束后整数组回写绑定（rayon 并行）。
 - 底层使用 `rayon` 线程池，粒度自动调优。
 
 ### 17.3 线程安全保证
@@ -1542,7 +1728,10 @@ pub class String {
     pub fn ends_with(self, pat: Self) -> Bool
     pub fn replace(self, from: Self, to: Self) -> Self
     pub fn trim(self) -> Self
+    pub fn strip(self, pat: Self) -> Self      // v2.1：去首尾字符集
     pub fn split(self, sep: Self) -> Array<String>
+    pub fn join(self, parts: Array<String>) -> Self  // v2.1：以 self 为分隔符连接
+    pub fn find(self, pat: Self) -> Option<Integer>  // v2.1：首次出现下标
     pub fn to_upper(self) -> Self
     pub fn to_lower(self) -> Self
     pub fn repeat(self, n: Integer) -> Self
@@ -1554,6 +1743,34 @@ pub class String {
 - 参数为 `Expr` 时按 `print_format` 策略渲染（默认 LaTeX）。
 - 参数为 `Result`/`Option` 时显示其成功/失败摘要。
 - 支持 `{:format}` 精化（如 `{:0.2}` 浮点精度），逐步扩充。
+
+### 18.1b 控制台输出与输入（core 预导入，v2.1）
+
+`print` 与 `println` **语义区分**（v2.1 定稿）：
+
+```prima
+print("hello");             // 输出 "hello"，不追加换行
+println("hello");           // 输出 "hello" 并换行
+print("a", "b");            // 多参数以空格分隔：a b（不换行）
+println("x =", x);          // 同上但末尾换行
+```
+
+**规则**：
+- `print(args...)`：逐一格式化并输出，参数间以**单个空格**分隔，**不追加换行**（可用 `print("\n")` 手动换行）。
+- `println(args...)`：与 `print` 相同，但**末尾追加一个换行**。
+- 两者都按 `print_format` 策略渲染参数（默认 LaTeX）。
+
+**输入（v2.1）**：
+```prima
+let name = input("Name: ");        // 打印提示（可选）并读取一行，返回 String（去掉末尾换行）
+let n = read_line();               // 无提示读取一行
+let v = input("n = ").try_f64();   // 读取并坍缩（配合 try_* 家族，§九）
+```
+
+**规则**：
+- `input(prompt?) -> String`：可选提示语打印到 stdout（不换行），从 stdin 读一行（去掉行尾 `\r\n`/`\n`）；EOF 返回空字符串。
+- `read_line() -> String`：等价 `input()` 无提示。
+- 交互式 CLI/REPL 中不可用时按空串处理（I/O 错误不 panic）。
 
 ### 18.2 `sys` 模块（底层系统操作）
 
@@ -1832,23 +2049,23 @@ prima compile src/main.pra --emit-c-abi -o libhello     # C ABI 动态库 + 头�
 
 **实现分阶段**：
 
-#### MVP 阶段：符号微分
-- **基于 ExprDAG 的符号求导**：递归应用求导规则。
-- **支持函数**：
+#### MVP 阶段：符号微分（v2.1 纳入 core 预导入）
+- **基于 ExprDAG 的符号求导**：递归应用求导规则（和差积商、幂、链式、`sin/cos/tan/exp/ln/log/sqrt/abs`）。
+- **接口（core 预导入）**：`derivative(expr, var)` / `partial(expr, var)` / `grad(expr)` / `limit(expr, var, a)`，接受**符号表达式**或 **MFn 名**（`derivative(f, x)` 等价 `derivative(f 的函数体, x)`）。
+- **示例**：
   ```prima
   let f(x) = x^2 + sin(x);
   let df = derivative(f, x);    // → 2*x + cos(x)（返回 Expr）
   print(df);                    // LaTeX: 2x + \cos(x)
-  ```
-- **高阶导数**：
-  ```prima
-  let d2f = derivative(df, x);  // → 2 - sin(x)
-  ```
-- **偏导数**：
-  ```prima
+
+  let d2f = derivative(df, x);  // → 2 - sin(x)（高阶导数）
+
   let g(x, y) = x^2*y + y^3;
   let gx = partial(g, x);       // → 2*x*y
   let gy = partial(g, y);       // → x^2 + 3*y^2
+
+  let gradv = grad(x^2 + y^2);  // → [2x, 2y]（对自由变量逐偏导）
+  let lim = limit(sin(x)/x, x, 0);  // → 1（洛必达）
   ```
 
 #### 第二阶段：前向模式 AD（数值）
@@ -1991,6 +2208,13 @@ prima doc
  39 | 优化 | **自动内联（开发者不可干预）+ 常量折叠/CSE/循环优化/TCO 等现代优化管道**（§10.2） |
  40 | 运算符重载 | **`ops` 模块 `impl`；`overload_policy` 默认 `warn`（W0005）**（§18.5） |
  41 | 标准库扩充 | **`sys`（path/env/os）、`time`、`num`、`ops`、`c_api`**（§十八） |
+ 42 | 数组语义（v2.1） | **`Array` 可变长可变序列，元素任意值，方法齐全，可嵌套作为数据**；广播仅限数值同质数组（§11.3/11.4） |
+ 43 | 集合类型（v2.1） | **`Dict`/`Set` 为基本类型**：字面量、索引、方法、成员测试、集合代数（§4.6/11.6） |
+ 44 | 推导式（v2.1） | **`[x for ...]`/`{k: v for ...}`/`{x for ...}`** 统一迭代协议（§11.7） |
+ 45 | 控制台（v2.1） | **`print` 不换行 / `println` 换行**；`input`/`read_line` 读取 stdin（§18.1b） |
+ 46 | 便捷函数（v2.1） | **`len`/`enumerate`/`sorted`/`reversed`/`sum`/`prod`/`min`/`max`/`all`/`any`/`zip`/`join` 等** core 预导入（附录 B） |
+ 47 | 并行细节（v2.1） | **`@parallel` 广播按阈值并行；`parfor` 只允许索引槽写入（E0082）**（§十七） |
+ 48 | 符号微分（v2.1） | **`derivative`/`partial`/`grad`/`limit` 纳入 core**，基于 ExprDAG 符号求导（§19.4） |
 
 ---
 
@@ -2079,6 +2303,8 @@ type             ::= "Number" | "Integer" | "Rational" | "F64" | "F32"
                    | "Complex" | "Expr" | "Symbol" | "Bool" | "String" | "Char"
                    | "Array" "<" type ">"
                    | "Matrix" "<" type ">"
+                   | "Dict" "<" type "," type ">"
+                   | "Set" "<" type ">"
                    | "Tuple" "<" type_list ">"
                    | "Option" "<" type ">"
                    | "Result" "<" type "," type ">"
@@ -2103,13 +2329,28 @@ grouped_pattern  ::= "(" pattern ")"
 
 expr             ::= literal | ident | self_expr | call_expr | index_expr
                    | binary_expr | unary_expr | paren_expr | array_expr
-                   | tuple_expr | lambda_expr | match_expr | try_expr
+                   | tuple_expr | dict_expr | set_expr | comprehension
+                   | lambda_expr | match_expr | try_expr
                    | pipeline_expr | method_call | struct_literal
 self_expr        ::= "self" | "Self"
 method_call      ::= expr "." ident "(" args ")"
 struct_literal   ::= ident "{" field_value ("," field_value)* "}"
 field_value      ::= ident (":" expr)? | "..expr"         // ".." 从既有实例拷贝剩余字段
 try_expr         ::= expr "?"
+
+// v2.1 集合字面量与推导式（§4.6）
+dict_expr        ::= "{" (entry ("," entry)*)? "}"
+entry            ::= expr ":" expr
+set_expr         ::= "{" expr ("," expr)+ "}"
+comprehension    ::= comp_frame comp_for
+comp_frame       ::= "[" comp_elem comp_for "]"
+                   | "{" comp_entry comp_for "}"
+                   | "{" comp_elem comp_for "}"
+                   | "(" comp_elem comp_for ")"
+comp_elem        ::= expr
+comp_entry       ::= expr ":" expr
+comp_for         ::= "for" ident "in" expr (comp_if | comp_for)*
+comp_if          ::= "if" expr
 
 literal          ::= number | string | char | bool | tex_literal
 number           ::= integer | float | hex | binary
@@ -2128,11 +2369,14 @@ args             ::= (expr ("," expr)*)?
 index_expr       ::= expr "[" index "]"
 index            ::= expr | slice
 slice            ::= expr? ".." expr? | ".."
+// v2.1：负索引（-1 取末元素）与切片赋值（index_expr 作赋值左值，§11.3）
 
 binary_expr      ::= expr binary_op expr
 binary_op        ::= "+" | "-" | "*" | "/" | "^" | "**" | "@" | "%"
                    | "==" | "!=" | "<" | "<=" | ">" | ">="
                    | "&&" | "||"
+// v2.1：`in`（成员测试，§11.3/11.6）与 `∪`/`∩`/`\`（Set 代数，§11.6）
+//       追加到 binary_op 的等价优先级组（成员测试与比较同级）
 
 unary_expr       ::= unary_op expr
 unary_op         ::= "-" | "!" | "+"
@@ -2216,10 +2460,10 @@ expand(expr)                   // 展开
 factor(expr)                   // 因式分解
 collect(expr, var)             // 合并同类项
 substitute(expr, var, value)   // 替换
-limit(expr, var, value)        // 极限
-derivative(f, var)             // 导数
-partial(f, var)                // 偏导数
-grad(f)                        // 梯度
+limit(expr, var, value)        // 极限（v2.1 实现：直接代入 + 洛必达）
+derivative(expr, var)          // 导数（v2.1 实现，接受表达式或 MFn 名，§19.4）
+partial(expr, var)             // 偏导数（同 derivative）
+grad(expr)                     // 梯度（对自由变量逐偏导，返回 Array）
 integral(f, var)               // 不定积分
 definite_integral(f, var, a, b)  // 定积分
 ```
@@ -2231,19 +2475,61 @@ to_string(x)                   // 任意值转 String
 String::new(), String::from(v)
 s.push(t), s.insert(i, t), s.len(), s.is_empty()
 s.char_at(i), s.substring(a, b), s.contains(p), s.starts_with(p), s.ends_with(p)
-s.replace(f, t), s.trim(), s.split(sep), s.to_upper(), s.to_lower(), s.repeat(n)
+s.replace(f, t), s.trim(), s.strip(p), s.split(sep), s.join(parts)
+s.find(p), s.to_upper(), s.to_lower(), s.repeat(n)
+```
+
+#### 控制台（v2.1，§18.1b）
+```prima
+print(args...)                 // 格式化输出，参数空格分隔，不追加换行（v2.1）
+println(args...)               // 同 print，末尾追加换行
+input(prompt?)                 // 打印提示（可选）并读取一行 → String
+read_line()                    // 无提示读取一行 → String
+```
+
+#### 集合便捷函数（v2.1，core 预导入）
+```prima
+// 多态长度与构造
+len(x)                         // Array/Dict/Set/String/Tuple 的元素数
+enumerate(arr)                 // → [(0, a0), (1, a1), ...]（Tuple 数组）
+zip(a, b)                      // → [(a0, b0), (a1, b1), ...]（短端截断）
+range(start, end, step = 1)    // 生成范围（数组或惰性迭代）
+linspace(start, end, n)        // 线性等分
+
+// 数组便捷
+sorted(arr)                    // 排序 → 新 Array
+reversed(arr)                  // 反转 → 新 Array
+sum(arr)                       // 求和（数值）
+prod(arr)                      // 求积（数值）
+min(arr), max(arr)             // 最值
+all(arr)                       // 全真
+any(arr)                       // 任一真
+arr.contains(x)                // 成员测试（等价 `x in arr`）
+arr.index(x)                   // 元素下标（找不到 R0013）
+arr.count(x)                   // 出现次数
+arr.first(), arr.last()        // 首/末元素（Option）
+arr.sort(), arr.reverse()      // 原地排序/反转
+
+// Array 可变方法（§11.3）
+v.push(x), v.pop() -> Option, v.append(x), v.extend(iterable)
+v.insert(i, x), v.remove(i) -> Value, v.clear()
+
+// Dict 方法（§11.6）
+d.keys() -> Array, d.values() -> Array, d.items() -> Array<Tuple>
+d.get(k) -> Option, d.insert(k, v), d.remove(k) -> Option, d.clear()
+d.update(other), d.len()
+
+// Set 方法（§11.6）
+s.add(x), s.remove(x), s.discard(x), s.contains(x), s.len()
+s.union(other) / s ∪ other, s.intersection(other) / s ∩ other
+s.difference(other) / s \ other
 ```
 
 #### 工具函数
 ```prima
-print(args...)                 // 打印（等价 println，均换行）
-println(args...)               // 打印并换行
-range(start, end, step = 1)    // 生成范围
-linspace(start, end, n)        // 线性等分
 map(f, array)                  // 映射
 filter(pred, array)            // 过滤
 reduce(f, array, init)         // 归约
-zip(arr1, arr2)                // 拉链
 ```
 
 #### 内建变体构造器（core 预导入）
@@ -2399,24 +2685,28 @@ c_api::unit         // C void
  `E0070` | `unknown_annotation` | 未知注解 |
  `E0071` | `c_api_type` | `@c_api::extern` 参数/返回非 C 兼容类型 |
  `E0072` | `c_api_visibility` | `@c_api::extern` 函数非 `pub` |
- `E0080` | `return_outside_fn` | `return` 用在函数外 |
- `E0081` | `op_overload_bad_arity` | 运算符重载函数签名不合法 |
+  `E0080` | `return_outside_fn` | `return` 用在函数外 |
+  `E0081` | `op_overload_bad_arity` | 运算符重载函数签名不合法 |
+  `E0082` | `parfor_side_effect` | `parfor` 迭代体含副作用（v2.1，仅允许索引槽赋值/纯函数调用，§17.2） |
 
 ### C.2 运行时错误（R）
 
  码 | 名称 | 含义 |
 ----|------|------|
- `R0001` | `overflow` | 溢出（`checked_*` 返回 Err） |
- `R0002` | `underflow` | 下溢 |
- `R0003` | `index_out_of_bounds` | 索引越界 |
- `R0004` | `dimension_mismatch` | 维度不匹配 |
- `R0005` | `domain_error` | 定义域错误 |
- `R0006` | `undefined_error` | `Undefined` 参与运算 |
- `R0007` | `io_error` | I/O 错误 |
- `R0008` | `import_error` | 运行时模块加载错误 |
- `R0009` | `type_error` | 运行时类型不匹配 |
- `R0010` | `cast_error` | 坍缩失败（`to_*`/`try_*`） |
- `R0011` | `custom_error` | 自定义错误（`panic`/`Err`） |
+  `R0001` | `overflow` | 溢出（`checked_*` 返回 Err） |
+  `R0002` | `underflow` | 下溢 |
+  `R0003` | `index_out_of_bounds` | 索引越界（含负索引越界，v2.1 §11.3） |
+  `R0004` | `dimension_mismatch` | 维度不匹配 |
+  `R0005` | `domain_error` | 定义域错误 |
+  `R0006` | `undefined_error` | `Undefined` 参与运算 |
+  `R0007` | `io_error` | I/O 错误 |
+  `R0008` | `import_error` | 运行时模块加载错误 |
+  `R0009` | `type_error` | 运行时类型不匹配（含广播遇非数值元素，v2.1 §11.4） |
+  `R0010` | `cast_error` | 坍缩失败（`to_*`/`try_*`） |
+  `R0011` | `custom_error` | 自定义错误（`panic`/`Err`） |
+  `R0012` | `key_not_found` | `Dict` 键不存在（v2.1 §11.6） |
+  `R0013` | `not_found` | `Array.index`/`Set.remove` 找不到目标（v2.1 §11.3/11.6） |
+  `R0014` | `empty_collection` | 对空数组/空集合做广播或归约（v2.1 §11.4） |
 
 ### C.3 警告（W）
 
@@ -2430,4 +2720,4 @@ c_api::unit         // C void
 
 ---
 
-*语言规范 Prima v2.0 · 作为 Prima 语言设计与实现的最终依据*
+*语言规范 Prima v2.1 · 作为 Prima 语言设计与实现的最终依据*
