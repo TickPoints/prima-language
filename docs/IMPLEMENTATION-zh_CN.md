@@ -507,6 +507,15 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 - **便捷函数**：`len/enumerate/zip/sorted/reversed/sum/prod/min/max/all/any/join/count/index/first/last`（core 预导入）。
 - **控制台**：`print`（不换行）/`println`（换行）区分已随 Phase 3 落地；`input`/`read_line` 随 `print` 分派落地。
 
+> **Phase 4 落地记录（2026-08，v2.1）**：全部完成。与本文档的偏差/定稿：
+> - **stdlib 采用「嵌入式 `.pra` 签名模块 + `@builtin` 实现注册表」**（对齐规范 §18.4 的设计意图，ADR 见 §7）：每个模块是一份内嵌进二进制的 `.pra`，只声明带类型的 `@builtin pub fn` 签名（如 `linalg::determinant(M: Matrix<F64>) -> F64`）；Rust 侧按 `"模块::函数"` 键注册实现（`register_impl`），`.pra` 经 `register_module_source` 内嵌。`import <module>` 解析到内嵌源码并**按普通模块求值**（`collect_pub` 导出绑定到实现的 `Function::Native`），API 表面单一来源。
+> - **模块解析优先级**：内嵌 stdlib 源码 → 宿主命名空间 → 本地文件；**注册的 stdlib 路径名保留**（类 Rust `std`，本地 `linalg.pra` 不能遮蔽 `import linalg`）。物理常数（纯数据，无逻辑）保持宿主命名空间 `NamespaceItem::Val`，是唯一不经 `.pra` 的模块。
+> - **`@builtin` 绑定**：根模块按 core builtin 名（`Builtin::from_name`）；stdlib 模块内**先查实现注册表**（`"模块::名"`），未注册 → `E0055`（core builtin 不遮蔽模块内同名实现）。`@builtin` 函数名支持 `::` 路径（`Matrix::zeros`、`Duration::from_secs`）。
+> - **`prima check` 调用点类型检查**：从内嵌签名表校验 stdlib 调用（`E0050` 参数个数/类型），重载（如 `stats::quantile` 数组/分布双形态）任一签名匹配即通过；`Value` 类型名作通配；未知类型不误报。参数少于声明的个数允许（可选尾参）。
+> - **`@c_api::extern`**：`E0071`/`E0072` 静态校验；`prima compile --emit-headers` 从导出清单生成 C 头（`crate::capi`）。
+> - **CLI 补齐**：`repl`（rustyline，括号续行）、`fmt`（AST printer，`-w`/`--check`）、`test`（默认跑 `examples/` 全部样例）、`doc`（定义清单 + `///` 注释）、`check --deny W####`（警告提升为错误）。
+> - **偏差记录**：物理常数以 `physics::planck_const`（裸名）访问，规范 §7.3 的 `physics::\planck_const` TeX 名不作模块键；`import sys::path` 绑定**全路径**（§15.3 约定，`sys::path::join`），规范 §18.2 示例的 `path::join` 简写不支持；`String.split` 返回 `Array<String>`（§18.1 v2.1）；`linalg::norm/solve/lstsq` 首参或 RHS 用 `Value` 通配以覆盖向量/矩阵双形态。
+
 ### Phase 5：JIT（§19.2）
 
 - `cranelift-codegen` 热点编译：调用计数阈值触发（默认 100）或 `@jit` 注解；`ExprDAG → 字节码 → cranelift IR → 原生码`；符号层保持解释。
@@ -567,6 +576,11 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 | §17.1（v2.0） | `@parallel` 无自包含要求 | **要求函数体自包含（不引用自由变量）** | 并行子任务各自求值、无共享环境；违反在求值时以未定义名报错，文档化约束 |
 | §17.2（v2.0） | parfor 副作用检查时机未定 | **求值期静态检查，报 `E0082`** | 与 `prima check` 的增量检查并存；Phase 4 后移入编译期 |
 | §19.4（v2.0） | `derivative(f, var)` 需函数值 | **`eval_call` 拦截 + 接受 MFn 名/表达式** | 当前 `Value` 无 `Function` 变体、函数不可作值；拦截方案支持 `derivative(f, x)` 且不扩张值系统 |
+| §18（v2.1） | stdlib 模块为 Rust 命名空间 | **嵌入式 `.pra` 签名模块 + `@builtin` 实现注册表** | API 表面单一来源、`prima check` 调用点类型检查（E0050）、错误反馈与文档一体；物理常数（纯数据）例外保留 `Val` 命名空间 |
+| §18.4（v2.1） | `@builtin` 按名称绑定内置 | **模块内先查实现注册表（`"模块::名"`），core builtin 只在根模块按名绑定** | 避免 `sys::path::join` 等被同名 core 便捷函数遮蔽 |
+| §15.3（v2.1） | 模块解析仅文件映射 | **解析顺序：内嵌 stdlib → 宿主命名空间 → 本地文件；stdlib 路径名保留** | 确定性、类 Rust `std`；本地同名文件不再遮蔽内建模块 |
+| §18.2（v2.1） | `import sys::path` 后以 `path::join` 访问 | **绑定全路径 `sys::path::join`** | 与 §15.3 嵌套导入约定一致（`import linalg::fft` → `linalg::fft::double`）；§18.2 示例的简写不支持 |
+| §7.3（v2.1） | 物理常数以 `\planck_const` 符号名访问 | **模块键用裸名 `physics::planck_const`** | 注册表键是纯字符串；TeX 名仅作显示层概念 |
 
 其余所有设计（三世界架构、Number 塔、ExprPool、策略三级、模块系统、错误模型、并行哲学、类所有权）与规范完全一致。
 
