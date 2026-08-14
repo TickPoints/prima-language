@@ -1,8 +1,9 @@
-# Prima 语言 —— 实现方案（Implementation Plan）v2.0
+# Prima 语言 —— 实现方案（Implementation Plan）v2.1
 
-> **定位**：本文档是 [`SPECIFICATIONS-zh_CN.md`](./SPECIFICATIONS-zh_CN.md) v2.0 的实现落地决策。
+> **定位**：本文档是 [`SPECIFICATIONS-zh_CN.md`](./SPECIFICATIONS-zh_CN.md) v2.1 的实现落地决策。
 > 规范未覆盖处，以本文档为准；规范 §19.1 的若干**初步建议**（logos/chumsky/latex crate）经评估后**不采纳**，理由见 §2 与 §7。
 > 本文档的读者：实现者（含 AI 代理）。后续所有开发工作按本文档的分工与顺序推进。
+> **v2.1 增量**：基础类型可用性增强（可变长 `Array`、`Dict`/`Set`、便捷函数、`print`/`println` 区分、`input`、推导式）进入语言规范，落地排期见 §5；Phase 3（`@parallel` 广播并行 + `parfor` + 符号微分 `derivative`/`partial`/`grad`/`limit`）在本文档 v2.1 中落地。
 
 ---
 
@@ -218,13 +219,21 @@ pub enum Expr {
     Binary { op: BinOp, lhs: Box<Expr>, rhs: Box<Expr> },  // op 携带优先级、幂右结合
     Unary { op: UnOp, e: Box<Expr> },
     Try(Box<Expr>),              // expr?（§16.3）
-    Array(Vec<Expr>),            // 嵌套数组在类型/求值层拒绝（§11.4）
+    Array(Vec<Expr>),            // 可变长数组字面量（v2.1 元素任意值，§11.3）
+    Dict(Vec<(Expr, Expr)>),     // v2.1 Dict 字面量 { k: v, ... }（§4.6）
+    Set(Vec<Expr>),              // v2.1 Set 字面量 { a, b, ... }（§4.6）
+    Comprehension {              // v2.1 推导式（§11.7）：
+        frame: CompFrame,        //   Array/Dict/Set/Tuple 外框
+        clauses: Vec<CompClause>,//   for x in iterable [if cond] 链
+        body: Expr,              //   元素表达式（Dict 推导式元素为 (k, v) 对）
+    },
     Tuple(Vec<Expr>),
     Lambda { params: Vec<Param>, body: Box<Expr> },   // |x| expr
     Match { scrutinee: Box<Expr>, arms: Vec<MatchArm> },  // match 表达式
     Pipeline { lhs: Box<Expr>, rhs: Box<Expr> },      // a |> f —— 弃用（W0002），降级时改写为 Call
 }
 pub struct FieldValue { pub name: Ident, pub value: Option<Expr> }
+// CompFrame: 产出容器（Array | Dict | Set | Tuple）；CompClause: For{var, iter} | If{cond}（§4.6/11.7）
 // 每个节点携带 Span；Block = Vec<Stmt>
 ```
 
@@ -257,7 +266,10 @@ pub struct Complex<T> { pub re: T, pub im: T }   // 不直接依赖 num-complex 
                                                  // 但复用其 trait 实现（T: Num）辅助泛型运算
 pub enum Value {  // §5 逐字落地
     Number(Number), Bool(bool), Char(char), String(String),
-    Array(Array), Matrix(Matrix), Function(Function),
+    Array(Array),            // v2.1：可变长序列，`Vec<Value>`（§11.3，见下方 v2.1 注）
+    Dict(Dict),              // v2.1：`HashMap<ValueKey, Value>`（§11.6）
+    Set(Set),                // v2.1：`HashSet<ValueKey>`（§11.6）
+    Matrix(Matrix), Function(Function),
     Class(ClassId),            // §5 类实例句柄（§4.7）
     Expr(ExprId), Symbol(SymbolId),
     Option(Option<Box<Value>>), // §5 Option<T>：Some(T)/None
@@ -265,6 +277,8 @@ pub enum Value {  // §5 逐字落地
     Tuple(Vec<Value>), Result(Result<Box<Value>, Error>),
 }
 ```
+
+> **v2.1 落地注**：`Value::Array` 由 v1.x 的 `Vec<Number>` 改为 `Vec<Value>`（元素可为任意值）；`Dict`/`Set` 为新增变体，键/元素用 `ValueKey` 包装（`Number`/`String`/`Char`/`Bool`/`Expr`/`Symbol` 的可哈希形式）。广播/矩阵接口在**调用点**校验数组元素为数值（`R0009`），不再于字面量构造层强制同构。`grad` 等返回多表达式的接口在 `Vec<Value>` 化完成前暂以 `Value::Tuple` 承载。
 
 **提升（promotion）规则实现**（§6.4 定稿）：`promote(a, b) -> (Number, Number)` 把两个数抬到公共层——序列 `Integer < Rational < Complex<Rational> < F64 < Complex<F64>`；遇 `Real` 即整个 Complex 提升为 Complex<Real>。约分/规范化在 `Rational` 构造时完成（`num-rational` 原生支持）。
 
@@ -357,13 +371,18 @@ expr_ast
 
 - **MFn**（`let f(x) = body`）：闭包持有 body AST；调用时 `substitute(参数 → 实参 ExprId)` 得实例化 DAG → 化简 → 返回 `Expr`。实参是数值时按需坍缩（§10 例：`f(3.0) → 15.0`）。
 - **Fn**（`fn`）：宿主闭包，解释执行 Block；可有副作用（§11.2）；可返回 `Result`（§16.3）。
-- **广播**（§11.4）：调用点检查——参数为 `Array` 且 `broadcast := true` 时逐元素；**拒绝嵌套数组与空数组**（错误码，含 §16 诊断）；`@.` 是显式广播算子；`broadcast := false` 时提供 `map`/`@.`。
+- **广播**（§11.4）：调用点检查——参数为 `Array` 且 `broadcast := true` 时逐元素；**数组元素须为数值**（非数值 → `R0009`），**拒绝空数组**（`R0014`，§16 诊断）；`@.` 是显式广播算子；`broadcast := false` 时提供 `map`/`@.`。
+- **集合与推导式**（v2.1，§4.6/11.6/11.7）：`Array`/`Dict`/`Set` 字面量求值为对应 `Value`；`for`/`parfor`/`in`/推导式统一迭代协议（`iter_values(v) -> Vec<Value>`：Array 元素、Dict 键、Set 元素、range、String 字符）；推导式求值 = 嵌套循环 + 过滤 + 收集到外框容器；`in` 二元运算在 Array 线性查找、Dict/Set O(1)。
+- **可变集合方法**（v2.1，§11.3/11.6）：`v.push`/`pop`/`append`/`extend`/`insert`/`remove`/`clear`、`d[k]=v`/`get`/`insert`/`remove`/`keys`/`values`/`items`、`s.add`/`remove`/`discard`/`union`/`intersection`/`difference` 由 `eval_method_call` 对 `Value::Array/Dict/Set` 特判分发；切片赋值 `v[a..b] = [...]` 改写为 splice。
 - **模式与解构**（§4.4）：`match`/`if let`/`while let`/`let` 统一走 `match_pattern(pattern, value) -> Result<Bindings, MatchFail>`；构造器模式（`Some`/`Ok`/`Err`）按内建变体匹配；`..` 通配其余。
 - **类**（§4.5/12.3）：`Test::new(...)` 查类注册表关联函数；`obj.method(...)` 依 `Value::Class` 的 `ClassId` 查方法表；`self` 绑定为实例的 `Rc` 浅拷贝；字段访问 `obj.x` 按可见性检查；`T { a, b }` 构造新实例（缺字段 `E0061`，未知字段 `E0060`）。
 - **`?` 运算符**（§16.3）：`expr?` 在返回 `Result` 的函数内：`Err(e)` → 提前返回 `Err(e)`；返回 `Option` 的函数内：`None` → 提前返回 `None`；上下文不匹配 → 编译期 `E0054`。
 - **`|>` 管道**（§9.7）：弃用（W0002），降级改写为嵌套调用。
 - **循环优化**（§10）：`loop_optimization := true` 时，`for i in a..b { acc += i }` 形态识别为闭式公式（Phase 2 实现，先 `0..n` 与 `1..n` 等差模式）。
-- **parfor**（§17.2）：`rayon::par_iter`；迭代体**副作用静态检查**（仅允许对索引槽 `A[i]` 赋值、纯函数调用），违规编译期报错。
+- **parfor**（§17.2，v2.1 落地）：`rayon::par_iter`；迭代体**副作用静态检查**——仅允许对索引槽 `A[i]`/`A[i] +=` 赋值与纯函数调用，违规报 `E0082`；各槽位独立求值（每线程块一个独立 Evaluator，共享进程级 `ExprPool`/`SymbolTable`），结束后整数组回写绑定。
+- **@parallel 广播并行**（§17.1/17.4，v2.1 落地）：`Function::User` 增加 `parallel: bool`（`MathDef` 带 `Annotation::Parallel` 时为真）；广播路径中当数组长度 ≥ 阈值（默认 1024）时按 `rayon` 线程数分块，每块一个**独立 Evaluator**（快照当前 Config，输出 sink 丢弃），块内对 `@parallel` MFn 的形参环境求值（要求函数体**自包含**，不引用自由变量）；小数组走顺序路径。
+- **符号微分**（§19.4，v2.1 落地）：`crates/prima-runtime/src/diff.rs` 基于 `ExprPool` DAG 实现 `derivative`/`partial`/`grad`/`limit`；`eval_call` 拦截这四个名字，`derivative(f, x)`/`grad(f)` 接受 MFn 名（经 `resolve_func` 取函数体并绑定形参为符号）或符号表达式；`limit` 先直接代入，遇 0/0 用洛必达（最多 8 轮）。
+- **控制台**（§18.1b，v2.1 落地）：`print` 不追加换行、`println` 追加换行（`Builtin::Print`/`Println` 分派差异）；`input`/`read_line` 读 stdin（EOF/错误返回空串）。
 - **错误流**（§16.2/16.3）：可恢复错误以 `Value::Result` 表达；`to_*`/`unwrap`/`expect` 在解释器内转为**终止性 panic**（`panic!`，§16.2 第 3 类）。**不存在 `try/catch`**；解析 `try` 关键字即报 `E0010` 并提示改用 `Result`。
 - **Undefined 严格性**（§6.2）：`Undefined` 参与任何一元/二元运算即抛 `UndefinedError`（不传播运算）；`Indeterminate` 只在符号层存在，坍缩失败时转 `Undefined`。
 
@@ -426,7 +445,7 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 > - 化简规则实现在 `core::simplify::simplify(pool, builtins, id)`（无 level 参数，MVP 全量应用）：intern 层（`ExprPool::add2/mul2/pow2/sub2/div2` + `add_n/mul_n` 扁平化/常量合并）做 0/1 级；`simplify` 做 2/3 级。
 > - TeX 字面量解析器放在 `prima-syntax::tex`（MVP 子集），产出与普通语法相同的 AST。
 > - 解释器在 `prima-runtime::eval`；广播在调用点对纯函数逐元素，拒空/嵌套数组；`a |> f` 管道改写为调用。
-> - `print`/`println` 当前都会换行；默认 LaTeX 输出。
+> - `print`/`println` 当时都换行；**v2.1 起区分**：`print` 不换行、`println` 换行（§4.8 控制台）；默认 LaTeX 输出。
 
 ### Phase 2：策略、数值层与错误处理（对应里程碑 4、5、7）
 
@@ -462,6 +481,12 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 - 自动内联（§10.2）：`InlinePass` 在类型检查后、求值/代码生成前运行；启发式（MFn/无副作用 fn、规模阈值、非递归）由编译器内部判定，不暴露注解。
 - 常量折叠/CSE/循环不变量提升：作为化简/求值旁路增量实现，与 `simplify_level` 协同。
 
+> **Phase 3 落地记录（2026-08，v2.1）**：全部完成。与本文档的偏差/定稿：
+> - `@parallel` 以 `Function::User.parallel` 标记；广播路径对 `parallel && len ≥ 1024` 走 rayon 分块（每块一个独立 `Evaluator`，快照 Config、丢弃输出）。要求 `@parallel` 函数体**自包含**（不引用自由变量）。
+> - `parfor` 副作用静态检查在 `eval_stmt` 的 `ParFor` 分支执行（报 `E0082`）；允许索引槽赋值（`A[i] = …`/`+=`）与纯函数调用；各槽位独立求值后整数组回写绑定。
+> - 符号微分在 `crates/prima-runtime/src/diff.rs`：`derivative`/`partial`（同一求导，一个变量）、`grad`（自动收集自由符号逐偏导，`Vec<Value>` 化完成前返回 `Value::Tuple`）、`limit`（直接代入 → 洛必达 ≤8 轮）；`eval_call` 拦截四个名字，接受 MFn 名或符号表达式。
+> - `print`/`println` 区分（print 不换行）、`input`/`read_line` 一并落地。
+
 ### Phase 4：标准库与工具链
 
 - `prima-stdlib`：`linalg`（nalgebra：Matrix 构造/运算/分解/求解）、`stats`、`io`（JSON/CSV）、`physics`（§7.3 常数）、`plot`（SVG）。
@@ -474,6 +499,13 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 - **`ops`**（§18.5）：`impl ops::Add for T` 注册到运算符分派表；调用点按 `overload_policy` 决定 `W0005`/放行/报错。
 - **`@builtin`**（§18.4）：内置注册表（`BuiltinRegistry`），签名绑定 + 可见性校验（`E0055`/`E0056`）。
 - **`@c_api::extern`**（§18.4）：AST 级标注 + 类型校验（`E0071`/`E0072`）；MVP 先产出「导出清单」+ ABI 头文件骨架，实际二进制导出在 Phase 5 AOT 落地。
+
+**v2.1 增量（基础类型可用性，排期于 Phase 4 + 后续增量）**：
+- **`Array` 可变长化**：`Value::Array` → `Vec<Value>`；`push/pop/append/extend/insert/remove/clear`、切片赋值、负索引、`+`/`+=` 拼接、`in` 成员测试（§4.3/4.8）。
+- **`Dict`/`Set` 变体**：`ValueKey` 可哈希包装；字面量/索引/方法/集合代数（`∪`/`∩`/`\`）；`R0012`/`R0013`/`R0014` 错误码接入。
+- **推导式**：`ExprKind::Comprehension` 求值 + 统一迭代协议；BNF 见规范附录 A。
+- **便捷函数**：`len/enumerate/zip/sorted/reversed/sum/prod/min/max/all/any/join/count/index/first/last`（core 预导入）。
+- **控制台**：`print`（不换行）/`println`（换行）区分已随 Phase 3 落地；`input`/`read_line` 随 `print` 分派落地。
 
 ### Phase 5：JIT（§19.2）
 
@@ -526,8 +558,18 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 | §6.1（v1.0） | 坍缩类型 I32/F32/F64 | **扩展为 i8…u128/isize/usize/f32/f64 全量** | 规范 §6.1（v2.0）定稿：与 Rust 基本数值一一对应，互操作与数值控制更细 |
 | §18（v1.0） | stdlib 模块集 | **新增 sys/time/num/ops/c_api** | 规范 §十八（v2.0）定稿：系统层/时间/数值扩展/运算符重载/互操作 |
 
+**v2.1 ADR 新增**：
+
+| 规范条款 | 规范建议 | 本方案 | 理由 |
+|---------|---------|--------|------|
+| §5/§11.3（v2.0） | `Value::Array(Vec<Number>)`，同构、拒嵌套 | **`Vec<Value>` 可变长，可嵌套作数据；广播在调用点校验数值同质（R0009）** | 规范 §11.3（v2.1）定稿：Python 式可用性优先；符号层/数值层不变量仍在广播与矩阵接口处保持 |
+| §5（v2.0） | 无 Dict/Set | **新增 `Dict`/`Set` 变体与 `ValueKey`** | 规范 §4.6/11.6（v2.1）定稿：映射/集合是科学计算高频需求 |
+| §17.1（v2.0） | `@parallel` 无自包含要求 | **要求函数体自包含（不引用自由变量）** | 并行子任务各自求值、无共享环境；违反在求值时以未定义名报错，文档化约束 |
+| §17.2（v2.0） | parfor 副作用检查时机未定 | **求值期静态检查，报 `E0082`** | 与 `prima check` 的增量检查并存；Phase 4 后移入编译期 |
+| §19.4（v2.0） | `derivative(f, var)` 需函数值 | **`eval_call` 拦截 + 接受 MFn 名/表达式** | 当前 `Value` 无 `Function` 变体、函数不可作值；拦截方案支持 `derivative(f, x)` 且不扩张值系统 |
+
 其余所有设计（三世界架构、Number 塔、ExprPool、策略三级、模块系统、错误模型、并行哲学、类所有权）与规范完全一致。
 
 ---
 
-*实现方案 Prima v2.0 · 与 SPECIFICATIONS-zh_CN.md v2.0 配套 · 实现工作的唯一依据*
+*实现方案 Prima v2.1 · 与 SPECIFICATIONS-zh_CN.md v2.1 配套 · 实现工作的唯一依据*
