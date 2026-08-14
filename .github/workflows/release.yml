@@ -134,6 +134,7 @@ jobs:
           cat "$ARTIFACT.sha256"
 
       - name: Upload binary and checksum to release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
