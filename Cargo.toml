@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 authors = ["TickPoints <tickpoints@outlook.com>"]
 repository = "https://github.com/TickPoints/prima-language"
+license = "MIT"
 description = "Prima - symbol-first scientific computing language toolchain"
 
 [[bin]]
@@ -19,6 +20,7 @@ version = "0.1.0"
 edition = "2024"
 authors = ["TickPoints <tickpoints@outlook.com>"]
 repository = "https://github.com/TickPoints/prima-language"
+license = "MIT"
 
 [workspace.dependencies]
 unicode-ident = "1.0"
