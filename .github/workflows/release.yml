@@ -1,5 +1,11 @@
-# Build `prima` for every Rust Tier-1 platform on each release and attach the
-# binaries and their SHA-256 checksums to the GitHub Release (spec §20 toolchain).
+# Release pipeline.
+#
+# Pushing a tag (e.g. `v0.1.1`) triggers:
+#   1. a "release" job that validates the tag against the root package version,
+#      extracts the matching section from docs/CHANGELOG.md and creates a
+#      GitHub Release with it as the body (falling back to [Unreleased]);
+#   2. a "build" job that compiles `prima` for every Rust Tier-1 platform and
+#      attaches the binaries + SHA-256 checksums to that Release.
 #
 # Tier-1 targets (Rust reference): x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu,
 # x86_64-pc-windows-msvc, aarch64-pc-windows-msvc, x86_64-apple-darwin, aarch64-apple-darwin.
@@ -8,8 +14,9 @@
 name: release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
@@ -22,8 +29,40 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          CARGO_VERSION="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/^version = "([^"]*)"/\1/')"
+          if [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match root package version ${CARGO_VERSION}"
+            exit 1
+          fi
+
+      - name: Extract changelog section for this version
+        id: notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 .github/scripts/release_notes.py "$TAG" > /tmp/release_notes.md
+          echo "notes_file=/tmp/release_notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --notes-file "${{ steps.notes.outputs.notes_file }}"
+
   build:
     name: ${{ matrix.target }}
+    needs: release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -80,7 +119,7 @@ jobs:
         id: package
         shell: bash
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.ref_name }}
         run: |
           EXT=""
           if [ "${{ matrix.os }}" = "windows-latest" ]; then EXT=".exe"; fi
@@ -98,7 +137,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
+          gh release upload "${{ github.ref_name }}" \
             "${{ steps.package.outputs.artifact }}" \
             "${{ steps.package.outputs.artifact }}.sha256" \
             --clobber
