@@ -96,6 +96,12 @@ pub enum TokenKind {
     RBracket,
     LBrace,
     RBrace,
+    /// Set union operator `∪` (U+222A, spec §11.6).
+    Union,
+    /// Set intersection operator `∩` (U+2229, spec §11.6).
+    Intersect,
+    /// Set difference operator `\` (spec §11.6) — distinct from `\pi`-style TeX symbols.
+    SetMinus,
     Newline,
     Eof,
 }
@@ -182,6 +188,9 @@ pub fn describe(kind: &TokenKind) -> String {
         TokenKind::RBracket => "`]`".into(),
         TokenKind::LBrace => "`{`".into(),
         TokenKind::RBrace => "`}`".into(),
+        TokenKind::Union => "`∪`".into(),
+        TokenKind::Intersect => "`∩`".into(),
+        TokenKind::SetMinus => "`\\`".into(),
         TokenKind::Newline => "newline".into(),
         TokenKind::Eof => "end of file".into(),
     }

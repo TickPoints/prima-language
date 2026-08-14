@@ -164,3 +164,24 @@ fn assignment_forms() {
     let p = parse(src).unwrap();
     assert_eq!(p.stmts.len(), 3);
 }
+
+#[test]
+fn snapshot_v21_collections() {
+    let src = r#"
+let d = { "a": 1, "b": 2 };
+let e = {};
+let s = {1, 2, 3, 2};
+let has = 2 in [1, 2, 3];
+let u = s ∪ {5, 6};
+let i = s ∩ {2, 3};
+let diff = s \ {3};
+let squares = [x^2 for x in range(0, 10) if x % 2 == 0];
+let pairs = [(x, y) for x in range(0, 2) for y in range(0, 2)];
+let table = {x: x^2 for x in range(0, 5)};
+let odds = {x for x in range(0, 10) if x % 2 == 1};
+let gens = ((x, x + 1) for x in range(0, 3));
+let v = [1, "a", true];
+let slice = v[-1..];
+"#;
+    insta::assert_debug_snapshot!("parser_v21_collections", parse(src).unwrap());
+}

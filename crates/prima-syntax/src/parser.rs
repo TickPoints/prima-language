@@ -1088,6 +1088,9 @@ impl Parser {
             TokenKind::Symbol(s) => ExprKind::Symbol(Spanned { value: s, span }),
             TokenKind::LParen => return self.parse_paren_or_tuple(span),
             TokenKind::LBracket => return self.parse_array(span),
+            // A `{` at the start of an expression is always a Dict/Set literal (spec §4.6 rule 3);
+            // struct literals `T { ... }` and block-context braces are consumed by their dedicated parsers.
+            TokenKind::LBrace => return self.parse_brace_literal(span),
             TokenKind::Pipe => return self.parse_lambda(span),
             TokenKind::KwMatch => return self.parse_match_expr(span),
             _ => return Err(SyntaxError { span, message: format!("expected expression, found {}", describe(&tok.kind)) }),
@@ -1237,6 +1240,15 @@ impl Parser {
             let end = self.expect(&TokenKind::RParen, "`)`")?.span;
             Ok(Expr { kind: ExprKind::Tuple(items), span: Span::merge(start, end) })
         } else {
+            // Tuple comprehension `(output for var in iter [if cond])` (spec §4.6): a single output with no trailing comma.
+            if self.at(&TokenKind::KwFor) {
+                let clauses = self.parse_comprehension_clauses()?;
+                let end = self.expect(&TokenKind::RParen, "`)`")?.span;
+                return Ok(Expr {
+                    kind: ExprKind::Comprehension { kind: CompKind::Tuple, output: Box::new(first), clauses },
+                    span: Span::merge(start, end),
+                });
+            }
             let end = self.expect(&TokenKind::RParen, "`)`")?.span;
             Ok(Expr { kind: first.kind, span: Span::merge(start, end) })
         }
@@ -1256,8 +1268,124 @@ impl Parser {
                 break;
             }
         }
+        // Array comprehension `[output for var in iter [if cond]]` (spec §4.6/§11.7): a single output expression.
+        if self.at(&TokenKind::KwFor) {
+            if items.len() != 1 {
+                return Err(self.err(self.span(), "comprehension output must be a single expression".into()));
+            }
+            let output = items.pop().unwrap();
+            let clauses = self.parse_comprehension_clauses()?;
+            let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
+            return Ok(Expr { kind: ExprKind::Comprehension { kind: CompKind::Array, output: Box::new(output), clauses }, span: Span::merge(start, end) });
+        }
         let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
         Ok(Expr { kind: ExprKind::Array(items), span: Span::merge(start, end) })
+    }
+
+    /// `{ ... }` dict/set literal or comprehension (spec §4.6): `{}` is an empty Dict; a trailing `for` after the
+    /// first item/entry makes it a comprehension; `{ k: v }` is a Dict, `{ a, b }` is a Set.
+    fn parse_brace_literal(&mut self, start: Span) -> Result<Expr, SyntaxError> {
+        self.skip_newlines();
+        if self.at(&TokenKind::RBrace) {
+            let end = self.bump().span;
+            return Ok(Expr { kind: ExprKind::Dict(vec![]), span: Span::merge(start, end) });
+        }
+        let first = self.parse_expr()?;
+        self.skip_newlines();
+        if self.at(&TokenKind::KwFor) {
+            // Set comprehension `{ output for var in iter [if cond] }` (spec §4.6).
+            let clauses = self.parse_comprehension_clauses()?;
+            let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
+            return Ok(Expr {
+                kind: ExprKind::Comprehension { kind: CompKind::Set, output: Box::new(first), clauses },
+                span: Span::merge(start, end),
+            });
+        }
+        if self.eat(&TokenKind::Colon).is_some() {
+            // Dict: the first expression is a key; parse its value, then `key : value` entries.
+            let value = self.parse_expr()?;
+            self.skip_newlines();
+            if self.at(&TokenKind::KwFor) {
+                // Dict comprehension `{ key: value for var in iter [if cond] }` (spec §4.6).
+                let kv_span = Span::merge(first.span, value.span);
+                let output = Expr {
+                    kind: ExprKind::KeyValue { key: Box::new(first), value: Box::new(value) },
+                    span: kv_span,
+                };
+                let clauses = self.parse_comprehension_clauses()?;
+                let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
+                return Ok(Expr { kind: ExprKind::Comprehension { kind: CompKind::Dict, output: Box::new(output), clauses }, span: Span::merge(start, end) });
+            }
+            let mut entries = vec![(first, value)];
+            loop {
+                self.skip_newlines();
+                if self.at(&TokenKind::RBrace) {
+                    self.bump();
+                    break;
+                }
+                self.expect(&TokenKind::Comma, "`,` or `}`")?;
+                self.skip_newlines();
+                let key = self.parse_expr()?;
+                self.skip_newlines();
+                if self.eat(&TokenKind::Colon).is_none() {
+                    return Err(self.err(self.span(), "expected `:` in a Dict literal entry".into()));
+                }
+                let value = self.parse_expr()?;
+                entries.push((key, value));
+            }
+            let end = self.tokens[self.pos.saturating_sub(1)].span;
+            return Ok(Expr { kind: ExprKind::Dict(entries), span: Span::merge(start, end) });
+        }
+        // Set literal: comma-separated elements; a top-level `:` would mean a Dict entry, which is invalid here.
+        let mut elems = vec![first];
+        loop {
+            self.skip_newlines();
+            if self.at(&TokenKind::RBrace) {
+                self.bump();
+                break;
+            }
+            if self.at(&TokenKind::Colon) {
+                return Err(self.err(self.span(), "expected `}` or `,` in a Set literal; `key: value` requires a Dict literal".into()));
+            }
+            self.expect(&TokenKind::Comma, "`,` or `}`")?;
+            self.skip_newlines();
+            let elem = self.parse_expr()?;
+            self.skip_newlines();
+            if self.at(&TokenKind::Colon) {
+                return Err(self.err(self.span(), "expected `}` or `,` in a Set literal; `key: value` requires a Dict literal".into()));
+            }
+            elems.push(elem);
+        }
+        let end = self.tokens[self.pos.saturating_sub(1)].span;
+        Ok(Expr { kind: ExprKind::Set(elems), span: Span::merge(start, end) })
+    }
+
+    /// Comprehension clauses after the output: any sequence of `for <var> in <iter>` / `if <cond>` (spec §11.7).
+    fn parse_comprehension_clauses(&mut self) -> Result<Vec<ComprehensionClause>, SyntaxError> {
+        let mut clauses = Vec::new();
+        loop {
+            self.skip_newlines();
+            match self.peek().clone() {
+                TokenKind::KwFor => {
+                    self.bump();
+                    self.skip_newlines();
+                    let var = self.parse_ident("loop variable")?;
+                    self.skip_newlines();
+                    self.expect(&TokenKind::KwIn, "`in`")?;
+                    self.skip_newlines();
+                    let iter = self.parse_expr()?;
+                    clauses.push(ComprehensionClause::For { var, iter });
+                }
+                TokenKind::KwIf => {
+                    self.bump();
+                    self.skip_newlines();
+                    let cond = self.parse_expr()?;
+                    clauses.push(ComprehensionClause::If { cond });
+                }
+                _ => break,
+            }
+        }
+        Ok(clauses)
     }
 
     fn parse_index(&mut self) -> Result<Index, SyntaxError> {
@@ -1576,6 +1704,10 @@ fn binop_bp(kind: &TokenKind) -> Option<(BinOp, u8, u8)> {
         TokenKind::LtEq => (BinOp::Le, 4, 5),
         TokenKind::Gt => (BinOp::Gt, 4, 5),
         TokenKind::GtEq => (BinOp::Ge, 4, 5),
+        TokenKind::KwIn => (BinOp::In, 4, 5),
+        TokenKind::Union => (BinOp::Union, 5, 6),
+        TokenKind::SetMinus => (BinOp::Difference, 5, 6),
+        TokenKind::Intersect => (BinOp::Intersect, 6, 7),
         TokenKind::Plus => (BinOp::Add, 5, 6),
         TokenKind::Minus => (BinOp::Sub, 5, 6),
         TokenKind::Star => (BinOp::Mul, 6, 7),
@@ -1609,5 +1741,219 @@ fn stmt_span_of(stmt: &Stmt) -> Span {
         | Stmt::WithConfig { span, .. } => *span,
         Stmt::Expr(e) => e.span,
         Stmt::Pub(inner) => stmt_span_of(inner),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_first(src: &str) -> Expr {
+        let program = crate::parse(src).expect("parse failed");
+        let stmt = program.stmts.into_iter().next().expect("expected a statement");
+        match stmt {
+            Stmt::Expr(e) => e,
+            Stmt::Let { value, .. } => value,
+            other => panic!("unexpected statement: {other:?}"),
+        }
+    }
+
+    fn parse_err(src: &str) -> bool {
+        crate::parse(src).is_err()
+    }
+
+    fn binop(src: &str) -> (BinOp, Expr, Expr) {
+        match parse_first(src).kind {
+            ExprKind::Binary { op, lhs, rhs } => (op, *lhs, *rhs),
+            other => panic!("expected binary expr, got {other:?}"),
+        }
+    }
+
+    fn comp(src: &str) -> (CompKind, Expr, Vec<ComprehensionClause>) {
+        match parse_first(src).kind {
+            ExprKind::Comprehension { kind, output, clauses } => (kind, *output, clauses),
+            other => panic!("expected comprehension, got {other:?}"),
+        }
+    }
+
+    fn clause_names(clauses: &[ComprehensionClause]) -> Vec<String> {
+        clauses
+            .iter()
+            .map(|c| match c {
+                ComprehensionClause::For { var, .. } => format!("for {}", var.value),
+                ComprehensionClause::If { .. } => "if".into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn set_literal() {
+        match parse_first("{1, 2, 3, 2}").kind {
+            ExprKind::Set(elems) => {
+                assert_eq!(elems.len(), 4, "parser keeps duplicates; dedup is a runtime concern");
+                assert!(matches!(elems[0].kind, ExprKind::Literal(Literal::Integer(_))));
+            }
+            other => panic!("expected Set, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dict_literal() {
+        match parse_first("{ \"a\": 1, \"b\": 2 }").kind {
+            ExprKind::Dict(entries) => {
+                assert_eq!(entries.len(), 2);
+                assert!(matches!(entries[0].0.kind, ExprKind::Literal(Literal::Str(ref s)) if s == "a"));
+                assert!(matches!(entries[1].0.kind, ExprKind::Literal(Literal::Str(ref s)) if s == "b"));
+                assert!(matches!(entries[0].1.kind, ExprKind::Literal(Literal::Integer(_))));
+            }
+            other => panic!("expected Dict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_braces_are_empty_dict() {
+        match parse_first("{}").kind {
+            ExprKind::Dict(entries) => assert!(entries.is_empty()),
+            other => panic!("expected empty Dict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn array_comprehension() {
+        let (kind, output, clauses) = comp("[x^2 for x in range(0, 10)]");
+        assert_eq!(kind, CompKind::Array);
+        assert!(matches!(output.kind, ExprKind::Binary { op: BinOp::Pow, .. }));
+        assert_eq!(clause_names(&clauses), vec!["for x"]);
+    }
+
+    #[test]
+    fn array_comprehension_with_filter() {
+        let (kind, output, clauses) = comp("[x for x in range(0, 10) if x % 2 == 0]");
+        assert_eq!(kind, CompKind::Array);
+        assert!(matches!(output.kind, ExprKind::Path { .. }));
+        assert_eq!(clause_names(&clauses), vec!["for x", "if"]);
+        match &clauses[1] {
+            ComprehensionClause::If { cond } => {
+                assert!(matches!(cond.kind, ExprKind::Binary { op: BinOp::Eq, .. }));
+            }
+            other => panic!("expected If clause, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn array_comprehension_nested_for() {
+        let (kind, _, clauses) = comp("[(x, y) for x in range(0, 2) for y in range(0, 2)]");
+        assert_eq!(kind, CompKind::Array);
+        assert_eq!(clause_names(&clauses), vec!["for x", "for y"]);
+        match &clauses[0] {
+            ComprehensionClause::For { iter, .. } => {
+                assert!(matches!(iter.kind, ExprKind::Call { .. }));
+            }
+            other => panic!("expected For clause, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dict_comprehension() {
+        let (kind, output, clauses) = comp("{x: x^2 for x in range(0, 5)}");
+        assert_eq!(kind, CompKind::Dict);
+        assert_eq!(clause_names(&clauses), vec!["for x"]);
+        match output.kind {
+            ExprKind::KeyValue { key, value } => {
+                assert!(matches!(key.kind, ExprKind::Path { .. }));
+                assert!(matches!(value.kind, ExprKind::Binary { op: BinOp::Pow, .. }));
+            }
+            other => panic!("expected KeyValue output, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn set_comprehension() {
+        let (kind, _, clauses) = comp("{x for x in range(0, 10) if x % 2 == 1}");
+        assert_eq!(kind, CompKind::Set);
+        assert_eq!(clause_names(&clauses), vec!["for x", "if"]);
+    }
+
+    #[test]
+    fn tuple_comprehension() {
+        let (kind, output, clauses) = comp("((x, x+1) for x in range(0, 3))");
+        assert_eq!(kind, CompKind::Tuple);
+        assert_eq!(clause_names(&clauses), vec!["for x"]);
+        assert!(matches!(output.kind, ExprKind::Tuple(items) if items.len() == 2));
+    }
+
+    #[test]
+    fn in_binop() {
+        let (op, lhs, _) = binop("2 in c");
+        assert_eq!(op, BinOp::In);
+        assert!(matches!(lhs.kind, ExprKind::Literal(Literal::Integer(_))));
+        let (op, _, _) = binop("5 in c");
+        assert_eq!(op, BinOp::In);
+    }
+
+    #[test]
+    fn set_algebra_operators() {
+        let (op, _, rhs) = binop("s ∪ {5, 6}");
+        assert_eq!(op, BinOp::Union);
+        assert!(matches!(rhs.kind, ExprKind::Set(_)));
+        let (op, _, _) = binop("s ∩ {2, 3}");
+        assert_eq!(op, BinOp::Intersect);
+        let (op, _, rhs) = binop("s \\ {3}");
+        assert_eq!(op, BinOp::Difference);
+        assert!(matches!(rhs.kind, ExprKind::Set(_)));
+    }
+
+    #[test]
+    fn if_cond_with_set_literal() {
+        let program = crate::parse("if x in {1, 2} { }").expect("parse failed");
+        let stmt = program.stmts.into_iter().next().expect("expected an if statement");
+        match stmt {
+            Stmt::If { cond, .. } => match cond.kind {
+                ExprKind::Binary { op: BinOp::In, rhs, .. } => {
+                    assert!(matches!(rhs.kind, ExprKind::Set(_)));
+                }
+                other => panic!("expected `x in {{{{1, 2}}}}` condition, got {other:?}"),
+            },
+            other => panic!("expected If statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dict_literal_as_let_value() {
+        let e = parse_first("let d = { \"a\": 1 };");
+        assert!(matches!(e.kind, ExprKind::Dict(entries) if entries.len() == 1));
+    }
+
+    #[test]
+    fn struct_literal_untouched() {
+        let e = parse_first("let p = Point { x: 1, y: 2 };");
+        assert!(matches!(e.kind, ExprKind::StructLiteral { .. }));
+    }
+
+    #[test]
+    fn negative_multi_output_comprehension() {
+        assert!(parse_err("[a, b for x in y]"));
+    }
+
+    #[test]
+    fn negative_dict_literal_missing_colon() {
+        assert!(parse_err("{1: 2, 3}"));
+    }
+
+    #[test]
+    fn negative_comprehension_missing_in() {
+        assert!(parse_err("[x for 10]"));
+    }
+
+    #[test]
+    fn comprehension_single_for_no_filter_is_fine() {
+        let (kind, _, clauses) = comp("[x for x in 10]");
+        assert_eq!(kind, CompKind::Array);
+        assert_eq!(clause_names(&clauses), vec!["for x"]);
+    }
+
+    #[test]
+    fn negative_set_literal_with_colon() {
+        assert!(parse_err("{1, 2: 3}"));
     }
 }

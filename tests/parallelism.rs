@@ -14,7 +14,13 @@ fn eval_fmt(src: &str) -> String {
 
 fn eval_array(src: &str) -> Vec<prima_core::Number> {
     match eval(src) {
-        Value::Array(a) => a,
+        Value::Array(a) => a
+            .into_iter()
+            .map(|v| match v {
+                Value::Number(n) => n,
+                other => panic!("expected a numeric array element, got {other:?}"),
+            })
+            .collect(),
         other => panic!("expected an array, got {other:?}"),
     }
 }

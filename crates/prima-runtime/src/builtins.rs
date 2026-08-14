@@ -25,6 +25,30 @@ pub enum Builtin {
     Limit,
     /// `range(start, end, step = 1) -> Array` (spec §18.1b convenience): half-open integer range.
     Range,
+    /// Collection convenience functions (spec appendix B.1, core pre-import): polymorphism over the
+    /// collection types plus the explicit higher-order forms. `map`/`filter`/`reduce` never reach
+    /// `call_builtin` — they are intercepted in `eval_call` so the function argument may be a name
+    /// (functions are not first-class values).
+    Len,
+    Enumerate,
+    Zip,
+    Sorted,
+    Reversed,
+    Sum,
+    Prod,
+    Min,
+    Max,
+    All,
+    Any,
+    Join,
+    Count,
+    Index,
+    First,
+    Last,
+    Linspace,
+    Map,
+    Filter,
+    Reduce,
     Collapse(&'static str),
 }
 
@@ -51,6 +75,27 @@ impl Builtin {
             "grad" => Some(Builtin::Grad),
             "limit" => Some(Builtin::Limit),
             "range" => Some(Builtin::Range),
+            // Collection convenience functions (spec appendix B.1, core pre-import).
+            "len" => Some(Builtin::Len),
+            "enumerate" => Some(Builtin::Enumerate),
+            "zip" => Some(Builtin::Zip),
+            "sorted" => Some(Builtin::Sorted),
+            "reversed" => Some(Builtin::Reversed),
+            "sum" => Some(Builtin::Sum),
+            "prod" => Some(Builtin::Prod),
+            "min" => Some(Builtin::Min),
+            "max" => Some(Builtin::Max),
+            "all" => Some(Builtin::All),
+            "any" => Some(Builtin::Any),
+            "join" => Some(Builtin::Join),
+            "count" => Some(Builtin::Count),
+            "index" => Some(Builtin::Index),
+            "first" => Some(Builtin::First),
+            "last" => Some(Builtin::Last),
+            "linspace" => Some(Builtin::Linspace),
+            "map" => Some(Builtin::Map),
+            "filter" => Some(Builtin::Filter),
+            "reduce" => Some(Builtin::Reduce),
             // Collapse function family (spec §9): `to_/try_/checked_/clamped_/rounded_/truncated_` plus the `unwrap` family.
             "to_i8" => Some(Builtin::Collapse("to_i8")),
             "to_i16" => Some(Builtin::Collapse("to_i16")),
@@ -135,6 +180,31 @@ impl Builtin {
         !matches!(
             self,
             Builtin::Print | Builtin::Println | Builtin::Input | Builtin::ReadLine | Builtin::Simplify
+        )
+    }
+
+    /// Collection convenience functions take their array argument **whole** — the implicit-broadcast
+    /// path (spec §11.4) must not split the array for `len`/`sum`/`sorted`/… (spec appendix B.1).
+    pub fn is_collection(self) -> bool {
+        matches!(
+            self,
+            Builtin::Len
+                | Builtin::Enumerate
+                | Builtin::Zip
+                | Builtin::Sorted
+                | Builtin::Reversed
+                | Builtin::Sum
+                | Builtin::Prod
+                | Builtin::Min
+                | Builtin::Max
+                | Builtin::All
+                | Builtin::Any
+                | Builtin::Join
+                | Builtin::Count
+                | Builtin::Index
+                | Builtin::First
+                | Builtin::Last
+                | Builtin::Linspace
         )
     }
 }

@@ -1,0 +1,33 @@
+// Collection convenience functions (spec §11.6/§18.1, appendix B.1): core pre-imported.
+let v = [3, 1, 2];
+println(len(v));                  // → 3
+println(len("hello"));            // → 5 (polymorphic len)
+println(enumerate(["a", "b"]));   // → [(0, "a"), (1, "b")]
+println(zip([1, 2], ["a", "b"])); // → [(1, "a"), (2, "b")]
+println(sorted(v));               // → [1, 2, 3]
+println(reversed(v));             // → [2, 1, 3]
+println(sum(v));                  // → 6
+println(prod(v));                 // → 6
+println(min(v), max(v));          // → 1 3
+println(all([true, true]));       // → true
+println(any([false, true]));      // → true
+println(join(["a", "b", "c"], "-")); // → "a-b-c"
+println(count([1, 2, 1], 1));     // → 2
+println(index([1, 2, 3], 2));     // → 1
+println(first(v));                // → Some(3)
+println(last(v));                 // → Some(2)
+println(linspace(0.0, 1.0, 5));   // → [0, 0.25, 0.5, 0.75, 1]
+
+// map / filter / reduce take a function name (or lambda) and apply it explicitly.
+let f(x) = x^2;
+println(map(f, [1, 2, 3]));       // → [1, 4, 9]
+let is_even(x) = x % 2 == 0;
+println(filter(is_even, [1, 2, 3, 4])); // → [2, 4]
+println(reduce(|a, b| a + b, [1, 2, 3, 4], 0)); // → 10
+
+// String completion (spec §18.1): split → Array, plus strip/join/find.
+let s = "  a,b,c  ";
+println(s.strip(" "));            // → "a,b,c"
+println(s.split(","));            // → ["  a", "b", "c  "]
+println("-".join(["x", "y"]));    // → "x-y"
+println("hello world".find("wor")); // → Some(6)

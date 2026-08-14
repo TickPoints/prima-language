@@ -1,4 +1,4 @@
-use prima_syntax::ast::{BinOp, ClassMemberKind, Expr, ExprKind, Literal, MatchArm, Pattern, Stmt, Type, UnOp};
+use prima_syntax::ast::{BinOp, ClassMemberKind, CompKind, Expr, ExprKind, Literal, MatchArm, Pattern, Stmt, Type, UnOp};
 use prima_syntax::parse;
 use prima_syntax::Span;
 
@@ -238,10 +238,33 @@ fn collect_expr_errors(src: &str, expr: &Expr, errors: &mut Vec<TypeError>, ctx:
             collect_expr_errors(src, rhs, errors, ctx);
         }
         ExprKind::Unary { operand, .. } => collect_expr_errors(src, operand, errors, ctx),
-        ExprKind::Array(items) | ExprKind::Tuple(items) => {
+        ExprKind::Array(items) | ExprKind::Tuple(items) | ExprKind::Set(items) => {
             for i in items {
                 collect_expr_errors(src, i, errors, ctx);
             }
+        }
+        ExprKind::Dict(entries) => {
+            for (k, v) in entries {
+                collect_expr_errors(src, k, errors, ctx);
+                collect_expr_errors(src, v, errors, ctx);
+            }
+        }
+        ExprKind::Comprehension { output, clauses, .. } => {
+            collect_expr_errors(src, output, errors, ctx);
+            for c in clauses {
+                match c {
+                    prima_syntax::ast::ComprehensionClause::For { iter, .. } => {
+                        collect_expr_errors(src, iter, errors, ctx);
+                    }
+                    prima_syntax::ast::ComprehensionClause::If { cond } => {
+                        collect_expr_errors(src, cond, errors, ctx);
+                    }
+                }
+            }
+        }
+        ExprKind::KeyValue { key, value } => {
+            collect_expr_errors(src, key, errors, ctx);
+            collect_expr_errors(src, value, errors, ctx);
         }
         ExprKind::Lambda { body, .. } => collect_expr_errors(src, body, errors, ctx),
         ExprKind::Match { scrutinee, arms } => {
@@ -333,6 +356,15 @@ fn infer(expr: &Expr) -> &'static str {
             _ => "Expr",
         },
         ExprKind::Array(_) => "Array",
+        ExprKind::Dict(_) => "Dict",
+        ExprKind::Set(_) => "Set",
+        ExprKind::Comprehension { kind, .. } => match kind {
+            CompKind::Array => "Array",
+            CompKind::Dict => "Dict",
+            CompKind::Set => "Set",
+            CompKind::Tuple => "Tuple",
+        },
+        ExprKind::KeyValue { .. } => "value",
         ExprKind::Tuple(_) => "Tuple",
         ExprKind::Lambda { .. } => "Fn",
         _ => "Expr",

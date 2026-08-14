@@ -1,0 +1,47 @@
+// Array (spec §11.3, v2.1): a mutable, variable-length sequence whose elements may be any value.
+let v = [1, 2, 3];
+v.push(4);                        // [1, 2, 3, 4]
+println(v);
+let last = v.pop();               // Some(4); v == [1, 2, 3]
+println(v);
+v.append(5);                      // [1, 2, 3, 5]
+v.extend([6, 7]);                 // [1, 2, 3, 5, 6, 7]
+v.insert(0, 0);                   // [0, 1, 2, 3, 5, 6, 7]
+println(v);
+let removed = v.remove(0);        // → 0
+println(removed);
+
+// Concatenation (`+`/`+=`), membership (`in`) and negative-index/slice access.
+let a = [1, 2];
+let b = [3, 4];
+let c = a + b;                    // → [1, 2, 3, 4]
+println(c);
+a += b;                           // a == [1, 2, 3, 4] (in-place extend)
+println(a);
+println(2 in c);                  // → true
+println(5 in c);                  // → false
+let v4 = [10, 20, 30, 40];
+println(v4[-1]);                  // → 40 (negative index)
+println(v4[1..3]);                // → [20, 30]
+println(v4[..2]);                 // → [10, 20]
+println(v4[-2..]);                // → [30, 40]
+
+// Slice assignment and read-only helpers.
+let mut w = [1, 2, 3, 4];
+w[1..3] = [20, 30];               // → [1, 20, 30, 4]
+println(w);
+w[0..1] = [];                     // delete the first element
+println(w);
+let x = [3, 1, 2];
+println(x.len(), x.is_empty());   // → 3 false
+println(x.get(1));                // → Some(1)
+println(x.contains(2));           // → true
+println(x.index(2));              // → 1
+println(x.count(2));              // → 1
+println(x.first(), x.last());     // → Some(3) Some(2)
+
+// Heterogeneous + nested arrays are allowed as data (broadcast still requires numeric arrays).
+let mixed = ["a", 1, true, x];
+println(mixed);
+let nested = [[1, 2], [3, 4]];
+println(nested);

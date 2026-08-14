@@ -7,11 +7,11 @@ use std::rc::Rc;
 use num_bigint::BigInt;
 use prima_core::render::{render_latex, render_number};
 use prima_core::simplify::simplify;
-use prima_core::{BuiltinSymbols, ExprData, ExprId, ExprPool, Number, Real, SymbolId, SymbolTable, Value};
+use prima_core::{BuiltinSymbols, ExprData, ExprId, ExprPool, Number, Real, SymbolId, SymbolTable, Value, ValueKey};
 use prima_syntax::ast::{
-    Annotation, AssignOp, BinOp, Block, ClassMemberKind, ConfigBlock, Expr, ExprKind, FieldValue,
-    ImportItem, ImportKind, ImplOp, IndexItem, Literal, MatchArm, Param, Pattern, Program, Spanned,
-    Stmt, Type, UnOp, Visibility,
+    Annotation, AssignOp, BinOp, Block, ClassMemberKind, CompKind, ComprehensionClause, ConfigBlock, Expr, ExprKind,
+    FieldValue, ImportItem, ImportKind, ImplOp, IndexItem, Literal, MatchArm, Param, Pattern, Program, Spanned, Stmt,
+    Type, UnOp, Visibility,
 };
 use prima_syntax::error::SyntaxError;
 use prima_syntax::{Span, SyntaxWarning};
@@ -162,6 +162,26 @@ impl Env {
             "format",
             "to_string",
             "concat",
+            "len",
+            "enumerate",
+            "zip",
+            "sorted",
+            "reversed",
+            "sum",
+            "prod",
+            "min",
+            "max",
+            "all",
+            "any",
+            "join",
+            "count",
+            "index",
+            "first",
+            "last",
+            "linspace",
+            "map",
+            "filter",
+            "reduce",
             "Some",
             "None",
             "Ok",
@@ -615,8 +635,21 @@ impl Evaluator {
             Value::Char(c) => c.to_string(),
             Value::String(s) => s.clone(),
             Value::Array(elems) => {
-                let inner: Vec<String> = elems.iter().map(render_number).collect();
+                let inner: Vec<String> = elems.iter().map(|e| self.format_value(e)).collect();
                 format!("[{}]", inner.join(", "))
+            }
+            Value::Dict(d) => {
+                let keys = self.sorted_dict_keys(d);
+                let inner: Vec<String> = keys
+                    .iter()
+                    .map(|k| format!("{}: {}", self.format_value(&k.to_value()), self.format_value(&d[k])))
+                    .collect();
+                format!("{{{}}}", inner.join(", "))
+            }
+            Value::Set(s) => {
+                let elems = self.sorted_set_values(s);
+                let inner: Vec<String> = elems.iter().map(|e| self.format_value(e)).collect();
+                format!("{{{}}}", inner.join(", "))
             }
             Value::Expr(id) => render_latex(self.pool, self.symbols, *id),
             Value::Symbol(_) => "symbol".into(),
@@ -773,37 +806,78 @@ impl Evaluator {
             }
             Stmt::Assign { target, op, value, .. } => {
                 let v = self.eval_expr(env, value)?;
-                // Array element assignment `A[i] = v` (spec §11.3): writes back through the array binding.
+                // Collection element/slice assignment `A[i] = v` / `d[k] = v` / `A[lo..hi] = v`
+                // (spec §11.3/§11.6): writes back through the collection binding.
                 if let ExprKind::Index { base, index } = &target.kind {
-                    let (name, mut arr) = self.eval_array_lvalue(env, base)?;
-                    if index.items.len() != 1 {
-                        return crate::error::err("multi-dimensional indexing is not supported yet");
-                    }
-                    let idx = match &index.items[0] {
-                        IndexItem::Elem(e) => self.eval_index_number(env, e)?,
-                        IndexItem::Slice { .. } => return crate::error::err("slice assignment is not supported"),
-                    };
-                    if idx >= arr.len() {
-                        return Err(RuntimeError::IndexOutOfBounds(format!("index {idx} (length {})", arr.len())));
-                    }
-                    let nv = self.scalar_value(v)?;
-                    let merged = match op {
-                        AssignOp::Assign => nv,
-                        AssignOp::AddAssign => {
-                            let r = self.eval_number_binary(BinOp::Add, arr[idx].clone(), nv)?;
-                            self.scalar_value(r)?
+                    let (name, base_v) = self.eval_collection_lvalue(env, base)?;
+                    match base_v {
+                        Value::Dict(mut d) => {
+                            if index.items.len() != 1 {
+                                return crate::error::err("multi-dimensional indexing is not supported yet");
+                            }
+                            let k = match &index.items[0] {
+                                IndexItem::Elem(e) => self.eval_expr(env, e)?,
+                                IndexItem::Slice { .. } => {
+                                    return crate::error::err("cannot slice-assign a dict")
+                                }
+                            };
+                            let key = ValueKey::from_value(&k)
+                                .ok_or_else(|| RuntimeError::Message("dict key must be a hashable value".into()))?;
+                            let merged = match op {
+                                AssignOp::Assign => v,
+                                AssignOp::AddAssign => self.eval_binary(
+                                    BinOp::Add,
+                                    d.get(&key).cloned().unwrap_or(Value::Number(Number::from(0))),
+                                    v,
+                                )?,
+                                AssignOp::SubAssign => self.eval_binary(
+                                    BinOp::Sub,
+                                    d.get(&key).cloned().unwrap_or(Value::Number(Number::from(0))),
+                                    v,
+                                )?,
+                            };
+                            d.insert(key, merged);
+                            self.write_back(env, &name, Value::Dict(d));
+                            return Ok(Flow::Continue);
                         }
-                        AssignOp::SubAssign => {
-                            let r = self.eval_number_binary(BinOp::Sub, arr[idx].clone(), nv)?;
-                            self.scalar_value(r)?
+                        Value::Array(mut arr) => {
+                            if index.items.len() != 1 {
+                                return crate::error::err("multi-dimensional indexing is not supported yet");
+                            }
+                            match &index.items[0] {
+                                IndexItem::Elem(e) => {
+                                    let raw = self.eval_index_i64(env, e)?;
+                                    let idx = normalize_index(raw, arr.len()).ok_or_else(|| {
+                                        RuntimeError::IndexOutOfBounds(format!("index {raw} (length {})", arr.len()))
+                                    })?;
+                                    let merged = match op {
+                                        AssignOp::Assign => v,
+                                        AssignOp::AddAssign => self.eval_binary(BinOp::Add, arr[idx].clone(), v)?,
+                                        AssignOp::SubAssign => self.eval_binary(BinOp::Sub, arr[idx].clone(), v)?,
+                                    };
+                                    arr[idx] = merged;
+                                }
+                                IndexItem::Slice { start, end } => {
+                                    if !matches!(op, AssignOp::Assign) {
+                                        return crate::error::err("slice assignment only supports `=`");
+                                    }
+                                    let Value::Array(rhs) = v else {
+                                        return crate::error::err("slice assignment right-hand side must be an array");
+                                    };
+                                    let (lo, hi) = self.slice_bounds(env, start.as_ref(), end.as_ref(), arr.len())?;
+                                    arr.splice(lo..hi, rhs);
+                                }
+                            }
+                            self.write_back(env, &name, Value::Array(arr));
+                            return Ok(Flow::Continue);
                         }
-                    };
-                    arr[idx] = merged;
-                    let mut e = env.borrow_mut();
-                    if !e.set_existing(&name, Value::Array(arr.clone())) {
-                        e.set_value(&name, Value::Array(arr));
+                        other => {
+                            return crate::error::err(format!(
+                                "assignment target must be an array or dict, got {}",
+                                value_type_name(&other)
+                            ))
+                        }
                     }
-                    return Ok(Flow::Continue);
                 }
                 // Simple variable assignment (spec §4.2 examples: `s = 0`, `s += i`).
                 let name = match &target.kind {
@@ -927,18 +1001,55 @@ impl Evaluator {
         }
     }
 
-    /// Evaluate an array lvalue `A` (a plain variable holding an array), for `A[i] = v` (spec §11.3).
-    fn eval_array_lvalue(&mut self, env: &EnvRef, base: &Expr) -> Result<(String, Vec<Number>), RuntimeError> {
+    /// Evaluate a collection lvalue `A` (a plain variable holding an array or dict), for `A[i] = v`
+    /// / `d[k] = v` (spec §11.3/§11.6).
+    fn eval_collection_lvalue(&mut self, env: &EnvRef, base: &Expr) -> Result<(String, Value), RuntimeError> {
         match &base.kind {
             ExprKind::Path { segments } if segments.len() == 1 => {
                 let name = segments[0].value.clone();
                 match self.eval_expr(env, base)? {
-                    Value::Array(a) => Ok((name, a)),
-                    _ => crate::error::err("assignment target must be an array"),
+                    Value::Array(a) => Ok((name, Value::Array(a))),
+                    Value::Dict(d) => Ok((name, Value::Dict(d))),
+                    _ => crate::error::err("assignment target must be an array or dict"),
                 }
             }
             _ => crate::error::err("assignment target must be a variable"),
         }
+    }
+
+    /// Write a collection value back to its binding along the shared chain (spec §12.2 shadowing),
+    /// creating the binding locally if it is undefined.
+    fn write_back(&mut self, env: &EnvRef, name: &str, v: Value) {
+        let mut e = env.borrow_mut();
+        if !e.set_existing(name, v.clone()) {
+            e.set_value(name, v);
+        }
+    }
+
+    /// Compute the clamped `[lo, hi)` slice bounds (spec §11.3): both bounds may be negative and are
+    /// clamped to `[0, len]`; `lo > hi` is an error.
+    fn slice_bounds(
+        &mut self,
+        env: &EnvRef,
+        start: Option<&Expr>,
+        end: Option<&Expr>,
+        len: usize,
+    ) -> Result<(usize, usize), RuntimeError> {
+        let len_i = len as i64;
+        let raw_lo = match start {
+            Some(e) => self.eval_index_i64(env, e)?,
+            None => 0,
+        };
+        let raw_hi = match end {
+            Some(e) => self.eval_index_i64(env, e)?,
+            None => len_i,
+        };
+        let lo = if raw_lo < 0 { (len_i + raw_lo).max(0) } else { raw_lo.min(len_i) };
+        let hi = if raw_hi < 0 { (len_i + raw_hi).max(0) } else { raw_hi.min(len_i) };
+        if lo > hi {
+            return crate::error::err(format!("invalid slice range {lo}..{hi} (length {len})"));
+        }
+        Ok((lo as usize, hi as usize))
     }
 
     /// `parfor` (spec §17.2): explicit parallel loop over a range. The body is statically checked to be
@@ -976,7 +1087,7 @@ impl Evaluator {
         let var_name = var.value.clone();
 
         // Snapshot the arrays being written (spec §17.2): read once, write back once.
-        let mut arrays: HashMap<String, Vec<Number>> = HashMap::new();
+        let mut arrays: HashMap<String, Vec<Value>> = HashMap::new();
         let mut read_names: HashSet<String> = HashSet::new();
         read_names.insert(var_name.clone());
         for s in &steps {
@@ -1042,7 +1153,7 @@ impl Evaluator {
                 for (name, v) in &outer_reads {
                     call_env.borrow_mut().set_value(name, v.clone());
                 }
-                let mut out: Vec<(String, usize, Number)> = Vec::new();
+                let mut out: Vec<(String, usize, Value)> = Vec::new();
                 for &i in chunk {
                     call_env.borrow_mut().set_value(&var_name, Value::Number(Number::from(i)));
                     for s in &steps_owned {
@@ -1057,10 +1168,7 @@ impl Evaluator {
                                     })?,
                                     _ => return Err(RuntimeError::Message("parfor index must be an integer".into())),
                                 };
-                                let nv = match ev.eval_expr(&call_env, &w.value)? {
-                                    Value::Number(n) => n,
-                                    _ => return Err(RuntimeError::Message("parfor assignment value must be numeric".into())),
-                                };
+                                let nv = ev.eval_expr(&call_env, &w.value)?;
                                 let merged = match w.op {
                                     AssignOp::Assign => nv,
                                     AssignOp::AddAssign | AssignOp::SubAssign => {
@@ -1074,10 +1182,7 @@ impl Evaluator {
                                             }
                                         };
                                         let op = if w.op == AssignOp::AddAssign { BinOp::Add } else { BinOp::Sub };
-                                        match ev.eval_number_binary(op, old, nv)? {
-                                            Value::Number(n) => n,
-                                            _ => return Err(RuntimeError::Message("parfor assignment result must be numeric".into())),
-                                        }
+                                        ev.eval_binary(op, old, nv)?
                                     }
                                 };
                                 out.push((w.array.clone(), idx, merged));
@@ -1240,16 +1345,31 @@ impl Evaluator {
                 }
             }
             ExprKind::Array(items) => {
-                let mut elems = Vec::new();
-                for item in items {
-                    match self.eval_expr(env, item)? {
-                        Value::Number(n) => elems.push(n),
-                        Value::Array(_) => return crate::error::err("nested arrays are not allowed"),
-                        _ => return crate::error::err("array elements must be numbers"),
-                    }
-                }
-                Ok(Value::Array(elems))
+                let elems: Result<Vec<Value>, RuntimeError> = items.iter().map(|it| self.eval_expr(env, it)).collect();
+                Ok(Value::Array(elems?))
             }
+            ExprKind::Dict(entries) => {
+                let mut d: HashMap<ValueKey, Value> = HashMap::new();
+                for (k, v) in entries {
+                    let kv = self.eval_expr(env, k)?;
+                    let key = ValueKey::from_value(&kv)
+                        .ok_or_else(|| RuntimeError::Message("dict key must be a hashable value".into()))?;
+                    d.insert(key, self.eval_expr(env, v)?);
+                }
+                Ok(Value::Dict(d))
+            }
+            ExprKind::Set(items) => {
+                let mut s: HashSet<ValueKey> = HashSet::new();
+                for it in items {
+                    let v = self.eval_expr(env, it)?;
+                    let key = ValueKey::from_value(&v)
+                        .ok_or_else(|| RuntimeError::Message("set element must be a hashable value".into()))?;
+                    s.insert(key);
+                }
+                Ok(Value::Set(s))
+            }
+            ExprKind::Comprehension { kind, output, clauses } => self.eval_comprehension(env, *kind, output, clauses),
+            ExprKind::KeyValue { .. } => crate::error::err("internal error: stray key-value node"),
             ExprKind::Tuple(items) => {
                 let vals: Result<Vec<Value>, RuntimeError> = items.iter().map(|it| self.eval_expr(env, it)).collect();
                 Ok(Value::Tuple(vals?))
@@ -1278,6 +1398,110 @@ impl Evaluator {
             self.broadcast_call(&func, vec![v], &[0])
         } else {
             self.apply_function(&func, vec![v])
+        }
+    }
+
+    /// Comprehension evaluation (spec §11.7): iterate the clauses in order — `For` binds the variable
+    /// in a child scope and iterates, `If` filters on a boolean condition — and accumulate the output
+    /// expression at the deepest level. The frame kind decides the produced collection.
+    fn eval_comprehension(
+        &mut self,
+        env: &EnvRef,
+        kind: CompKind,
+        output: &Expr,
+        clauses: &[ComprehensionClause],
+    ) -> Result<Value, RuntimeError> {
+        let mut values: Vec<Value> = Vec::new();
+        self.comprehension_clauses(env, clauses, kind, output, &mut values)?;
+        match kind {
+            CompKind::Array => Ok(Value::Array(values)),
+            // Tuple comprehension is eager here (documented deviation from the spec's lazy generator).
+            CompKind::Tuple => Ok(Value::Tuple(values)),
+            CompKind::Set => {
+                let mut s: HashSet<ValueKey> = HashSet::new();
+                for v in values {
+                    let key = ValueKey::from_value(&v)
+                        .ok_or_else(|| RuntimeError::Message("set element must be a hashable value".into()))?;
+                    s.insert(key);
+                }
+                Ok(Value::Set(s))
+            }
+            CompKind::Dict => {
+                let mut d: HashMap<ValueKey, Value> = HashMap::new();
+                for v in values {
+                    let Value::Tuple(pair) = v else {
+                        unreachable!("dict comprehension leaf emits a key/value pair")
+                    };
+                    let key = ValueKey::from_value(&pair[0])
+                        .ok_or_else(|| RuntimeError::Message("dict key must be a hashable value".into()))?;
+                    d.insert(key, pair[1].clone());
+                }
+                Ok(Value::Dict(d))
+            }
+        }
+    }
+
+    /// Recurse over comprehension clauses (spec §11.7), in order; `For` and `If` may appear any number
+    /// of times and interleave.
+    fn comprehension_clauses(
+        &mut self,
+        env: &EnvRef,
+        clauses: &[ComprehensionClause],
+        kind: CompKind,
+        output: &Expr,
+        values: &mut Vec<Value>,
+    ) -> Result<(), RuntimeError> {
+        match clauses.split_first() {
+            None => {
+                if kind == CompKind::Dict {
+                    // A Dict comprehension's output is the internal `key: value` node (spec §4.6).
+                    let ExprKind::KeyValue { key, value } = &output.kind else {
+                        return crate::error::err("dict comprehension output must be a `key: value` pair");
+                    };
+                    let k = self.eval_expr(env, key)?;
+                    let v = self.eval_expr(env, value)?;
+                    values.push(Value::Tuple(vec![k, v]));
+                } else {
+                    values.push(self.eval_expr(env, output)?);
+                }
+                Ok(())
+            }
+            Some((clause, rest)) => match clause {
+                ComprehensionClause::For { var, iter } => {
+                    let iter_v = self.eval_expr(env, iter)?;
+                    let items = self.iter_values(&iter_v)?;
+                    for item in items {
+                        let scope = Env::child(env);
+                        scope.borrow_mut().set_value(&var.value, item);
+                        self.comprehension_clauses(&scope, rest, kind, output, values)?;
+                    }
+                    Ok(())
+                }
+                ComprehensionClause::If { cond } => {
+                    let ok = match self.eval_expr(env, cond)? {
+                        Value::Bool(b) => b,
+                        _ => return crate::error::err("comprehension `if` condition must be a boolean"),
+                    };
+                    if ok {
+                        self.comprehension_clauses(env, rest, kind, output, values)
+                    } else {
+                        Ok(())
+                    }
+                }
+            },
+        }
+    }
+
+    /// Iteration protocol (spec §11.7): `Array` → elements, `Dict` → keys (deterministic order),
+    /// `Set` → elements, `String` → `Char` per character, `Tuple` → elements.
+    fn iter_values(&self, v: &Value) -> Result<Vec<Value>, RuntimeError> {
+        match v {
+            Value::Array(elems) => Ok(elems.clone()),
+            Value::Dict(d) => Ok(self.sorted_dict_keys(d).iter().map(|k| k.to_value()).collect()),
+            Value::Set(s) => Ok(self.sorted_set_values(s)),
+            Value::String(s) => Ok(s.chars().map(Value::Char).collect()),
+            Value::Tuple(items) => Ok(items.clone()),
+            other => crate::error::err(format!("not iterable: {}", value_type_name(other))),
         }
     }
 
@@ -1328,11 +1552,22 @@ impl Evaluator {
         if let Some(r) = self.try_overload_binary(op, &a, &b) {
             return r;
         }
-        if matches!(a, Value::Array(_)) || matches!(b, Value::Array(_)) {
+        // `in` membership (spec §11.3/§11.6) and set algebra (spec §11.6) treat their operands as
+        // containers, so they dispatch before the elementwise array path.
+        match op {
+            BinOp::In => return self.eval_in(a, b),
+            BinOp::Union | BinOp::Intersect | BinOp::Difference => return self.eval_set_algebra(op, a, b),
+            _ => {}
+        }
+        // Array arithmetic: `Array + Array` concatenates (spec §11.3, v2.1); the other operators
+        // (and `Array ± scalar`) are elementwise broadcast (spec §11.4).
+        if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Mod)
+            && (matches!(a, Value::Array(_)) || matches!(b, Value::Array(_)))
+        {
             return self.eval_binary_array(op, a, b);
         }
         match op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow => match (a, b) {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Pow | BinOp::Mod => match (a, b) {
                 (Value::Number(x), Value::Number(y)) => self.eval_number_binary(op, x, y),
                 (x, y) => {
                     let a_id = self.to_expr_id(&x)?;
@@ -1343,6 +1578,7 @@ impl Evaluator {
                         BinOp::Mul => self.pool.mul2(a_id, b_id),
                         BinOp::Div => self.pool.div2(a_id, b_id),
                         BinOp::Pow => self.pool.pow2(a_id, b_id),
+                        BinOp::Mod => return crate::error::err("`%` requires numeric operands"),
                         _ => unreachable!(),
                     };
                     let simp = simplify(self.pool, self.builtins, node);
@@ -1355,6 +1591,52 @@ impl Evaluator {
             },
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => self.eval_compare(op, a, b),
             _ => crate::error::err("operator not supported"),
+        }
+    }
+
+    /// `x in c` membership test (spec §11.3/§11.6): arrays test element equality, strings substring
+    /// containment, dicts key presence, sets membership.
+    fn eval_in(&mut self, a: Value, b: Value) -> Result<Value, RuntimeError> {
+        match b {
+            Value::Array(elems) => Ok(Value::Bool(elems.iter().any(|e| self.value_eq(&a, e)))),
+            Value::Dict(d) => {
+                let key = ValueKey::from_value(&a)
+                    .ok_or_else(|| RuntimeError::Message("membership key must be a hashable value".into()))?;
+                Ok(Value::Bool(d.contains_key(&key)))
+            }
+            Value::Set(s) => {
+                let key = ValueKey::from_value(&a)
+                    .ok_or_else(|| RuntimeError::Message("membership element must be a hashable value".into()))?;
+                Ok(Value::Bool(s.contains(&key)))
+            }
+            Value::String(s) => match a {
+                Value::String(x) => Ok(Value::Bool(s.contains(&x))),
+                _ => crate::error::err("`in` on a string requires a string operand"),
+            },
+            other => crate::error::err(format!("`in` requires a collection, got {}", value_type_name(&other))),
+        }
+    }
+
+    /// Set-algebra operators `∪`/`∩`/`\` (spec §11.6): both operands must be `Value::Set`.
+    fn eval_set_algebra(&mut self, op: BinOp, a: Value, b: Value) -> Result<Value, RuntimeError> {
+        let (Value::Set(x), Value::Set(y)) = (a, b) else {
+            return crate::error::err("set operator requires two sets");
+        };
+        let out = match op {
+            BinOp::Union => x.union(&y).cloned().collect(),
+            BinOp::Intersect => x.intersection(&y).cloned().collect(),
+            BinOp::Difference => x.difference(&y).cloned().collect(),
+            _ => unreachable!(),
+        };
+        Ok(Value::Set(out))
+    }
+
+    /// Value equality used by membership/count/index (spec §11.3): numbers compare through the
+    /// promotion tower, everything else structurally.
+    fn value_eq(&self, a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Number(x), Value::Number(y)) => self.number_cmp(x, y) == Some(Ordering::Equal),
+            _ => a == b,
         }
     }
 
@@ -1434,6 +1716,7 @@ impl Evaluator {
                 }
             }
             BinOp::Pow => self.eval_pow(x, y),
+            BinOp::Mod => Ok(Value::Number(number_mod(&x, &y)?)),
             _ => crate::error::err("arithmetic operator required"),
         }
     }
@@ -1489,6 +1772,35 @@ impl Evaluator {
 
     fn eval_compare(&mut self, op: BinOp, a: Value, b: Value) -> Result<Value, RuntimeError> {
         use std::cmp::Ordering;
+        // Collection deep equality (spec §11.3/§11.6): arrays elementwise, dicts/sets by canonical
+        // key. Ordering comparisons on collections are rejected.
+        match (&a, &b) {
+            (Value::Array(x), Value::Array(y)) => {
+                let eq = x.len() == y.len() && x.iter().zip(y).all(|(u, v)| self.value_eq(u, v));
+                return Ok(Value::Bool(match op {
+                    BinOp::Eq => eq,
+                    BinOp::Ne => !eq,
+                    _ => return crate::error::err("cannot order arrays"),
+                }));
+            }
+            (Value::Dict(x), Value::Dict(y)) => {
+                let eq = self.dict_eq(x, y);
+                return Ok(Value::Bool(match op {
+                    BinOp::Eq => eq,
+                    BinOp::Ne => !eq,
+                    _ => return crate::error::err("cannot order dicts"),
+                }));
+            }
+            (Value::Set(_), Value::Set(_)) => {
+                let eq = a == b;
+                return Ok(Value::Bool(match op {
+                    BinOp::Eq => eq,
+                    BinOp::Ne => !eq,
+                    _ => return crate::error::err("cannot order sets"),
+                }));
+            }
+            _ => {}
+        }
         let ord = match (a, b) {
             (Value::Number(x), Value::Number(y)) => {
                 // Promote to a common type before comparing (spec §6.4), so `1 == 1.0` holds.
@@ -1548,7 +1860,17 @@ impl Evaluator {
                 }
                 match v {
                     Value::Number(n) => Ok(Value::Number(-n)),
-                    Value::Array(elems) => Ok(Value::Array(elems.into_iter().map(|n| -n).collect())),
+                    // Elementwise negation (spec §11.4): every element must be numeric.
+                    Value::Array(elems) => {
+                        let mut out = Vec::with_capacity(elems.len());
+                        for e in elems {
+                            match e {
+                                Value::Number(n) => out.push(Value::Number(-n)),
+                                _ => return crate::error::err("cannot negate a non-numeric array element"),
+                            }
+                        }
+                        Ok(Value::Array(out))
+                    }
                     Value::Expr(id) => {
                         let node = self.pool.mul2(self.pool.integer(-1), id);
                         let simp = simplify(self.pool, self.builtins, node);
@@ -1575,6 +1897,16 @@ impl Evaluator {
             && matches!(b, Builtin::Derivative | Builtin::Partial | Builtin::Grad | Builtin::Limit)
         {
             return self.eval_calc_call(env, b, args);
+        }
+        // Higher-order convenience functions (spec appendix B.1): `map`/`filter`/`reduce` receive the
+        // function as an un-evaluated expression (a name or a lambda), so they are intercepted before
+        // generic argument evaluation, mirroring `derivative`.
+        if let ExprKind::Path { segments } = &callee.kind
+            && segments.len() == 1
+            && let Some(Function::Builtin(b)) = self.resolve_func(env, segments)
+            && matches!(b, Builtin::Map | Builtin::Filter | Builtin::Reduce)
+        {
+            return self.eval_higher_order(env, b, args);
         }
         // Class associated functions `T::name(args)` and `mod::T::name(args)` (spec §4.5).
         if let ExprKind::Path { segments } = &callee.kind {
@@ -1642,6 +1974,64 @@ impl Evaluator {
                 Ok(self.value_from_expr(lim))
             }
             _ => unreachable!("eval_calc_call only handles the calc builtins"),
+        }
+    }
+
+    /// `map`/`filter`/`reduce` (spec appendix B.1): the first argument is the function — a single-segment
+    /// path resolving to a `Function` or a `Lambda` expression (evaluated to a `Function::User`); the
+    /// remaining arguments are evaluated normally. These are explicit higher-order calls, so they do NOT
+    /// apply the implicit-broadcast rules (`R0009`/`R0014`) of spec §11.4.
+    fn eval_higher_order(&mut self, env: &EnvRef, b: Builtin, args: &[Expr]) -> Result<Value, RuntimeError> {
+        if args.len() < 2 {
+            return crate::error::err("`map`/`filter`/`reduce` expect (func, array[, init])");
+        }
+        let f = match &args[0].kind {
+            ExprKind::Path { segments } if segments.len() == 1 => {
+                self.resolve_func(env, segments).ok_or_else(|| {
+                    RuntimeError::Message(format!("unknown function `{}`", segments[0].value))
+                })?
+            }
+            ExprKind::Lambda { params, body } => Function::User {
+                params: params.clone(),
+                body: (**body).clone(),
+                env: Rc::clone(env),
+                parallel: false,
+            },
+            _ => return crate::error::err("`map`/`filter`/`reduce` first argument must be a function"),
+        };
+        let Value::Array(elems) = self.eval_expr(env, &args[1])? else {
+            return crate::error::err("`map`/`filter`/`reduce` second argument must be an array");
+        };
+        match b {
+            Builtin::Map => {
+                let mut out = Vec::with_capacity(elems.len());
+                for e in elems {
+                    out.push(self.apply_function(&f, vec![e])?);
+                }
+                Ok(Value::Array(out))
+            }
+            Builtin::Filter => {
+                let mut out = Vec::new();
+                for e in elems {
+                    match self.apply_function(&f, vec![e.clone()])? {
+                        Value::Bool(true) => out.push(e),
+                        Value::Bool(false) => {}
+                        _ => return crate::error::err("`filter` predicate must return a boolean"),
+                    }
+                }
+                Ok(Value::Array(out))
+            }
+            Builtin::Reduce => {
+                let init = args
+                    .get(2)
+                    .ok_or_else(|| RuntimeError::Message("`reduce` expects (func, array, init)".into()))?;
+                let mut acc = self.eval_expr(env, init)?;
+                for e in elems {
+                    acc = self.apply_function(&f, vec![acc, e])?;
+                }
+                Ok(acc)
+            }
+            _ => unreachable!("eval_higher_order only handles map/filter/reduce"),
         }
     }
 
@@ -1797,13 +2187,24 @@ impl Evaluator {
                 cargs.extend(arg_values);
                 crate::collapse::call(&collapse_name, &cargs, self.pool, self.builtins)
             }
-            Value::Array(a) if name.value == "get" => {
-                if arg_values.len() != 1 {
-                    return crate::error::err("`get` expects 1 argument");
+            Value::Array(a) => {
+                if is_mutating_array_method(&name.value) {
+                    return self.mutate_array(env, receiver, &name.value, arg_values);
                 }
-                self.call_array_get(Value::Array(a), arg_values[0].clone())
+                self.call_array_method(&a, &name.value, arg_values)
             }
-            Value::Array(_) => crate::error::err("arrays have no method (use `get` for safe element access)"),
+            Value::Dict(d) => {
+                if is_mutating_dict_method(&name.value) {
+                    return self.mutate_dict(env, receiver, &name.value, arg_values);
+                }
+                self.call_dict_method(&d, &name.value, arg_values)
+            }
+            Value::Set(s) => {
+                if is_mutating_set_method(&name.value) {
+                    return self.mutate_set(env, receiver, &name.value, arg_values);
+                }
+                self.call_set_method(&s, &name.value, arg_values)
+            }
             Value::Option(_) | Value::Result(_)
                 if matches!(name.value.as_str(), "unwrap" | "unwrap_or" | "expect") =>
             {
@@ -2085,11 +2486,53 @@ impl Evaluator {
                 expect_arity(0)?;
                 Ok(Value::String(s.trim().to_string()))
             }
+            "strip" => {
+                // Trim any leading/trailing character present in `pat` (spec §18.1, like Python `str.strip`).
+                expect_arity(1)?;
+                let pat = str_arg(0)?;
+                let pat: Vec<char> = pat.chars().collect();
+                Ok(Value::String(s.trim_matches(|c| pat.contains(&c)).to_string()))
+            }
             "split" => {
                 expect_arity(1)?;
                 let sep = str_arg(0)?;
                 let parts: Vec<Value> = s.split(&sep).map(|p| Value::String(p.to_string())).collect();
-                Ok(Value::Tuple(parts))
+                Ok(Value::Array(parts))
+            }
+            "join" => {
+                // Concatenate an `Array<String>` using `self` as the separator (spec §18.1).
+                expect_arity(1)?;
+                let parts = match &args[0] {
+                    Value::Array(parts) => parts,
+                    other => {
+                        return crate::error::err(format!(
+                            "`String.join` expects an array of strings, got {}",
+                            value_type_name(other)
+                        ))
+                    }
+                };
+                let mut out = String::new();
+                for (i, p) in parts.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(s);
+                    }
+                    match p {
+                        Value::String(p) => out.push_str(p),
+                        _ => return crate::error::err("`String.join` requires an array of strings"),
+                    }
+                }
+                Ok(Value::String(out))
+            }
+            "find" => {
+                // First byte/char index of `pat` in `self`, or `None` (spec §18.1).
+                expect_arity(1)?;
+                let pat = str_arg(0)?;
+                match s.find(&pat) {
+                    Some(i) => Ok(Value::Option(Some(Box::new(Value::Number(Number::from(
+                        s[..i].chars().count() as i64,
+                    )))))),
+                    None => Ok(Value::Option(None)),
+                }
             }
             "to_upper" => {
                 expect_arity(0)?;
@@ -2134,7 +2577,8 @@ impl Evaluator {
         }
     }
 
-    /// `get(array, index) -> Option<Number>`: safe array access (spec §11.3).
+    /// `get(array, index) -> Option<T>`: safe array access (spec §11.3); a negative index counts from
+    /// the end, out-of-range yields `None`.
     fn call_array_get(&mut self, arr: Value, idx: Value) -> Result<Value, RuntimeError> {
         let Value::Array(a) = arr else {
             return crate::error::err("`get` expects an array");
@@ -2146,13 +2590,391 @@ impl Evaluator {
         let Some(i) = i else {
             return crate::error::err("`get` expects an integer index");
         };
-        if i < 0 {
-            return Ok(Value::Option(None));
-        }
-        match a.get(i as usize) {
-            Some(n) => Ok(Value::Option(Some(Box::new(Value::Number(n.clone()))))),
+        match normalize_index(i, a.len()) {
+            Some(i) => Ok(Value::Option(Some(Box::new(a[i].clone())))),
             None => Ok(Value::Option(None)),
         }
+    }
+
+    /// Read-only array methods (spec §11.3): operate on a value-semantic copy of the array.
+    fn call_array_method(&mut self, a: &[Value], name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let arity = |n: usize| -> Result<(), RuntimeError> {
+            if args.len() == n {
+                Ok(())
+            } else {
+                crate::error::err(format!("`Array.{name}` expects {n} argument(s), got {}", args.len()))
+            }
+        };
+        match name {
+            "len" => {
+                arity(0)?;
+                Ok(Value::Number(Number::from(a.len() as i64)))
+            }
+            "is_empty" => {
+                arity(0)?;
+                Ok(Value::Bool(a.is_empty()))
+            }
+            "get" => {
+                arity(1)?;
+                self.call_array_get(Value::Array(a.to_vec()), args[0].clone())
+            }
+            "contains" => {
+                arity(1)?;
+                Ok(Value::Bool(a.iter().any(|e| self.value_eq(e, &args[0]))))
+            }
+            "index" => {
+                arity(1)?;
+                match a.iter().position(|e| self.value_eq(e, &args[0])) {
+                    Some(i) => Ok(Value::Number(Number::from(i as i64))),
+                    None => crate::error::err("element not found"),
+                }
+            }
+            "count" => {
+                arity(1)?;
+                Ok(Value::Number(Number::from(
+                    a.iter().filter(|e| self.value_eq(e, &args[0])).count() as i64,
+                )))
+            }
+            "first" => {
+                arity(0)?;
+                Ok(a.first()
+                    .map(|v| Value::Option(Some(Box::new(v.clone()))))
+                    .unwrap_or(Value::Option(None)))
+            }
+            "last" => {
+                arity(0)?;
+                Ok(a.last()
+                    .map(|v| Value::Option(Some(Box::new(v.clone()))))
+                    .unwrap_or(Value::Option(None)))
+            }
+            _ => crate::error::err(format!("unknown `Array` method `{name}`")),
+        }
+    }
+
+    /// Mutating array methods (spec §11.3): the receiver must be a single-segment path (a variable
+    /// binding); the mutated copy is written back to the binding.
+    fn mutate_array(&mut self, env: &EnvRef, receiver: &Expr, name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let var = match &receiver.kind {
+            ExprKind::Path { segments } if segments.len() == 1 => segments[0].value.clone(),
+            _ => return crate::error::err("cannot mutate a temporary value"),
+        };
+        let cur = env.borrow().get_value(&var).ok_or_else(|| {
+            RuntimeError::Message(format!("unknown variable `{var}`"))
+        })?;
+        let Value::Array(mut arr) = cur else {
+            return crate::error::err("expected an array binding");
+        };
+        let arity = |n: usize| -> Result<(), RuntimeError> {
+            if args.len() == n {
+                Ok(())
+            } else {
+                crate::error::err(format!("`Array.{name}` expects {n} argument(s), got {}", args.len()))
+            }
+        };
+        let index = |v: &Value| -> Result<i64, RuntimeError> {
+            match v {
+                Value::Number(n) => n.as_i64().ok_or_else(|| RuntimeError::Type(format!("`Array.{name}` index must be an integer"))),
+                _ => crate::error::err(format!("`Array.{name}` index must be an integer")),
+            }
+        };
+        let out = match name {
+            "push" => {
+                arity(1)?;
+                arr.push(args[0].clone());
+                Value::Nil
+            }
+            "pop" => {
+                arity(0)?;
+                arr.pop().map(|v| Value::Option(Some(Box::new(v)))).unwrap_or(Value::Option(None))
+            }
+            "append" => {
+                arity(1)?;
+                arr.push(args[0].clone());
+                Value::Nil
+            }
+            "extend" => {
+                arity(1)?;
+                match &args[0] {
+                    Value::Array(elems) => arr.extend(elems.iter().cloned()),
+                    other => {
+                        return crate::error::err(format!(
+                            "`Array.extend` expects an array, got {}",
+                            value_type_name(other)
+                        ))
+                    }
+                }
+                Value::Nil
+            }
+            "insert" => {
+                arity(2)?;
+                let i = index(&args[0])?;
+                let i = normalize_insert(i, arr.len()).ok_or_else(|| {
+                    RuntimeError::IndexOutOfBounds(format!("index {i} (length {})", arr.len()))
+                })?;
+                arr.insert(i, args[1].clone());
+                Value::Nil
+            }
+            "remove" => {
+                arity(1)?;
+                let i = index(&args[0])?;
+                let i = normalize_index(i, arr.len()).ok_or_else(|| {
+                    RuntimeError::IndexOutOfBounds(format!("index {i} (length {})", arr.len()))
+                })?;
+                arr.remove(i)
+            }
+            "clear" => {
+                arity(0)?;
+                arr.clear();
+                Value::Nil
+            }
+            // `sort` orders numeric elements only (spec §11.3); `reverse` works on any elements.
+            "sort" => {
+                arity(0)?;
+                let mut nums = Vec::with_capacity(arr.len());
+                for e in &arr {
+                    match e {
+                        Value::Number(n) => nums.push(n.clone()),
+                        _ => return crate::error::err("`Array.sort` requires an array of numbers"),
+                    }
+                }
+                nums.sort_by(|x, y| self.number_cmp(x, y).unwrap_or(Ordering::Equal));
+                arr = nums.into_iter().map(Value::Number).collect();
+                Value::Nil
+            }
+            "reverse" => {
+                arity(0)?;
+                arr.reverse();
+                Value::Nil
+            }
+            _ => return crate::error::err(format!("unknown `Array` method `{name}`")),
+        };
+        self.write_back(env, &var, Value::Array(arr));
+        Ok(out)
+    }
+
+    /// Read-only dict methods (spec §11.6): `keys`/`values`/`items` return arrays in deterministic
+    /// (canonical-key sorted) order.
+    fn call_dict_method(&mut self, d: &HashMap<ValueKey, Value>, name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let arity = |n: usize| -> Result<(), RuntimeError> {
+            if args.len() == n {
+                Ok(())
+            } else {
+                crate::error::err(format!("`Dict.{name}` expects {n} argument(s), got {}", args.len()))
+            }
+        };
+        match name {
+            "len" => {
+                arity(0)?;
+                Ok(Value::Number(Number::from(d.len() as i64)))
+            }
+            "get" => {
+                arity(1)?;
+                let key = ValueKey::from_value(&args[0])
+                    .ok_or_else(|| RuntimeError::Message("dict key must be a hashable value".into()))?;
+                Ok(d.get(&key)
+                    .map(|v| Value::Option(Some(Box::new(v.clone()))))
+                    .unwrap_or(Value::Option(None)))
+            }
+            "keys" => {
+                arity(0)?;
+                Ok(Value::Array(
+                    self.sorted_dict_keys(d).iter().map(|k| k.to_value()).collect(),
+                ))
+            }
+            "values" => {
+                arity(0)?;
+                Ok(Value::Array(self.sorted_dict_keys(d).iter().map(|k| d[k].clone()).collect()))
+            }
+            "items" => {
+                arity(0)?;
+                Ok(Value::Array(
+                    self.sorted_dict_keys(d)
+                        .iter()
+                        .map(|k| Value::Tuple(vec![k.to_value(), d[k].clone()]))
+                        .collect(),
+                ))
+            }
+            _ => crate::error::err(format!("unknown `Dict` method `{name}`")),
+        }
+    }
+
+    /// Mutating dict methods (spec §11.6): receiver must be a single-segment path; write-back pattern
+    /// mirrors `mutate_array`.
+    fn mutate_dict(&mut self, env: &EnvRef, receiver: &Expr, name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let var = match &receiver.kind {
+            ExprKind::Path { segments } if segments.len() == 1 => segments[0].value.clone(),
+            _ => return crate::error::err("cannot mutate a temporary value"),
+        };
+        let cur = env.borrow().get_value(&var).ok_or_else(|| {
+            RuntimeError::Message(format!("unknown variable `{var}`"))
+        })?;
+        let Value::Dict(mut d) = cur else {
+            return crate::error::err("expected a dict binding");
+        };
+        let arity = |n: usize| -> Result<(), RuntimeError> {
+            if args.len() == n {
+                Ok(())
+            } else {
+                crate::error::err(format!("`Dict.{name}` expects {n} argument(s), got {}", args.len()))
+            }
+        };
+        let key = |i: usize| -> Result<ValueKey, RuntimeError> {
+            args.get(i)
+                .and_then(|v| ValueKey::from_value(v))
+                .ok_or_else(|| RuntimeError::Message("dict key must be a hashable value".into()))
+        };
+        let out = match name {
+            "insert" => {
+                arity(2)?;
+                d.insert(key(0)?, args[1].clone());
+                Value::Nil
+            }
+            "remove" => {
+                arity(1)?;
+                d.remove(&key(0)?).map(|v| Value::Option(Some(Box::new(v)))).unwrap_or(Value::Option(None))
+            }
+            "clear" => {
+                arity(0)?;
+                d.clear();
+                Value::Nil
+            }
+            "update" => {
+                arity(1)?;
+                let Value::Dict(other) = &args[0] else {
+                    return crate::error::err("`Dict.update` expects a dict argument");
+                };
+                for (k, v) in other {
+                    d.insert(k.clone(), v.clone());
+                }
+                // `d.update(other)` returns the merged dict (spec §11.6 example `let dd = d.update(…)`).
+                Value::Dict(d.clone())
+            }
+            _ => return crate::error::err(format!("unknown `Dict` method `{name}`")),
+        };
+        self.write_back(env, &var, Value::Dict(d));
+        Ok(out)
+    }
+
+    /// Read-only set methods (spec §11.6): `union`/`intersection`/`difference` return new sets.
+    fn call_set_method(&mut self, s: &HashSet<ValueKey>, name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let arity = |n: usize| -> Result<(), RuntimeError> {
+            if args.len() == n {
+                Ok(())
+            } else {
+                crate::error::err(format!("`Set.{name}` expects {n} argument(s), got {}", args.len()))
+            }
+        };
+        match name {
+            "len" => {
+                arity(0)?;
+                Ok(Value::Number(Number::from(s.len() as i64)))
+            }
+            "contains" => {
+                arity(1)?;
+                let key = ValueKey::from_value(&args[0])
+                    .ok_or_else(|| RuntimeError::Message("set element must be a hashable value".into()))?;
+                Ok(Value::Bool(s.contains(&key)))
+            }
+            "union" | "intersection" | "difference" => {
+                arity(1)?;
+                let Value::Set(other) = &args[0] else {
+                    return crate::error::err("`Set.{name}` expects a set argument");
+                };
+                let out = match name {
+                    "union" => s.union(other).cloned().collect(),
+                    "intersection" => s.intersection(other).cloned().collect(),
+                    "difference" => s.difference(other).cloned().collect(),
+                    _ => unreachable!(),
+                };
+                Ok(Value::Set(out))
+            }
+            _ => crate::error::err(format!("unknown `Set` method `{name}`")),
+        }
+    }
+
+    /// Mutating set methods (spec §11.6): `remove` reports `R0013` on an absent element, `discard` is silent.
+    fn mutate_set(&mut self, env: &EnvRef, receiver: &Expr, name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let var = match &receiver.kind {
+            ExprKind::Path { segments } if segments.len() == 1 => segments[0].value.clone(),
+            _ => return crate::error::err("cannot mutate a temporary value"),
+        };
+        let cur = env.borrow().get_value(&var).ok_or_else(|| {
+            RuntimeError::Message(format!("unknown variable `{var}`"))
+        })?;
+        let Value::Set(mut s) = cur else {
+            return crate::error::err("expected a set binding");
+        };
+        let arity = |n: usize| -> Result<(), RuntimeError> {
+            if args.len() == n {
+                Ok(())
+            } else {
+                crate::error::err(format!("`Set.{name}` expects {n} argument(s), got {}", args.len()))
+            }
+        };
+        let key = |i: usize| -> Result<ValueKey, RuntimeError> {
+            args.get(i)
+                .and_then(|v| ValueKey::from_value(v))
+                .ok_or_else(|| RuntimeError::Message("set element must be a hashable value".into()))
+        };
+        let out = match name {
+            "add" => {
+                arity(1)?;
+                s.insert(key(0)?);
+                Value::Nil
+            }
+            "remove" => {
+                arity(1)?;
+                if !s.remove(&key(0)?) {
+                    return crate::error::err("element not found");
+                }
+                Value::Nil
+            }
+            "discard" => {
+                arity(1)?;
+                s.remove(&key(0)?);
+                Value::Nil
+            }
+            _ => return crate::error::err(format!("unknown `Set` method `{name}`")),
+        };
+        self.write_back(env, &var, Value::Set(s));
+        Ok(out)
+    }
+
+    /// Deterministic key order for a dict (spec §11.6): sorted by the `format_value` of each key, with
+    /// the key's debug rendering as a tiebreaker, so snapshots/tests are stable.
+    fn sorted_dict_keys(&self, d: &HashMap<ValueKey, Value>) -> Vec<ValueKey> {
+        let mut keys: Vec<ValueKey> = d.keys().cloned().collect();
+        keys.sort_by(|a, b| {
+            let ka = self.format_value(&a.to_value());
+            let kb = self.format_value(&b.to_value());
+            ka.cmp(&kb).then_with(|| format!("{a:?}").cmp(&format!("{b:?}")))
+        });
+        keys
+    }
+
+    /// Deterministic element order for a set, sorted by `format_value` (spec §11.6).
+    fn sorted_set_values(&self, s: &HashSet<ValueKey>) -> Vec<Value> {
+        let mut elems: Vec<Value> = s.iter().map(|k| k.to_value()).collect();
+        elems.sort_by(|a, b| {
+            let ka = self.format_value(a);
+            let kb = self.format_value(b);
+            ka.cmp(&kb).then_with(|| format!("{a:?}").cmp(&format!("{b:?}")))
+        });
+        elems
+    }
+
+    /// Structural dict equality (spec §11.6): same keys with promotion-equal values.
+    fn dict_eq(&self, x: &HashMap<ValueKey, Value>, y: &HashMap<ValueKey, Value>) -> bool {
+        if x.len() != y.len() {
+            return false;
+        }
+        for (k, v) in x {
+            match y.get(k) {
+                Some(w) if self.value_eq(v, w) => {}
+                _ => return false,
+            }
+        }
+        true
     }
 
     fn eval_index(&mut self, env: &EnvRef, base: &Expr, index: &prima_syntax::ast::Index) -> Result<Value, RuntimeError> {
@@ -2174,48 +2996,54 @@ impl Evaluator {
                 return crate::error::err("cannot index a class instance");
             }
         }
-        let arr = match arr_v {
-            Value::Array(a) => a,
-            _ => return crate::error::err("indexing requires an array"),
-        };
-        if index.items.len() != 1 {
-            return crate::error::err("multi-dimensional indexing is not supported yet");
-        }
-        match &index.items[0] {
-            IndexItem::Elem(e) => {
-                let idx = self.eval_index_number(env, e)?;
-                arr.get(idx)
-                    .cloned()
-                    .map(Value::Number)
-                    .ok_or_else(|| RuntimeError::IndexOutOfBounds(format!("index {idx} (length {})", arr.len())))
-            }
-            IndexItem::Slice { start, end } => {
-                let lo = match start {
-                    Some(e) => self.eval_index_number(env, e)?,
-                    None => 0,
-                };
-                let hi = match end {
-                    Some(e) => self.eval_index_number(env, e)?,
-                    None => arr.len(),
-                };
-                let lo = lo.min(arr.len());
-                let hi = hi.min(arr.len());
-                if lo > hi {
-                    return crate::error::err("invalid slice range");
+        match arr_v {
+            // Array indexing with negative indices and clamped slices (spec §11.3).
+            Value::Array(a) => {
+                if index.items.len() != 1 {
+                    return crate::error::err("multi-dimensional indexing is not supported yet");
                 }
-                Ok(Value::Array(arr[lo..hi].to_vec()))
+                match &index.items[0] {
+                    IndexItem::Elem(e) => {
+                        let raw = self.eval_index_i64(env, e)?;
+                        let idx = normalize_index(raw, a.len()).ok_or_else(|| {
+                            RuntimeError::IndexOutOfBounds(format!("index {raw} (length {})", a.len()))
+                        })?;
+                        Ok(a[idx].clone())
+                    }
+                    IndexItem::Slice { start, end } => {
+                        let (lo, hi) = self.slice_bounds(env, start.as_ref(), end.as_ref(), a.len())?;
+                        Ok(Value::Array(a[lo..hi].to_vec()))
+                    }
+                }
             }
+            // Dict indexing by key (spec §11.6): a missing key is `R0012`.
+            Value::Dict(d) => {
+                if index.items.len() != 1 {
+                    return crate::error::err("multi-dimensional indexing is not supported yet");
+                }
+                match &index.items[0] {
+                    IndexItem::Elem(e) => {
+                        let k = self.eval_expr(env, e)?;
+                        let key = ValueKey::from_value(&k)
+                            .ok_or_else(|| RuntimeError::Message("dict key must be a hashable value".into()))?;
+                        d.get(&key).cloned().ok_or_else(|| RuntimeError::Message("key not found".into()))
+                    }
+                    IndexItem::Slice { .. } => crate::error::err("cannot slice a dict"),
+                }
+            }
+            other => crate::error::err(format!(
+                "indexing requires an array or dict, got {}",
+                value_type_name(&other)
+            )),
         }
     }
 
-    fn eval_index_number(&mut self, env: &EnvRef, e: &Expr) -> Result<usize, RuntimeError> {
+    /// Evaluate an index expression to a raw `i64` (negative allowed; normalized by the caller).
+    fn eval_index_i64(&mut self, env: &EnvRef, e: &Expr) -> Result<i64, RuntimeError> {
         match self.eval_expr(env, e)? {
             Value::Number(n) => n
                 .as_i64()
-                .ok_or_else(|| RuntimeError::Message("array index must be an integer".into()))
-                .and_then(|i| {
-                    usize::try_from(i).map_err(|_| RuntimeError::Message("array index out of range".into()))
-                }),
+                .ok_or_else(|| RuntimeError::Message("array index must be an integer".into())),
             _ => crate::error::err("array index must be an integer"),
         }
     }
@@ -2251,12 +3079,18 @@ impl Evaluator {
     }
 
     fn apply_function(&mut self, func: &Function, args: Vec<Value>) -> Result<Value, RuntimeError> {
-        let array_positions: Vec<usize> = args
-            .iter()
-            .enumerate()
-            .filter(|(_, v)| matches!(v, Value::Array(_)))
-            .map(|(i, _)| i)
-            .collect();
+        // Collection convenience functions receive their array argument whole (spec appendix B.1):
+        // they are not subject to the implicit-broadcast path (spec §11.4).
+        let takes_array_whole = matches!(func, Function::Builtin(b) if b.is_collection());
+        let array_positions: Vec<usize> = if takes_array_whole {
+            Vec::new()
+        } else {
+            args.iter()
+                .enumerate()
+                .filter(|(_, v)| matches!(v, Value::Array(_)))
+                .map(|(i, _)| i)
+                .collect()
+        };
         if !array_positions.is_empty() && func.is_pure() {
             if self.current_config().broadcast {
                 return self.broadcast_call(func, args, &array_positions);
@@ -2324,7 +3158,11 @@ impl Evaluator {
             for (j, v) in args.iter().enumerate() {
                 if positions.contains(&j) {
                     if let Value::Array(a) = v {
-                        cargs.push(Value::Number(a[i].clone()));
+                        // Only numeric elements participate in broadcast (spec §11.4, R0009).
+                        match &a[i] {
+                            Value::Number(n) => cargs.push(Value::Number(n.clone())),
+                            _ => return crate::error::err("cannot broadcast a non-numeric element"),
+                        }
                     }
                 } else {
                     match v {
@@ -2334,7 +3172,7 @@ impl Evaluator {
                 }
             }
             match self.apply_function(func, cargs)? {
-                Value::Number(n) => results.push(n),
+                Value::Number(n) => results.push(Value::Number(n)),
                 _ => return crate::error::err("broadcast result must be numeric"),
             }
         }
@@ -2363,7 +3201,10 @@ impl Evaluator {
                 for (j, v) in args.iter().enumerate() {
                     if positions_owned.contains(&j) {
                         if let Value::Array(a) = v {
-                            cargs.push(Value::Number(a[i].clone()));
+                            match &a[i] {
+                                Value::Number(n) => cargs.push(Value::Number(n.clone())),
+                                _ => return Err(RuntimeError::Message("cannot broadcast a non-numeric element".into())),
+                            }
                         } else {
                             return Err(RuntimeError::Message("cannot broadcast a non-numeric scalar".into()));
                         }
@@ -2387,14 +3228,23 @@ impl Evaluator {
             .collect();
         let mut out = Vec::with_capacity(len);
         for r in results {
-            out.push(r?);
+            out.push(Value::Number(r?));
         }
         Ok(Value::Array(out))
     }
 
-    /// Binary array operation broadcast (spec §11.4): array×array is elementwise (lengths must match), array×scalar broadcasts the scalar; empty arrays error.
+    /// Binary array operation (spec §11.3/§11.4): `Array + Array` concatenates; `Array ∘ Array` for the
+    /// other operators is elementwise (equal lengths, numeric-homogeneous), `Array ∘ scalar` broadcasts
+    /// the scalar. Empty arrays error (`R0014`).
     fn eval_binary_array(&mut self, op: BinOp, a: Value, b: Value) -> Result<Value, RuntimeError> {
-        match (a, b) {
+        // `Array + Array` concatenates (spec §11.3, v2.1) — this overrides the stale §11.4 elementwise example.
+        if op == BinOp::Add && matches!(&a, Value::Array(_)) && matches!(&b, Value::Array(_)) {
+            let Value::Array(mut av) = a else { unreachable!("checked above") };
+            let Value::Array(bv) = b else { unreachable!("checked above") };
+            av.extend(bv);
+            return Ok(Value::Array(av));
+        }
+        let out: Vec<Value> = match (a, b) {
             (Value::Array(av), Value::Array(bv)) => {
                 if av.len() != bv.len() {
                     return crate::error::err("dimension mismatch in array operation");
@@ -2402,45 +3252,50 @@ impl Evaluator {
                 if av.is_empty() {
                     return crate::error::err("cannot operate on an empty array");
                 }
+                let av = require_numeric_array(&av)?;
+                let bv = require_numeric_array(&bv)?;
                 let mut out = Vec::with_capacity(av.len());
                 for (x, y) in av.into_iter().zip(bv) {
                     match self.eval_number_binary(op, x, y)? {
-                        Value::Number(n) => out.push(n),
+                        Value::Number(n) => out.push(Value::Number(n)),
                         _ => return crate::error::err("array operation result must be numeric"),
                     }
                 }
-                Ok(Value::Array(out))
+                out
             }
             (Value::Array(av), other) => {
                 let scalar = self.scalar_for_broadcast(other)?;
                 if av.is_empty() {
                     return crate::error::err("cannot operate on an empty array");
                 }
+                let av = require_numeric_array(&av)?;
                 let mut out = Vec::with_capacity(av.len());
                 for x in av {
                     match self.eval_number_binary(op, x, scalar.clone())? {
-                        Value::Number(n) => out.push(n),
+                        Value::Number(n) => out.push(Value::Number(n)),
                         _ => return crate::error::err("array operation result must be numeric"),
                     }
                 }
-                Ok(Value::Array(out))
+                out
             }
             (other, Value::Array(bv)) => {
                 let scalar = self.scalar_for_broadcast(other)?;
                 if bv.is_empty() {
                     return crate::error::err("cannot operate on an empty array");
                 }
+                let bv = require_numeric_array(&bv)?;
                 let mut out = Vec::with_capacity(bv.len());
                 for y in bv {
                     match self.eval_number_binary(op, scalar.clone(), y)? {
-                        Value::Number(n) => out.push(n),
+                        Value::Number(n) => out.push(Value::Number(n)),
                         _ => return crate::error::err("array operation result must be numeric"),
                     }
                 }
-                Ok(Value::Array(out))
+                out
             }
-            _ => crate::error::err("invalid array operation"),
-        }
+            _ => return crate::error::err("invalid array operation"),
+        };
+        Ok(Value::Array(out))
     }
 
     fn scalar_for_broadcast(&self, v: Value) -> Result<Number, RuntimeError> {
@@ -2508,8 +3363,8 @@ impl Evaluator {
                     return None;
                 }
                 let mut out = Vec::new();
-                for (pat, n) in pats.iter().zip(elems) {
-                    out.extend(self.match_pattern(env, &Value::Number(n.clone()), pat)?);
+                for (pat, e) in pats.iter().zip(elems) {
+                    out.extend(self.match_pattern(env, e, pat)?);
                 }
                 Some(out)
             }
@@ -2660,10 +3515,239 @@ impl Evaluator {
                 let mut out = Vec::new();
                 let mut i = start_i;
                 while if step_i > 0 { i < end_i } else { i > end_i } {
-                    out.push(Number::from(i));
+                    out.push(Value::Number(Number::from(i)));
                     i += step_i;
                 }
                 Ok(Value::Array(out))
+            }
+            // ---- collection convenience functions (spec appendix B.1) ----
+            Builtin::Len => {
+                check_arity("len", &args, 1)?;
+                let n = match &args[0] {
+                    Value::Array(a) => a.len(),
+                    Value::Dict(d) => d.len(),
+                    Value::Set(s) => s.len(),
+                    Value::String(s) => s.chars().count(),
+                    Value::Tuple(t) => t.len(),
+                    other => {
+                        return crate::error::err(format!(
+                            "`len` expects an array, dict, set, string, or tuple, got {}",
+                            value_type_name(other)
+                        ))
+                    }
+                };
+                Ok(Value::Number(Number::from(n as i64)))
+            }
+            Builtin::Enumerate => {
+                check_arity("enumerate", &args, 1)?;
+                let Value::Array(a) = &args[0] else {
+                    return crate::error::err("`enumerate` expects an array");
+                };
+                Ok(Value::Array(
+                    a.iter()
+                        .enumerate()
+                        .map(|(i, e)| Value::Tuple(vec![Value::Number(Number::from(i as i64)), e.clone()]))
+                        .collect(),
+                ))
+            }
+            Builtin::Zip => {
+                check_arity("zip", &args, 2)?;
+                let (Value::Array(x), Value::Array(y)) = (&args[0], &args[1]) else {
+                    return crate::error::err("`zip` expects two arrays");
+                };
+                Ok(Value::Array(
+                    x.iter()
+                        .zip(y)
+                        .map(|(a, b)| Value::Tuple(vec![a.clone(), b.clone()]))
+                        .collect(),
+                ))
+            }
+            Builtin::Sorted => {
+                check_arity("sorted", &args, 1)?;
+                let Value::Array(a) = &args[0] else {
+                    return crate::error::err("`sorted` expects an array");
+                };
+                let mut nums = Vec::with_capacity(a.len());
+                for e in a {
+                    match e {
+                        Value::Number(n) => nums.push(n.clone()),
+                        _ => return crate::error::err("`sorted` requires an array of numbers"),
+                    }
+                }
+                nums.sort_by(|x, y| self.number_cmp(x, y).unwrap_or(Ordering::Equal));
+                Ok(Value::Array(nums.into_iter().map(Value::Number).collect()))
+            }
+            Builtin::Reversed => {
+                check_arity("reversed", &args, 1)?;
+                let Value::Array(mut a) = args[0].clone() else {
+                    return crate::error::err("`reversed` expects an array");
+                };
+                a.reverse();
+                Ok(Value::Array(a))
+            }
+            Builtin::Sum | Builtin::Prod => {
+                let name = if matches!(b, Builtin::Sum) { "sum" } else { "prod" };
+                check_arity(name, &args, 1)?;
+                let Value::Array(a) = &args[0] else {
+                    return crate::error::err(format!("`{name}` expects an array"));
+                };
+                if a.is_empty() {
+                    return crate::error::err("empty collection");
+                }
+                let op = if matches!(b, Builtin::Sum) { BinOp::Add } else { BinOp::Mul };
+                let mut acc = match &a[0] {
+                    Value::Number(n) => n.clone(),
+                    _ => return crate::error::err(format!("`{name}` requires an array of numbers")),
+                };
+                for e in &a[1..] {
+                    let n = match e {
+                        Value::Number(n) => n.clone(),
+                        _ => return crate::error::err(format!("`{name}` requires an array of numbers")),
+                    };
+                    match self.eval_number_binary(op, acc, n)? {
+                        Value::Number(n) => acc = n,
+                        _ => return crate::error::err(format!("`{name}` result must be numeric")),
+                    }
+                }
+                Ok(Value::Number(acc))
+            }
+            Builtin::Min | Builtin::Max => {
+                let name = if matches!(b, Builtin::Min) { "min" } else { "max" };
+                check_arity(name, &args, 1)?;
+                let Value::Array(a) = &args[0] else {
+                    return crate::error::err(format!("`{name}` expects an array"));
+                };
+                if a.is_empty() {
+                    return crate::error::err("empty collection");
+                }
+                let mut best = match &a[0] {
+                    Value::Number(n) => n.clone(),
+                    _ => return crate::error::err(format!("`{name}` requires an array of numbers")),
+                };
+                for e in &a[1..] {
+                    let n = match e {
+                        Value::Number(n) => n.clone(),
+                        _ => return crate::error::err(format!("`{name}` requires an array of numbers")),
+                    };
+                    let ord = self
+                        .number_cmp(&n, &best)
+                        .ok_or_else(|| RuntimeError::Message("cannot compare these numbers".into()))?;
+                    let better = if matches!(b, Builtin::Min) {
+                        ord == Ordering::Less
+                    } else {
+                        ord == Ordering::Greater
+                    };
+                    if better {
+                        best = n;
+                    }
+                }
+                Ok(Value::Number(best))
+            }
+            Builtin::All | Builtin::Any => {
+                let name = if matches!(b, Builtin::All) { "all" } else { "any" };
+                check_arity(name, &args, 1)?;
+                let Value::Array(a) = &args[0] else {
+                    return crate::error::err(format!("`{name}` expects an array"));
+                };
+                let is_all = matches!(b, Builtin::All);
+                let mut result = is_all;
+                for e in a {
+                    let ok = match e {
+                        Value::Bool(x) => *x,
+                        _ => return crate::error::err(format!("`{name}` requires an array of booleans")),
+                    };
+                    if is_all {
+                        result = result && ok;
+                        if !result {
+                            break;
+                        }
+                    } else {
+                        result = result || ok;
+                        if result {
+                            break;
+                        }
+                    }
+                }
+                Ok(Value::Bool(result))
+            }
+            Builtin::Join => {
+                check_arity("join", &args, 2)?;
+                let Value::Array(parts) = &args[0] else {
+                    return crate::error::err("`join` expects an array of strings");
+                };
+                let Value::String(sep) = &args[1] else {
+                    return crate::error::err("`join` separator must be a string");
+                };
+                let mut out = String::new();
+                for (i, p) in parts.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(sep);
+                    }
+                    match p {
+                        Value::String(s) => out.push_str(s),
+                        _ => return crate::error::err("`join` requires an array of strings"),
+                    }
+                }
+                Ok(Value::String(out))
+            }
+            Builtin::Count => {
+                check_arity("count", &args, 2)?;
+                let Value::Array(a) = &args[0] else {
+                    return crate::error::err("`count` expects an array");
+                };
+                Ok(Value::Number(Number::from(
+                    a.iter().filter(|e| self.value_eq(e, &args[1])).count() as i64,
+                )))
+            }
+            Builtin::Index => {
+                check_arity("index", &args, 2)?;
+                let Value::Array(a) = &args[0] else {
+                    return crate::error::err("`index` expects an array");
+                };
+                match a.iter().position(|e| self.value_eq(e, &args[1])) {
+                    Some(i) => Ok(Value::Number(Number::from(i as i64))),
+                    None => crate::error::err("element not found"),
+                }
+            }
+            Builtin::First | Builtin::Last => {
+                let name = if matches!(b, Builtin::First) { "first" } else { "last" };
+                check_arity(name, &args, 1)?;
+                let Value::Array(a) = &args[0] else {
+                    return crate::error::err(format!("`{name}` expects an array"));
+                };
+                let elem = if matches!(b, Builtin::First) { a.first() } else { a.last() };
+                Ok(elem.map(|v| Value::Option(Some(Box::new(v.clone())))).unwrap_or(Value::Option(None)))
+            }
+            Builtin::Linspace => {
+                check_arity("linspace", &args, 3)?;
+                let start = self.scalar_value(args[0].clone())?;
+                let end = self.scalar_value(args[1].clone())?;
+                let n = match &args[2] {
+                    Value::Number(n) => n.as_i64().ok_or_else(|| RuntimeError::Type("`linspace` count must be an integer".into()))?,
+                    _ => return crate::error::err("`linspace` count must be an integer"),
+                };
+                if n < 0 {
+                    return crate::error::err("`linspace` count must be non-negative");
+                }
+                let n = n as usize;
+                if n == 0 {
+                    return Ok(Value::Array(vec![]));
+                }
+                let (start_f, end_f) = (start.to_f64_lossy(), end.to_f64_lossy());
+                if n == 1 {
+                    return Ok(Value::Array(vec![Value::Number(Number::Real(Real::F64(start_f)))]));
+                }
+                let step = (end_f - start_f) / (n - 1) as f64;
+                let mut out = Vec::with_capacity(n);
+                for i in 0..n {
+                    out.push(Value::Number(Number::Real(Real::F64(start_f + step * i as f64))));
+                }
+                Ok(Value::Array(out))
+            }
+            // `map`/`filter`/`reduce` are intercepted in `eval_call` (the function argument is an
+            // un-evaluated expression); reaching here means the name was used as a value.
+            Builtin::Map | Builtin::Filter | Builtin::Reduce => {
+                crate::error::err("`map`/`filter`/`reduce` must be called directly with a function")
             }
             Builtin::Collapse(name) => crate::collapse::call(name, &args, self.pool, self.builtins),
             // Math operators: build an `Apply` node, then simplify the whole thing (spec §8.3 level 2 constant folding).
@@ -2846,6 +3930,30 @@ fn collect_read_names(e: &Expr, out: &mut HashSet<String>) {
                 collect_read_names(&a.body, out);
             }
         }
+        ExprKind::Dict(entries) => {
+            for (k, v) in entries {
+                collect_read_names(k, out);
+                collect_read_names(v, out);
+            }
+        }
+        ExprKind::Set(items) => {
+            for it in items {
+                collect_read_names(it, out);
+            }
+        }
+        ExprKind::Comprehension { output, clauses, .. } => {
+            collect_read_names(output, out);
+            for c in clauses {
+                match c {
+                    ComprehensionClause::For { iter, .. } => collect_read_names(iter, out),
+                    ComprehensionClause::If { cond } => collect_read_names(cond, out),
+                }
+            }
+        }
+        ExprKind::KeyValue { key, value } => {
+            collect_read_names(key, out);
+            collect_read_names(value, out);
+        }
         _ => {}
     }
 }
@@ -2867,7 +3975,7 @@ struct ParforWrite {
 }
 
 /// One index write produced by a `parfor` iteration: (array name, index, merged value).
-type ParforWriteVec = Vec<(String, usize, Number)>;
+type ParforWriteVec = Vec<(String, usize, Value)>;
 
 /// Static side-effect check for a `parfor` body (spec §17.2, `E0082`): only index-slot assignments
 /// (`A[i] = …`/`A[i] += …`/`A[i] -= …`) and pure function calls are allowed; anything else (external
@@ -2950,6 +4058,8 @@ fn value_type_name(v: &Value) -> String {
         Value::Char(_) => "char".into(),
         Value::String(_) => "string".into(),
         Value::Array(_) => "array".into(),
+        Value::Dict(_) => "dict".into(),
+        Value::Set(_) => "set".into(),
         Value::Expr(_) => "expr".into(),
         Value::Symbol(_) => "symbol".into(),
         Value::Class(_) => "class".into(),
@@ -2960,6 +4070,76 @@ fn value_type_name(v: &Value) -> String {
         Value::Undefined => "undefined".into(),
         Value::Error(_) => "error".into(),
     }
+}
+
+/// Arity guard for builtin functions (spec §16): wrong argument counts are `Message` errors.
+fn check_arity(name: &str, args: &[Value], n: usize) -> Result<(), RuntimeError> {
+    if args.len() == n {
+        Ok(())
+    } else {
+        crate::error::err(format!("`{name}` expects {n} argument(s), got {}", args.len()))
+    }
+}
+
+/// Every element of an array must be numeric for elementwise operations/broadcast (spec §11.4, `R0009`).
+fn require_numeric_array(elems: &[Value]) -> Result<Vec<Number>, RuntimeError> {
+    let mut out = Vec::with_capacity(elems.len());
+    for e in elems {
+        match e {
+            Value::Number(n) => out.push(n.clone()),
+            _ => return crate::error::err("array elements must be numeric (R0009)"),
+        }
+    }
+    Ok(out)
+}
+
+/// Normalize an index against a length: negative indices count from the end; out-of-range → `None`
+/// (spec §11.3, `R0003`).
+fn normalize_index(idx: i64, len: usize) -> Option<usize> {
+    let len_i = len as i64;
+    let i = if idx < 0 { len_i + idx } else { idx };
+    if i < 0 || i >= len_i {
+        None
+    } else {
+        Some(i as usize)
+    }
+}
+
+/// Normalize an insert position: `idx == len` is allowed (append); out-of-range → `None`.
+fn normalize_insert(idx: i64, len: usize) -> Option<usize> {
+    let len_i = len as i64;
+    let i = if idx < 0 { len_i + idx } else { idx };
+    if i < 0 || i > len_i {
+        None
+    } else {
+        Some(i as usize)
+    }
+}
+
+/// Remainder for the `%` operator (spec §11.4 elementwise Mod): exact for integers, f64 otherwise.
+fn number_mod(x: &Number, y: &Number) -> Result<Number, RuntimeError> {
+    if y.is_zero() {
+        return crate::error::err("modulo by zero");
+    }
+    if let (Some(a), Some(b)) = (x.as_bigint(), y.as_bigint()) {
+        return Ok(Number::Integer(a % b));
+    }
+    Ok(Number::Real(Real::F64(x.to_f64_lossy() % y.to_f64_lossy())))
+}
+
+/// Mutating array methods (spec §11.3): these require the receiver to be a single-segment path.
+fn is_mutating_array_method(name: &str) -> bool {
+    matches!(name, "push" | "pop" | "append" | "extend" | "insert" | "remove" | "clear" | "sort" | "reverse")
+}
+
+/// Mutating dict methods (spec §11.6).
+fn is_mutating_dict_method(name: &str) -> bool {
+    matches!(name, "insert" | "remove" | "clear" | "update")
+}
+
+/// Mutating set methods (spec §11.6).
+fn is_mutating_set_method(name: &str) -> bool {
+    matches!(name, "add" | "remove" | "discard")
 }
 
 /// Map numeric method names to their collapse-family builtin (spec §9): `x.to_f64()`, `x.rounded(3)`, `x.truncated()`, `x.abs()`.
@@ -3122,7 +4302,7 @@ mod tests {
             eval("let s = \"hello world\";\ns.contains(\"world\")"),
             Value::Bool(true)
         );
-        assert_eq!(eval("let s = \"a,b,c\";\ns.split(\",\")"), Value::Tuple(vec![
+        assert_eq!(eval("let s = \"a,b,c\";\ns.split(\",\")"), Value::Array(vec![
             Value::String("a".into()),
             Value::String("b".into()),
             Value::String("c".into()),
@@ -3183,17 +4363,17 @@ mod tests {
     #[test]
     fn array_element_assignment_writes_through() {
         assert_eq!(eval("let a = [1, 2, 3];\na[1] = 9;\na"), Value::Array(vec![
-            Number::from(1),
-            Number::from(9),
-            Number::from(3),
+            Value::Number(Number::from(1)),
+            Value::Number(Number::from(9)),
+            Value::Number(Number::from(3)),
         ]));
     }
 
     #[test]
     fn array_slice_returns_subarray() {
         assert_eq!(eval("let a = [1, 2, 3, 4];\na[1..3]"), Value::Array(vec![
-            Number::from(2),
-            Number::from(3),
+            Value::Number(Number::from(2)),
+            Value::Number(Number::from(3)),
         ]));
     }
 }

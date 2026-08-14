@@ -332,10 +332,34 @@ pub enum ExprKind {
     Try(Box<Expr>),
     Array(Vec<Expr>),
     Tuple(Vec<Expr>),
+    /// `{ key: value, ... }` dict literal (spec §4.6): an ordered list of key/value pairs.
+    Dict(Vec<(Expr, Expr)>),
+    /// `{ a, b, ... }` set literal (spec §4.6). Duplicate elements are kept by the parser; dedup happens at runtime.
+    Set(Vec<Expr>),
+    /// Comprehension `[...]`/`{...}`/`(...)` (spec §4.6/§11.7): the frame kind + output expression + `for`/`if` clauses.
+    Comprehension { kind: CompKind, output: Box<Expr>, clauses: Vec<ComprehensionClause> },
+    /// `key: value` — internal node used only as the `output` of a Dict comprehension; never appears in normal expressions.
+    KeyValue { key: Box<Expr>, value: Box<Expr> },
     Lambda { params: Vec<Param>, body: Box<Expr> },
     Match { scrutinee: Box<Expr>, arms: Vec<MatchArm> },
     Pipeline { lhs: Box<Expr>, rhs: Box<Expr> },
     Custom(Vec<(Expr, Expr)>),
+}
+
+/// Frame kind of a comprehension (spec §4.6 rule 4): the enclosing bracket decides the produced collection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompKind {
+    Array,
+    Dict,
+    Set,
+    Tuple,
+}
+
+/// One clause of a comprehension (spec §11.7): `for <var> in <iter>` or `if <cond>`, in any order and any count.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ComprehensionClause {
+    For { var: Spanned<String>, iter: Expr },
+    If { cond: Expr },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -384,6 +408,14 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+    /// Membership test `x in c` (spec §11.3/§11.6).
+    In,
+    /// Set union `∪` (spec §11.6).
+    Union,
+    /// Set intersection `∩` (spec §11.6).
+    Intersect,
+    /// Set difference `\` (spec §11.6).
+    Difference,
     Broadcast,
     Pipeline,
 }

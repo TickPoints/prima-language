@@ -17,6 +17,19 @@ use crate::value::IndeterminateForm;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ExprId(u32);
 
+impl ExprId {
+    /// Raw index into the expression store (spec §8.1). Exposed for hashable `ValueKey` construction
+    /// (spec §11.6); the index is process-local and must not cross process boundaries (ADR §6).
+    pub fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    /// Reconstruct an `ExprId` from a raw index; the index must originate from the same process pool (spec §8.1).
+    pub fn from_u32(u: u32) -> ExprId {
+        ExprId(u)
+    }
+}
+
 /// Node in the symbolic world (spec §8.1). `Add`/`Mul` are stored as canonically ordered n-ary lists (spec §8.4),
 /// so equality is `ExprId` equality (O(1)).
 #[derive(Debug, Clone, PartialEq, Hash)]

@@ -23,6 +23,8 @@ enum Class {
     RawString,
     Char,
     Symbol,
+    /// Backslash used as the binary set-difference operator (spec §11.6), e.g. `s \ {3}`.
+    SetMinus,
     Comment,
     Punct,
 }
@@ -56,6 +58,14 @@ impl<'a> Lexer<'a> {
         Some(c)
     }
 
+    /// Character `n` bytes ahead of the current position (used for lookahead over multi-byte chars).
+    fn peek_char(&self, n: usize) -> Option<char> {
+        self.src
+            .get(self.pos + n..)
+            .and_then(|r| std::str::from_utf8(r).ok())
+            .and_then(|s| s.chars().next())
+    }
+
     fn starts_with(&self, s: &str) -> bool {
         self.src.get(self.pos..).is_some_and(|r| r.starts_with(s.as_bytes()))
     }
@@ -70,7 +80,14 @@ impl<'a> Lexer<'a> {
             '\'' => Class::Char,
             'r' if self.peek(1) == Some(b'"') => Class::RawString,
             'a'..='z' | 'A'..='Z' | '_' => Class::Ident,
-            '\\' => Class::Symbol,
+            // `\` followed by an identifier start is a TeX symbol (`\pi`); otherwise it is the set-difference operator (spec §11.6).
+            '\\' => {
+                if self.peek_char(1).is_some_and(unicode_ident::is_xid_start) {
+                    Class::Symbol
+                } else {
+                    Class::SetMinus
+                }
+            }
             '/' if self.peek(1) == Some(b'/') || self.peek(1) == Some(b'*') => Class::Comment,
             _ if unicode_ident::is_xid_start(c) => Class::Ident,
             _ => Class::Punct,
@@ -147,6 +164,10 @@ impl<'a> Lexer<'a> {
                     } else {
                         errors.push(SyntaxError { span: Span::new(start as u32, self.pos as u32), message: "expected an identifier after `\\`".into() });
                     }
+                }
+                Class::SetMinus => {
+                    self.bump();
+                    tokens.push(Token { kind: TokenKind::SetMinus, span: Span::new(start as u32, self.pos as u32) });
                 }
                 Class::Comment => {
                     if let Some(message) = self.skip_comment() {
@@ -473,6 +494,8 @@ impl<'a> Lexer<'a> {
             }
             '(' => (TokenKind::LParen, 1),
             ')' => (TokenKind::RParen, 1),
+            '∪' => (TokenKind::Union, c.len_utf8()),
+            '∩' => (TokenKind::Intersect, c.len_utf8()),
             '[' => (TokenKind::LBracket, 1),
             ']' => (TokenKind::RBracket, 1),
             '{' => (TokenKind::LBrace, 1),
@@ -518,5 +541,56 @@ fn keyword_or_ident(s: &str) -> TokenKind {
         "trait" => TokenKind::KwTrait,
         "impl" => TokenKind::KwImpl,
         _ => TokenKind::Ident(s.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn kinds(src: &str) -> Vec<TokenKind> {
+        lex(src).expect("lex should succeed").into_iter().map(|t| t.kind).collect()
+    }
+
+    #[test]
+    fn set_minus_backslash() {
+        assert_eq!(kinds("s \\ {3}"), vec![
+            TokenKind::Ident("s".into()),
+            TokenKind::SetMinus,
+            TokenKind::LBrace,
+            TokenKind::Integer("3".into()),
+            TokenKind::RBrace,
+            TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
+    fn backslash_symbol_still_works() {
+        assert_eq!(kinds("\\pi"), vec![TokenKind::Symbol("pi".into()), TokenKind::Eof]);
+    }
+
+    #[test]
+    fn union_and_intersect() {
+        assert_eq!(kinds("a ∪ b ∩ c"), vec![
+            TokenKind::Ident("a".into()),
+            TokenKind::Union,
+            TokenKind::Ident("b".into()),
+            TokenKind::Intersect,
+            TokenKind::Ident("c".into()),
+            TokenKind::Eof,
+        ]);
+    }
+
+    #[test]
+    fn backslash_before_operator_is_set_minus() {
+        assert_eq!(kinds("s \\ ∩ {1}"), vec![
+            TokenKind::Ident("s".into()),
+            TokenKind::SetMinus,
+            TokenKind::Intersect,
+            TokenKind::LBrace,
+            TokenKind::Integer("1".into()),
+            TokenKind::RBrace,
+            TokenKind::Eof,
+        ]);
     }
 }

@@ -6,7 +6,7 @@
 
 use prima_core::collapse::collapse_value;
 use prima_core::render::{render_latex, render_number};
-use prima_core::{BuiltinSymbols, ExprPool, Number, Real, SymbolTable, Value};
+use prima_core::{BuiltinSymbols, ExprPool, Number, Real, SymbolTable, Value, ValueKey};
 
 use crate::error::RuntimeError;
 
@@ -592,8 +592,23 @@ fn value_to_string(pool: &ExprPool, v: &Value) -> String {
         Value::Char(c) => c.to_string(),
         Value::String(s) => s.clone(),
         Value::Array(elems) => {
-            let inner: Vec<String> = elems.iter().map(render_number).collect();
+            let inner: Vec<String> = elems.iter().map(|e| value_to_string(pool, e)).collect();
             format!("[{}]", inner.join(", "))
+        }
+        Value::Dict(d) => {
+            let mut keys: Vec<ValueKey> = d.keys().cloned().collect();
+            keys.sort_by(|a, b| value_to_string(pool, &a.to_value()).cmp(&value_to_string(pool, &b.to_value())));
+            let inner: Vec<String> = keys
+                .iter()
+                .map(|k| format!("{}: {}", value_to_string(pool, &k.to_value()), value_to_string(pool, &d[k])))
+                .collect();
+            format!("{{{}}}", inner.join(", "))
+        }
+        Value::Set(s) => {
+            let mut elems: Vec<Value> = s.iter().map(|k| k.to_value()).collect();
+            elems.sort_by(|a, b| value_to_string(pool, a).cmp(&value_to_string(pool, b)));
+            let inner: Vec<String> = elems.iter().map(|e| value_to_string(pool, e)).collect();
+            format!("{{{}}}", inner.join(", "))
         }
         Value::Expr(id) => render_latex(pool, SymbolTable::global(), *id),
         Value::Symbol(_) => "symbol".into(),

@@ -1,0 +1,1437 @@
+---
+source: tests/parser.rs
+expression: parse(src).unwrap()
+---
+Program {
+    config: None,
+    imports: [],
+    stmts: [
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "d",
+                    span: Span {
+                        start: 5,
+                        end: 6,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Dict(
+                    [
+                        (
+                            Expr {
+                                kind: Literal(
+                                    Str(
+                                        "a",
+                                    ),
+                                ),
+                                span: Span {
+                                    start: 11,
+                                    end: 14,
+                                },
+                            },
+                            Expr {
+                                kind: Literal(
+                                    Integer(
+                                        "1",
+                                    ),
+                                ),
+                                span: Span {
+                                    start: 16,
+                                    end: 17,
+                                },
+                            },
+                        ),
+                        (
+                            Expr {
+                                kind: Literal(
+                                    Str(
+                                        "b",
+                                    ),
+                                ),
+                                span: Span {
+                                    start: 19,
+                                    end: 22,
+                                },
+                            },
+                            Expr {
+                                kind: Literal(
+                                    Integer(
+                                        "2",
+                                    ),
+                                ),
+                                span: Span {
+                                    start: 24,
+                                    end: 25,
+                                },
+                            },
+                        ),
+                    ],
+                ),
+                span: Span {
+                    start: 9,
+                    end: 27,
+                },
+            },
+            span: Span {
+                start: 1,
+                end: 27,
+            },
+        },
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "e",
+                    span: Span {
+                        start: 33,
+                        end: 34,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Dict(
+                    [],
+                ),
+                span: Span {
+                    start: 37,
+                    end: 39,
+                },
+            },
+            span: Span {
+                start: 29,
+                end: 39,
+            },
+        },
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "s",
+                    span: Span {
+                        start: 45,
+                        end: 46,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Set(
+                    [
+                        Expr {
+                            kind: Literal(
+                                Integer(
+                                    "1",
+                                ),
+                            ),
+                            span: Span {
+                                start: 50,
+                                end: 51,
+                            },
+                        },
+                        Expr {
+                            kind: Literal(
+                                Integer(
+                                    "2",
+                                ),
+                            ),
+                            span: Span {
+                                start: 53,
+                                end: 54,
+                            },
+                        },
+                        Expr {
+                            kind: Literal(
+                                Integer(
+                                    "3",
+                                ),
+                            ),
+                            span: Span {
+                                start: 56,
+                                end: 57,
+                            },
+                        },
+                        Expr {
+                            kind: Literal(
+                                Integer(
+                                    "2",
+                                ),
+                            ),
+                            span: Span {
+                                start: 59,
+                                end: 60,
+                            },
+                        },
+                    ],
+                ),
+                span: Span {
+                    start: 49,
+                    end: 61,
+                },
+            },
+            span: Span {
+                start: 41,
+                end: 61,
+            },
+        },
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "has",
+                    span: Span {
+                        start: 67,
+                        end: 70,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Binary {
+                    op: In,
+                    lhs: Expr {
+                        kind: Literal(
+                            Integer(
+                                "2",
+                            ),
+                        ),
+                        span: Span {
+                            start: 73,
+                            end: 74,
+                        },
+                    },
+                    rhs: Expr {
+                        kind: Array(
+                            [
+                                Expr {
+                                    kind: Literal(
+                                        Integer(
+                                            "1",
+                                        ),
+                                    ),
+                                    span: Span {
+                                        start: 79,
+                                        end: 80,
+                                    },
+                                },
+                                Expr {
+                                    kind: Literal(
+                                        Integer(
+                                            "2",
+                                        ),
+                                    ),
+                                    span: Span {
+                                        start: 82,
+                                        end: 83,
+                                    },
+                                },
+                                Expr {
+                                    kind: Literal(
+                                        Integer(
+                                            "3",
+                                        ),
+                                    ),
+                                    span: Span {
+                                        start: 85,
+                                        end: 86,
+                                    },
+                                },
+                            ],
+                        ),
+                        span: Span {
+                            start: 78,
+                            end: 87,
+                        },
+                    },
+                },
+                span: Span {
+                    start: 73,
+                    end: 87,
+                },
+            },
+            span: Span {
+                start: 63,
+                end: 87,
+            },
+        },
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "u",
+                    span: Span {
+                        start: 93,
+                        end: 94,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Binary {
+                    op: Union,
+                    lhs: Expr {
+                        kind: Path {
+                            segments: [
+                                Spanned {
+                                    value: "s",
+                                    span: Span {
+                                        start: 97,
+                                        end: 98,
+                                    },
+                                },
+                            ],
+                        },
+                        span: Span {
+                            start: 97,
+                            end: 98,
+                        },
+                    },
+                    rhs: Expr {
+                        kind: Set(
+                            [
+                                Expr {
+                                    kind: Literal(
+                                        Integer(
+                                            "5",
+                                        ),
+                                    ),
+                                    span: Span {
+                                        start: 104,
+                                        end: 105,
+                                    },
+                                },
+                                Expr {
+                                    kind: Literal(
+                                        Integer(
+                                            "6",
+                                        ),
+                                    ),
+                                    span: Span {
+                                        start: 107,
+                                        end: 108,
+                                    },
+                                },
+                            ],
+                        ),
+                        span: Span {
+                            start: 103,
+                            end: 109,
+                        },
+                    },
+                },
+                span: Span {
+                    start: 97,
+                    end: 109,
+                },
+            },
+            span: Span {
+                start: 89,
+                end: 109,
+            },
+        },
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "i",
+                    span: Span {
+                        start: 115,
+                        end: 116,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Binary {
+                    op: Intersect,
+                    lhs: Expr {
+                        kind: Path {
+                            segments: [
+                                Spanned {
+                                    value: "s",
+                                    span: Span {
+                                        start: 119,
+                                        end: 120,
+                                    },
+                                },
+                            ],
+                        },
+                        span: Span {
+                            start: 119,
+                            end: 120,
+                        },
+                    },
+                    rhs: Expr {
+                        kind: Set(
+                            [
+                                Expr {
+                                    kind: Literal(
+                                        Integer(
+                                            "2",
+                                        ),
+                                    ),
+                                    span: Span {
+                                        start: 126,
+                                        end: 127,
+                                    },
+                                },
+                                Expr {
+                                    kind: Literal(
+                                        Integer(
+                                            "3",
+                                        ),
+                                    ),
+                                    span: Span {
+                                        start: 129,
+                                        end: 130,
+                                    },
+                                },
+                            ],
+                        ),
+                        span: Span {
+                            start: 125,
+                            end: 131,
+                        },
+                    },
+                },
+                span: Span {
+                    start: 119,
+                    end: 131,
+                },
+            },
+            span: Span {
+                start: 111,
+                end: 131,
+            },
+        },
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "diff",
+                    span: Span {
+                        start: 137,
+                        end: 141,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Binary {
+                    op: Difference,
+                    lhs: Expr {
+                        kind: Path {
+                            segments: [
+                                Spanned {
+                                    value: "s",
+                                    span: Span {
+                                        start: 144,
+                                        end: 145,
+                                    },
+                                },
+                            ],
+                        },
+                        span: Span {
+                            start: 144,
+                            end: 145,
+                        },
+                    },
+                    rhs: Expr {
+                        kind: Set(
+                            [
+                                Expr {
+                                    kind: Literal(
+                                        Integer(
+                                            "3",
+                                        ),
+                                    ),
+                                    span: Span {
+                                        start: 149,
+                                        end: 150,
+                                    },
+                                },
+                            ],
+                        ),
+                        span: Span {
+                            start: 148,
+                            end: 151,
+                        },
+                    },
+                },
+                span: Span {
+                    start: 144,
+                    end: 151,
+                },
+            },
+            span: Span {
+                start: 133,
+                end: 151,
+            },
+        },
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "squares",
+                    span: Span {
+                        start: 157,
+                        end: 164,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Comprehension {
+                    kind: Array,
+                    output: Expr {
+                        kind: Binary {
+                            op: Pow,
+                            lhs: Expr {
+                                kind: Path {
+                                    segments: [
+                                        Spanned {
+                                            value: "x",
+                                            span: Span {
+                                                start: 168,
+                                                end: 169,
+                                            },
+                                        },
+                                    ],
+                                },
+                                span: Span {
+                                    start: 168,
+                                    end: 169,
+                                },
+                            },
+                            rhs: Expr {
+                                kind: Literal(
+                                    Integer(
+                                        "2",
+                                    ),
+                                ),
+                                span: Span {
+                                    start: 170,
+                                    end: 171,
+                                },
+                            },
+                        },
+                        span: Span {
+                            start: 168,
+                            end: 171,
+                        },
+                    },
+                    clauses: [
+                        For {
+                            var: Spanned {
+                                value: "x",
+                                span: Span {
+                                    start: 176,
+                                    end: 177,
+                                },
+                            },
+                            iter: Expr {
+                                kind: Call {
+                                    callee: Expr {
+                                        kind: Path {
+                                            segments: [
+                                                Spanned {
+                                                    value: "range",
+                                                    span: Span {
+                                                        start: 181,
+                                                        end: 186,
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                        span: Span {
+                                            start: 181,
+                                            end: 186,
+                                        },
+                                    },
+                                    args: [
+                                        Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "0",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 187,
+                                                end: 188,
+                                            },
+                                        },
+                                        Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "10",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 190,
+                                                end: 192,
+                                            },
+                                        },
+                                    ],
+                                },
+                                span: Span {
+                                    start: 181,
+                                    end: 193,
+                                },
+                            },
+                        },
+                        If {
+                            cond: Expr {
+                                kind: Binary {
+                                    op: Eq,
+                                    lhs: Expr {
+                                        kind: Binary {
+                                            op: Mod,
+                                            lhs: Expr {
+                                                kind: Path {
+                                                    segments: [
+                                                        Spanned {
+                                                            value: "x",
+                                                            span: Span {
+                                                                start: 197,
+                                                                end: 198,
+                                                            },
+                                                        },
+                                                    ],
+                                                },
+                                                span: Span {
+                                                    start: 197,
+                                                    end: 198,
+                                                },
+                                            },
+                                            rhs: Expr {
+                                                kind: Literal(
+                                                    Integer(
+                                                        "2",
+                                                    ),
+                                                ),
+                                                span: Span {
+                                                    start: 201,
+                                                    end: 202,
+                                                },
+                                            },
+                                        },
+                                        span: Span {
+                                            start: 197,
+                                            end: 202,
+                                        },
+                                    },
+                                    rhs: Expr {
+                                        kind: Literal(
+                                            Integer(
+                                                "0",
+                                            ),
+                                        ),
+                                        span: Span {
+                                            start: 206,
+                                            end: 207,
+                                        },
+                                    },
+                                },
+                                span: Span {
+                                    start: 197,
+                                    end: 207,
+                                },
+                            },
+                        },
+                    ],
+                },
+                span: Span {
+                    start: 167,
+                    end: 208,
+                },
+            },
+            span: Span {
+                start: 153,
+                end: 208,
+            },
+        },
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "pairs",
+                    span: Span {
+                        start: 214,
+                        end: 219,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Comprehension {
+                    kind: Array,
+                    output: Expr {
+                        kind: Tuple(
+                            [
+                                Expr {
+                                    kind: Path {
+                                        segments: [
+                                            Spanned {
+                                                value: "x",
+                                                span: Span {
+                                                    start: 224,
+                                                    end: 225,
+                                                },
+                                            },
+                                        ],
+                                    },
+                                    span: Span {
+                                        start: 224,
+                                        end: 225,
+                                    },
+                                },
+                                Expr {
+                                    kind: Path {
+                                        segments: [
+                                            Spanned {
+                                                value: "y",
+                                                span: Span {
+                                                    start: 227,
+                                                    end: 228,
+                                                },
+                                            },
+                                        ],
+                                    },
+                                    span: Span {
+                                        start: 227,
+                                        end: 228,
+                                    },
+                                },
+                            ],
+                        ),
+                        span: Span {
+                            start: 223,
+                            end: 229,
+                        },
+                    },
+                    clauses: [
+                        For {
+                            var: Spanned {
+                                value: "x",
+                                span: Span {
+                                    start: 234,
+                                    end: 235,
+                                },
+                            },
+                            iter: Expr {
+                                kind: Call {
+                                    callee: Expr {
+                                        kind: Path {
+                                            segments: [
+                                                Spanned {
+                                                    value: "range",
+                                                    span: Span {
+                                                        start: 239,
+                                                        end: 244,
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                        span: Span {
+                                            start: 239,
+                                            end: 244,
+                                        },
+                                    },
+                                    args: [
+                                        Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "0",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 245,
+                                                end: 246,
+                                            },
+                                        },
+                                        Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "2",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 248,
+                                                end: 249,
+                                            },
+                                        },
+                                    ],
+                                },
+                                span: Span {
+                                    start: 239,
+                                    end: 250,
+                                },
+                            },
+                        },
+                        For {
+                            var: Spanned {
+                                value: "y",
+                                span: Span {
+                                    start: 255,
+                                    end: 256,
+                                },
+                            },
+                            iter: Expr {
+                                kind: Call {
+                                    callee: Expr {
+                                        kind: Path {
+                                            segments: [
+                                                Spanned {
+                                                    value: "range",
+                                                    span: Span {
+                                                        start: 260,
+                                                        end: 265,
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                        span: Span {
+                                            start: 260,
+                                            end: 265,
+                                        },
+                                    },
+                                    args: [
+                                        Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "0",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 266,
+                                                end: 267,
+                                            },
+                                        },
+                                        Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "2",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 269,
+                                                end: 270,
+                                            },
+                                        },
+                                    ],
+                                },
+                                span: Span {
+                                    start: 260,
+                                    end: 271,
+                                },
+                            },
+                        },
+                    ],
+                },
+                span: Span {
+                    start: 222,
+                    end: 272,
+                },
+            },
+            span: Span {
+                start: 210,
+                end: 272,
+            },
+        },
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "table",
+                    span: Span {
+                        start: 278,
+                        end: 283,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Comprehension {
+                    kind: Dict,
+                    output: Expr {
+                        kind: KeyValue {
+                            key: Expr {
+                                kind: Path {
+                                    segments: [
+                                        Spanned {
+                                            value: "x",
+                                            span: Span {
+                                                start: 287,
+                                                end: 288,
+                                            },
+                                        },
+                                    ],
+                                },
+                                span: Span {
+                                    start: 287,
+                                    end: 288,
+                                },
+                            },
+                            value: Expr {
+                                kind: Binary {
+                                    op: Pow,
+                                    lhs: Expr {
+                                        kind: Path {
+                                            segments: [
+                                                Spanned {
+                                                    value: "x",
+                                                    span: Span {
+                                                        start: 290,
+                                                        end: 291,
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                        span: Span {
+                                            start: 290,
+                                            end: 291,
+                                        },
+                                    },
+                                    rhs: Expr {
+                                        kind: Literal(
+                                            Integer(
+                                                "2",
+                                            ),
+                                        ),
+                                        span: Span {
+                                            start: 292,
+                                            end: 293,
+                                        },
+                                    },
+                                },
+                                span: Span {
+                                    start: 290,
+                                    end: 293,
+                                },
+                            },
+                        },
+                        span: Span {
+                            start: 287,
+                            end: 293,
+                        },
+                    },
+                    clauses: [
+                        For {
+                            var: Spanned {
+                                value: "x",
+                                span: Span {
+                                    start: 298,
+                                    end: 299,
+                                },
+                            },
+                            iter: Expr {
+                                kind: Call {
+                                    callee: Expr {
+                                        kind: Path {
+                                            segments: [
+                                                Spanned {
+                                                    value: "range",
+                                                    span: Span {
+                                                        start: 303,
+                                                        end: 308,
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                        span: Span {
+                                            start: 303,
+                                            end: 308,
+                                        },
+                                    },
+                                    args: [
+                                        Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "0",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 309,
+                                                end: 310,
+                                            },
+                                        },
+                                        Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "5",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 312,
+                                                end: 313,
+                                            },
+                                        },
+                                    ],
+                                },
+                                span: Span {
+                                    start: 303,
+                                    end: 314,
+                                },
+                            },
+                        },
+                    ],
+                },
+                span: Span {
+                    start: 286,
+                    end: 315,
+                },
+            },
+            span: Span {
+                start: 274,
+                end: 315,
+            },
+        },
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "odds",
+                    span: Span {
+                        start: 321,
+                        end: 325,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Comprehension {
+                    kind: Set,
+                    output: Expr {
+                        kind: Path {
+                            segments: [
+                                Spanned {
+                                    value: "x",
+                                    span: Span {
+                                        start: 329,
+                                        end: 330,
+                                    },
+                                },
+                            ],
+                        },
+                        span: Span {
+                            start: 329,
+                            end: 330,
+                        },
+                    },
+                    clauses: [
+                        For {
+                            var: Spanned {
+                                value: "x",
+                                span: Span {
+                                    start: 335,
+                                    end: 336,
+                                },
+                            },
+                            iter: Expr {
+                                kind: Call {
+                                    callee: Expr {
+                                        kind: Path {
+                                            segments: [
+                                                Spanned {
+                                                    value: "range",
+                                                    span: Span {
+                                                        start: 340,
+                                                        end: 345,
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                        span: Span {
+                                            start: 340,
+                                            end: 345,
+                                        },
+                                    },
+                                    args: [
+                                        Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "0",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 346,
+                                                end: 347,
+                                            },
+                                        },
+                                        Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "10",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 349,
+                                                end: 351,
+                                            },
+                                        },
+                                    ],
+                                },
+                                span: Span {
+                                    start: 340,
+                                    end: 352,
+                                },
+                            },
+                        },
+                        If {
+                            cond: Expr {
+                                kind: Binary {
+                                    op: Eq,
+                                    lhs: Expr {
+                                        kind: Binary {
+                                            op: Mod,
+                                            lhs: Expr {
+                                                kind: Path {
+                                                    segments: [
+                                                        Spanned {
+                                                            value: "x",
+                                                            span: Span {
+                                                                start: 356,
+                                                                end: 357,
+                                                            },
+                                                        },
+                                                    ],
+                                                },
+                                                span: Span {
+                                                    start: 356,
+                                                    end: 357,
+                                                },
+                                            },
+                                            rhs: Expr {
+                                                kind: Literal(
+                                                    Integer(
+                                                        "2",
+                                                    ),
+                                                ),
+                                                span: Span {
+                                                    start: 360,
+                                                    end: 361,
+                                                },
+                                            },
+                                        },
+                                        span: Span {
+                                            start: 356,
+                                            end: 361,
+                                        },
+                                    },
+                                    rhs: Expr {
+                                        kind: Literal(
+                                            Integer(
+                                                "1",
+                                            ),
+                                        ),
+                                        span: Span {
+                                            start: 365,
+                                            end: 366,
+                                        },
+                                    },
+                                },
+                                span: Span {
+                                    start: 356,
+                                    end: 366,
+                                },
+                            },
+                        },
+                    ],
+                },
+                span: Span {
+                    start: 328,
+                    end: 367,
+                },
+            },
+            span: Span {
+                start: 317,
+                end: 367,
+            },
+        },
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "gens",
+                    span: Span {
+                        start: 373,
+                        end: 377,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Comprehension {
+                    kind: Tuple,
+                    output: Expr {
+                        kind: Tuple(
+                            [
+                                Expr {
+                                    kind: Path {
+                                        segments: [
+                                            Spanned {
+                                                value: "x",
+                                                span: Span {
+                                                    start: 382,
+                                                    end: 383,
+                                                },
+                                            },
+                                        ],
+                                    },
+                                    span: Span {
+                                        start: 382,
+                                        end: 383,
+                                    },
+                                },
+                                Expr {
+                                    kind: Binary {
+                                        op: Add,
+                                        lhs: Expr {
+                                            kind: Path {
+                                                segments: [
+                                                    Spanned {
+                                                        value: "x",
+                                                        span: Span {
+                                                            start: 385,
+                                                            end: 386,
+                                                        },
+                                                    },
+                                                ],
+                                            },
+                                            span: Span {
+                                                start: 385,
+                                                end: 386,
+                                            },
+                                        },
+                                        rhs: Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "1",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 389,
+                                                end: 390,
+                                            },
+                                        },
+                                    },
+                                    span: Span {
+                                        start: 385,
+                                        end: 390,
+                                    },
+                                },
+                            ],
+                        ),
+                        span: Span {
+                            start: 381,
+                            end: 391,
+                        },
+                    },
+                    clauses: [
+                        For {
+                            var: Spanned {
+                                value: "x",
+                                span: Span {
+                                    start: 396,
+                                    end: 397,
+                                },
+                            },
+                            iter: Expr {
+                                kind: Call {
+                                    callee: Expr {
+                                        kind: Path {
+                                            segments: [
+                                                Spanned {
+                                                    value: "range",
+                                                    span: Span {
+                                                        start: 401,
+                                                        end: 406,
+                                                    },
+                                                },
+                                            ],
+                                        },
+                                        span: Span {
+                                            start: 401,
+                                            end: 406,
+                                        },
+                                    },
+                                    args: [
+                                        Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "0",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 407,
+                                                end: 408,
+                                            },
+                                        },
+                                        Expr {
+                                            kind: Literal(
+                                                Integer(
+                                                    "3",
+                                                ),
+                                            ),
+                                            span: Span {
+                                                start: 410,
+                                                end: 411,
+                                            },
+                                        },
+                                    ],
+                                },
+                                span: Span {
+                                    start: 401,
+                                    end: 412,
+                                },
+                            },
+                        },
+                    ],
+                },
+                span: Span {
+                    start: 380,
+                    end: 413,
+                },
+            },
+            span: Span {
+                start: 369,
+                end: 413,
+            },
+        },
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "v",
+                    span: Span {
+                        start: 419,
+                        end: 420,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Array(
+                    [
+                        Expr {
+                            kind: Literal(
+                                Integer(
+                                    "1",
+                                ),
+                            ),
+                            span: Span {
+                                start: 424,
+                                end: 425,
+                            },
+                        },
+                        Expr {
+                            kind: Literal(
+                                Str(
+                                    "a",
+                                ),
+                            ),
+                            span: Span {
+                                start: 427,
+                                end: 430,
+                            },
+                        },
+                        Expr {
+                            kind: Literal(
+                                Bool(
+                                    true,
+                                ),
+                            ),
+                            span: Span {
+                                start: 432,
+                                end: 436,
+                            },
+                        },
+                    ],
+                ),
+                span: Span {
+                    start: 423,
+                    end: 437,
+                },
+            },
+            span: Span {
+                start: 415,
+                end: 437,
+            },
+        },
+        Let {
+            pat: Binding(
+                Spanned {
+                    value: "slice",
+                    span: Span {
+                        start: 443,
+                        end: 448,
+                    },
+                },
+            ),
+            mut_: false,
+            type_ann: None,
+            value: Expr {
+                kind: Index {
+                    base: Expr {
+                        kind: Path {
+                            segments: [
+                                Spanned {
+                                    value: "v",
+                                    span: Span {
+                                        start: 451,
+                                        end: 452,
+                                    },
+                                },
+                            ],
+                        },
+                        span: Span {
+                            start: 451,
+                            end: 452,
+                        },
+                    },
+                    index: Index {
+                        items: [
+                            Slice {
+                                start: Some(
+                                    Expr {
+                                        kind: Unary {
+                                            op: Neg,
+                                            operand: Expr {
+                                                kind: Literal(
+                                                    Integer(
+                                                        "1",
+                                                    ),
+                                                ),
+                                                span: Span {
+                                                    start: 454,
+                                                    end: 455,
+                                                },
+                                            },
+                                        },
+                                        span: Span {
+                                            start: 453,
+                                            end: 455,
+                                        },
+                                    },
+                                ),
+                                end: None,
+                            },
+                        ],
+                    },
+                },
+                span: Span {
+                    start: 451,
+                    end: 458,
+                },
+            },
+            span: Span {
+                start: 439,
+                end: 458,
+            },
+        },
+    ],
+}

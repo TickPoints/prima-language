@@ -21,7 +21,11 @@ fn mfn_broadcasts_over_array() {
     let v = eval("let f(x) = x^2\nf([1, 2, 3])");
     assert_eq!(
         v,
-        Value::Array(vec![Number::from(1), Number::from(4), Number::from(9)])
+        Value::Array(vec![
+            Value::Number(Number::from(1)),
+            Value::Number(Number::from(4)),
+            Value::Number(Number::from(9))
+        ])
     );
 }
 
@@ -64,17 +68,45 @@ fn nested_add_cancels() {
 
 #[test]
 fn array_binary_broadcast() {
+    // `Array + scalar` is elementwise; `Array + Array` concatenates (v2.1, spec §11.3).
     assert_eq!(
         eval("[1, 2, 3] + 10"),
-        Value::Array(vec![Number::from(11), Number::from(12), Number::from(13)])
+        Value::Array(vec![
+            Value::Number(Number::from(11)),
+            Value::Number(Number::from(12)),
+            Value::Number(Number::from(13))
+        ])
     );
     assert_eq!(
         eval("[1, 2, 3] + [10, 20, 30]"),
-        Value::Array(vec![Number::from(11), Number::from(22), Number::from(33)])
+        Value::Array(vec![
+            Value::Number(Number::from(1)),
+            Value::Number(Number::from(2)),
+            Value::Number(Number::from(3)),
+            Value::Number(Number::from(10)),
+            Value::Number(Number::from(20)),
+            Value::Number(Number::from(30))
+        ])
     );
     assert_eq!(
         eval("[1, 2, 3]^2"),
-        Value::Array(vec![Number::from(1), Number::from(4), Number::from(9)])
+        Value::Array(vec![
+            Value::Number(Number::from(1)),
+            Value::Number(Number::from(4)),
+            Value::Number(Number::from(9))
+        ])
+    );
+}
+
+#[test]
+fn nested_array_allowed_as_data() {
+    // v2.1: nested arrays are legal as data (broadcast still rejects them, spec §11.3/§11.4).
+    assert_eq!(
+        eval("[[1, 2], [3, 4]]"),
+        Value::Array(vec![
+            Value::Array(vec![Value::Number(Number::from(1)), Value::Number(Number::from(2))]),
+            Value::Array(vec![Value::Number(Number::from(3)), Value::Number(Number::from(4))]),
+        ])
     );
 }
 
@@ -94,11 +126,6 @@ fn trig_and_log_constants() {
     assert_eq!(eval("log(1)"), Value::Number(Number::from(0)));
     assert_eq!(eval("abs(-3)"), Value::Number(Number::from(3)));
     assert_eq!(eval("sin(\\pi)"), Value::Number(Number::from(0)));
-}
-
-#[test]
-fn nested_array_rejected() {
-    assert!(Evaluator::new().eval_value("[[1, 2], [3, 4]]").is_err());
 }
 
 #[test]

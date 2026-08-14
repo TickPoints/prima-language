@@ -31,7 +31,7 @@ fn run_broadcast_example() {
         .arg("examples/broadcast.pra")
         .assert()
         .success()
-        .stdout("[1, 4, 9]\n[11, 12, 13]\n[11, 22, 33]\n");
+        .stdout("[1, 4, 9]\n[11, 12, 13]\n[1, 2, 3, 10, 20, 30]\n[1, 4, 9]\n");
 }
 
 #[test]
@@ -124,6 +124,10 @@ fn run_all_examples_succeed() {
         "parfor.pra",
         "parallel.pra",
         "console_io.pra",
+        "arrays.pra",
+        "dict_set.pra",
+        "comprehension.pra",
+        "convenience.pra",
     ];
     for name in examples {
         Command::cargo_bin("prima")

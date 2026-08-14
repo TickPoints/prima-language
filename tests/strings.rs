@@ -54,10 +54,11 @@ fn push_appends() {
 }
 
 #[test]
-fn split_yields_tuple_of_strings() {
+fn split_yields_array_of_strings() {
+    // v2.1 (spec §18.1): `String.split` returns `Array<String>`.
     assert_eq!(
         eval("let s = \"a,b,c\";\ns.split(\",\")"),
-        Value::Tuple(vec![
+        Value::Array(vec![
             Value::String("a".into()),
             Value::String("b".into()),
             Value::String("c".into()),
