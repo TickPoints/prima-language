@@ -8,3 +8,7 @@ description = "Prima standard library modules (linalg, stats, io, physics, plot)
 
 [dependencies]
 prima-runtime = { path = "../prima-runtime" }
+prima-core = { path = "../prima-core" }
+num-bigint = { workspace = true }
+nalgebra = { workspace = true }
+serde_json = { workspace = true }

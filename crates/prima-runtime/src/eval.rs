@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use num_bigint::BigInt;
@@ -23,10 +23,14 @@ use crate::config::{Config, Domain, OverloadPolicy, UndefinedHandling};
 use crate::error::RuntimeError;
 use crate::module::{ModuleGraph, ModuleUnit, ResolvedImport};
 
+/// A Rust-hosted standard-library function registered by `prima-stdlib` (spec §18): called with the
+/// evaluator (for access to pool/symbols/output) and the already-evaluated arguments.
+pub type NativeCall = fn(&mut Evaluator, &[Value]) -> Result<Value, RuntimeError>;
+
 /// Function value (spec §11): builtins, pure math functions (MFn/closures), host functions (`fn`),
-/// and a small set of native host functions (`get`). Closures carry their defining environment.
-/// `parallel` (v2.1, spec §17.1) marks `@parallel` MFn: their bodies must be self-contained
-/// (parameters + builtin symbols only), so a broadcast call can be split across rayon threads.
+/// and a small set of native host functions (`get`, plus the Rust-hosted stdlib `Native`). Closures
+/// carry their defining environment. `parallel` (v2.1, spec §17.1) marks `@parallel` MFn: their bodies
+/// must be self-contained (parameters + builtin symbols only), so a broadcast call can be split across rayon threads.
 #[derive(Clone)]
 pub enum Function {
     Builtin(Builtin),
@@ -34,6 +38,8 @@ pub enum Function {
     Host { params: Vec<Param>, ret: Option<Type>, body: Block, env: EnvRef },
     /// `get(array, index) -> Option<Number>`: safe array access returning `None` out of range (spec §11.3).
     NativeGet,
+    /// A Rust-hosted stdlib function (spec §18); see [`NativeCall`].
+    Native { name: &'static str, call: NativeCall },
 }
 
 impl Function {
@@ -45,6 +51,8 @@ impl Function {
             Function::Host { .. } => false,
             // `get` returns an `Option`, which broadcast would misinterpret; keep it out of the elementwise path.
             Function::NativeGet => false,
+            // Native stdlib functions (matrix/vector ops, sys/time/num) never participate in implicit broadcast.
+            Function::Native { .. } => false,
         }
     }
 }
@@ -509,9 +517,14 @@ impl Evaluator {
             let key = ri.path.join("::");
             match &ri.kind {
                 ImportKind::Namespace { alias, .. } => {
-                    let items = self.module_items.get(&key).cloned().ok_or_else(|| {
-                        RuntimeError::Message(format!("module `{key}` is not loaded"))
-                    })?;
+                    // File-loaded modules come from `module_items`; host modules resolve from the Rust
+                    // stdlib registry (spec §18).
+                    let items = self
+                        .module_items
+                        .get(&key)
+                        .cloned()
+                        .or_else(|| crate::stdlib::get_namespace(&key))
+                        .ok_or_else(|| RuntimeError::Message(format!("module `{key}` is not loaded")))?;
                     for item in items.values() {
                         if let NamespaceItem::Class(def) = item {
                             self.register_class(def.clone());
@@ -523,9 +536,12 @@ impl Evaluator {
                     }
                 }
                 ImportKind::From { items: from_items, .. } => {
-                    let module = self.module_items.get(&key).cloned().ok_or_else(|| {
-                        RuntimeError::Message(format!("module `{key}` is not loaded"))
-                    })?;
+                    let module = self
+                        .module_items
+                        .get(&key)
+                        .cloned()
+                        .or_else(|| crate::stdlib::get_namespace(&key))
+                        .ok_or_else(|| RuntimeError::Message(format!("module `{key}` is not loaded")))?;
                     for it in from_items {
                         match it {
                             ImportItem::Star => {
@@ -599,13 +615,37 @@ impl Evaluator {
         }
         self.warnings = warnings;
         self.reset_config();
-        if !program.imports.is_empty() {
-            return crate::error::err("`import` requires running from a file");
-        }
         let env = Env::new().into_ref();
+        if !program.imports.is_empty() {
+            // In-memory evaluation only supports Rust-hosted stdlib namespaces (spec §18): file modules
+            // require the module graph, so they go through `eval_file` / `prima run`.
+            self.bind_host_imports(&env, &program.imports)?;
+        }
         let r = self.eval_value_in(&env, &program);
         self.reset_config();
         r
+    }
+
+    /// Bind in-memory imports that resolve to Rust-hosted stdlib namespaces (spec §18). Any other
+    /// import is rejected with the same message as before (file modules need `eval_file`).
+    fn bind_host_imports(&mut self, env: &EnvRef, imports: &[prima_syntax::ast::Import]) -> Result<(), RuntimeError> {
+        let mut resolved = Vec::with_capacity(imports.len());
+        for imp in imports {
+            let segments = match &imp.kind {
+                ImportKind::Namespace { path, .. } | ImportKind::From { path, .. } => path,
+            };
+            let key = segments.iter().map(|s| s.value.as_str()).collect::<Vec<_>>().join("::");
+            if !crate::stdlib::has_namespace(&key) {
+                return crate::error::err("`import` requires running from a file (`prima run <file>`)");
+            }
+            resolved.push(ResolvedImport {
+                path: segments.iter().map(|s| s.value.clone()).collect(),
+                file: PathBuf::new(),
+                kind: imp.kind.clone(),
+                host: true,
+            });
+        }
+        self.bind_imports(env, &resolved)
     }
 
     fn eval_value_in(&mut self, env: &EnvRef, program: &Program) -> Result<Value, RuntimeError> {
@@ -2075,11 +2115,25 @@ impl Evaluator {
             env.borrow().get_func(&segments[0].value)
         } else {
             let ns = path_key(&segments[..segments.len() - 1]);
-            match env.borrow().lookup_module_item(&ns, &segments[segments.len() - 1].value) {
+            match self.lookup_module_item_flat(env, &ns, &segments[segments.len() - 1].value) {
                 Some(NamespaceItem::Func(f)) => Some(f),
                 _ => None,
             }
         }
+    }
+
+    /// Look up a module item, flattening a nested namespace: `time::Duration::from_secs` resolves either
+    /// as module `time::Duration` item `from_secs`, or as module `time` item `Duration::from_secs`
+    /// (spec §18.3). The exact module-path form (e.g. `sys::path::join`) always wins.
+    fn lookup_module_item_flat(&self, env: &EnvRef, ns: &str, item: &str) -> Option<NamespaceItem> {
+        if let Some(it) = env.borrow().lookup_module_item(ns, item) {
+            return Some(it);
+        }
+        if let Some((head, rest)) = ns.split_once("::") {
+            let joined = format!("{rest}::{item}");
+            return env.borrow().lookup_module_item(head, &joined);
+        }
+        None
     }
 
     /// Static purity check for a `parfor` effect call (spec §17.2, E0082): the top-level must be a call
@@ -3105,6 +3159,7 @@ impl Evaluator {
                 }
                 self.call_array_get(args[0].clone(), args[1].clone())
             }
+            Function::Native { call, .. } => call(self, &args),
             Function::User { params, body, env: f_env, .. } => {
                 if args.len() != params.len() {
                     return crate::error::err(format!("expected {} arguments, got {}", params.len(), args.len()));
@@ -4375,5 +4430,30 @@ mod tests {
             Value::Number(Number::from(2)),
             Value::Number(Number::from(3)),
         ]));
+    }
+
+    #[test]
+    fn host_namespace_native_function_dispatch() {
+        // The registry is a process-global `OnceLock`; use a uniquely-named namespace (idempotent).
+        crate::stdlib::register_namespace(
+            "testns_eval",
+            HashMap::from([(
+                "answer".to_string(),
+                NamespaceItem::Func(Function::Native {
+                    name: "testns_eval::answer",
+                    call: |_ev, args| {
+                        if args.is_empty() {
+                            Ok(Value::Number(Number::from(42)))
+                        } else {
+                            Err(RuntimeError::Message("`answer` takes no arguments".into()))
+                        }
+                    },
+                }),
+            )]),
+        );
+        assert_eq!(
+            eval("import testns_eval;\ntestns_eval::answer()"),
+            Value::Number(Number::from(42))
+        );
     }
 }

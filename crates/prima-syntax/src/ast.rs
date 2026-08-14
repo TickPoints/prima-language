@@ -86,9 +86,11 @@ pub enum Stmt {
         body: Expr,
         span: Span,
     },
-    /// Class definition (spec §4.5): fields + methods.
+    /// Class definition (spec §4.5): fields + methods. Statement-level annotations (`@builtin`,
+    /// spec §18.4) are recorded so the checker can reject unregistered builtin classes.
     ClassDef {
         name: Spanned<String>,
+        annotations: Vec<Annotation>,
         members: Vec<ClassMember>,
         span: Span,
     },

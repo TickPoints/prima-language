@@ -1,4 +1,6 @@
-use prima_syntax::ast::{BinOp, ClassMemberKind, CompKind, Expr, ExprKind, Literal, MatchArm, Pattern, Stmt, Type, UnOp};
+use crate::builtins::Builtin;
+use crate::capi::c_type;
+use prima_syntax::ast::{Annotation, BinOp, ClassMemberKind, CompKind, Expr, ExprKind, Literal, MatchArm, Param, Pattern, Spanned, Stmt, Type, UnOp};
 use prima_syntax::parse;
 use prima_syntax::Span;
 
@@ -37,7 +39,7 @@ pub fn check_src(src: &str) -> Vec<TypeError> {
     let mut errors = Vec::new();
     let ctx = Ctx { allow_try: false };
     for stmt in &program.stmts {
-        collect_stmt_errors(src, stmt, &mut errors, ctx);
+        collect_stmt_errors(src, stmt, &mut errors, ctx, false);
     }
     // Statement order is source order; sorting stably by (line, column) keeps it consistent with span.start.
     errors.sort_by_key(|e| (e.line, e.column));
@@ -46,7 +48,9 @@ pub fn check_src(src: &str) -> Vec<TypeError> {
 
 /// Collect static errors for one statement. Only the type annotations of `let`/`const` (with a
 /// plain binding pattern) are checked; all bodies are descended into to catch `?` misuse.
-fn collect_stmt_errors(src: &str, stmt: &Stmt, errors: &mut Vec<TypeError>, ctx: Ctx) {
+/// `is_pub` records whether the statement is wrapped in `Stmt::Pub` (spec §15.2), required by
+/// `@c_api::extern` exports (spec §18.4, E0072).
+fn collect_stmt_errors(src: &str, stmt: &Stmt, errors: &mut Vec<TypeError>, ctx: Ctx, is_pub: bool) {
     match stmt {
         Stmt::Let { pat, type_ann, value, span, .. } => {
             // `let` rejects refutable patterns (spec §4.4 `E0053`).
@@ -86,14 +90,20 @@ fn collect_stmt_errors(src: &str, stmt: &Stmt, errors: &mut Vec<TypeError>, ctx:
             }
             collect_expr_errors(src, value, errors, ctx);
         }
-        Stmt::FnDef { ret, body, .. } => {
+        Stmt::FnDef { name, params, ret, annotations, body, .. } => {
+            errors.extend(check_annotation_errors(src, name, params, ret, annotations, !body.stmts.is_empty(), is_pub));
             let allow = matches!(ret, Some(Type::Result(..) | Type::Option(..)));
             collect_block_errors(src, body, errors, Ctx { allow_try: allow });
         }
         Stmt::MathDef { body, .. } => {
             collect_expr_errors(src, body, errors, Ctx { allow_try: false });
         }
-        Stmt::ClassDef { members, .. } => {
+        Stmt::ClassDef { name, annotations, members, .. } => {
+            // Only the builtin `String` class is meaningful, and it is implicit — never declared in
+            // source — so any user `@builtin class` has no registered implementation (spec §18.4, E0055).
+            if annotations.contains(&Annotation::Builtin) && name.value != "String" {
+                push_err(src, errors, name.span, format!("unregistered `@builtin` class `{}` (E0055)", name.value));
+            }
             for m in members {
                 if let ClassMemberKind::Method { ret, body: Some(b), .. } = &m.kind {
                     let allow = matches!(ret, Some(Type::Result(..) | Type::Option(..)));
@@ -103,7 +113,7 @@ fn collect_stmt_errors(src: &str, stmt: &Stmt, errors: &mut Vec<TypeError>, ctx:
         }
         Stmt::Impl { members, .. } => {
             for m in members {
-                collect_stmt_errors(src, m, errors, ctx);
+                collect_stmt_errors(src, m, errors, ctx, false);
             }
         }
         Stmt::IfLet { value, then, else_, .. } => {
@@ -160,13 +170,13 @@ fn collect_stmt_errors(src: &str, stmt: &Stmt, errors: &mut Vec<TypeError>, ctx:
             collect_block_errors(src, body, errors, ctx);
         }
         Stmt::Expr(e) => collect_expr_errors(src, e, errors, ctx),
-        Stmt::Pub(inner) => collect_stmt_errors(src, inner, errors, ctx),
+        Stmt::Pub(inner) => collect_stmt_errors(src, inner, errors, ctx, true),
     }
 }
 
 fn collect_block_errors(src: &str, block: &prima_syntax::ast::Block, errors: &mut Vec<TypeError>, ctx: Ctx) {
     for s in &block.stmts {
-        collect_stmt_errors(src, s, errors, ctx);
+        collect_stmt_errors(src, s, errors, ctx, false);
     }
 }
 
@@ -177,6 +187,75 @@ fn collect_arms_errors(src: &str, arms: &[MatchArm], errors: &mut Vec<TypeError>
         }
         collect_expr_errors(src, &arm.body, errors, ctx);
     }
+}
+
+/// Annotation validation (spec §18.4), returning the errors for one `fn`:
+/// - `@builtin`: signature-only and the name must name a registered host builtin (E0056/E0055).
+/// - `@c_api::extern`: `pub` and `c_api::*` C-compatible parameter/return types (E0072/E0071).
+fn check_annotation_errors(
+    src: &str,
+    name: &Spanned<String>,
+    params: &[Param],
+    ret: &Option<Type>,
+    annotations: &[Annotation],
+    has_body: bool,
+    is_pub: bool,
+) -> Vec<TypeError> {
+    let mut errors = Vec::new();
+    if annotations.contains(&Annotation::Builtin) {
+        if has_body {
+            push_err(src, &mut errors, name.span, "`@builtin` function must not have a body (E0056)".into());
+        } else if Builtin::from_name(&name.value).is_none() {
+            push_err(src, &mut errors, name.span, format!("unregistered `@builtin` function `{}` (E0055)", name.value));
+        }
+    }
+    if annotations.contains(&Annotation::CApiExtern) {
+        if !is_pub {
+            push_err(src, &mut errors, name.span, "`@c_api::extern` function must be `pub` (E0072)".into());
+        }
+        for p in params {
+            let ok = p.type_ann.as_ref().is_some_and(c_param_ok);
+            if !ok {
+                let ty = p.type_ann.as_ref().map_or_else(|| p.name.value.clone(), type_display);
+                let sp = p.type_ann.as_ref().map_or(p.name.span, |t| type_span(t, p.name.span));
+                push_err(src, &mut errors, sp, format!("`@c_api::extern` parameter/return type `{ty}` is not C-compatible (E0071)"));
+            }
+        }
+        if let Some(t) = ret
+            && c_type(t).is_none()
+        {
+            push_err(src, &mut errors, type_span(t, name.span), format!("`@c_api::extern` parameter/return type `{}` is not C-compatible (E0071)", type_display(t)));
+        }
+    }
+    errors
+}
+
+/// Whether a type is allowed as a `@c_api::extern` parameter (spec appendix B.6): a C-compatible
+/// type other than `c_api::unit` (`void` is only a return type).
+fn c_param_ok(t: &Type) -> bool {
+    matches!(c_type(t).as_deref(), Some(c) if c != "void")
+}
+
+/// Human-readable type name for diagnostics (`User` carries its source text).
+fn type_display(t: &Type) -> String {
+    match t {
+        Type::User(sp) => sp.value.clone(),
+        _ => annot_name(t).into(),
+    }
+}
+
+/// Span of a type annotation for caret rendering; non-`User` types have no span, so a fallback is used.
+fn type_span(t: &Type, fallback: Span) -> Span {
+    match t {
+        Type::User(sp) => sp.span,
+        _ => fallback,
+    }
+}
+
+/// Push a located error, deriving line/column from the span (spec §16.4).
+fn push_err(src: &str, errors: &mut Vec<TypeError>, span: Span, message: String) {
+    let (line, column) = line_col(src, span.start);
+    errors.push(TypeError { line, column, span, message });
 }
 
 /// Descend an expression tree, flagging `?` outside a `Result`/`Option`-returning function (spec §16.3 `E0054`).

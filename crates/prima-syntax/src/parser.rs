@@ -314,7 +314,7 @@ impl Parser {
         let stmt = match self.peek().clone() {
             TokenKind::KwLet => self.parse_let_stmt()?,
             TokenKind::KwConst => self.parse_const_stmt()?,
-            TokenKind::KwFn => self.parse_fn_stmt()?,
+            TokenKind::KwFn => self.parse_fn_stmt(annotations.contains(&Annotation::Builtin))?,
             TokenKind::KwClass => self.parse_class_def()?,
             TokenKind::KwImpl => self.parse_impl_stmt()?,
             TokenKind::KwFor => self.parse_for_stmt(false)?,
@@ -365,7 +365,8 @@ impl Parser {
                 annotations.extend_from_slice(anns);
                 Ok(Stmt::MathDef { name, params, ret, annotations, body, span })
             }
-            Stmt::ClassDef { name, mut members, span } => {
+            Stmt::ClassDef { name, mut annotations, mut members, span } => {
+                annotations.extend_from_slice(anns);
                 // A `@builtin` class carries the annotation on every method (signature-only bodies are the builtin form, spec §18.4).
                 if anns.contains(&Annotation::Builtin) {
                     for m in &mut members {
@@ -374,7 +375,7 @@ impl Parser {
                         }
                     }
                 }
-                Ok(Stmt::ClassDef { name, members, span })
+                Ok(Stmt::ClassDef { name, annotations, members, span })
             }
             Stmt::Pub(inner) => self.apply_annotations(*inner, anns).map(Box::new).map(Stmt::Pub),
             other => {
@@ -446,7 +447,7 @@ impl Parser {
         Ok(Stmt::Const { name, type_ann, value, span })
     }
 
-    fn parse_fn_stmt(&mut self) -> Result<Stmt, SyntaxError> {
+    fn parse_fn_stmt(&mut self, builtin_signature_only: bool) -> Result<Stmt, SyntaxError> {
         let start = self.bump().span;
         self.skip_newlines();
         let name = self.parse_ident("function name")?;
@@ -461,8 +462,11 @@ impl Parser {
             None
         };
         let annotations = self.parse_annotations()?;
-        // Signature-only `@builtin fn` (spec §18.4): no body — the implementation is the Rust host builtin of the same name.
-        let body = if annotations.contains(&Annotation::Builtin) && !self.at(&TokenKind::LBrace) {
+        // Signature-only `@builtin fn` (spec §18.4): no body — the implementation is the Rust host
+        // builtin of the same name. A `@builtin` before the signature (statement level) or after it
+        // both mark the signature-only form.
+        let is_builtin = annotations.contains(&Annotation::Builtin) || builtin_signature_only;
+        let body = if is_builtin && !self.at(&TokenKind::LBrace) {
             self.end_statement();
             Block { stmts: Vec::new(), span: start }
         } else {
@@ -597,7 +601,7 @@ impl Parser {
             self.eat(&TokenKind::Comma); // members are comma-separated (spec §4.5)
         }
         let end = self.tokens[self.pos.saturating_sub(1)].span;
-        Ok(Stmt::ClassDef { name, members, span: Span::merge(start, end) })
+        Ok(Stmt::ClassDef { name, annotations: Vec::new(), members, span: Span::merge(start, end) })
     }
 
     /// Visibility modifier (spec §15.2): none / `pub` / `pub(mod)`.

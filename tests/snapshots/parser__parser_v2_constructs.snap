@@ -14,6 +14,7 @@ Program {
                     end: 11,
                 },
             },
+            annotations: [],
             members: [
                 ClassMember {
                     vis: Private,

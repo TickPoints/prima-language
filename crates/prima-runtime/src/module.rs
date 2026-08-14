@@ -22,12 +22,14 @@ pub struct ModuleUnit {
     pub imports: Vec<ResolvedImport>,
 }
 
-/// A fully resolved import (spec §15.1).
+/// A fully resolved import (spec §15.1). `host == true` marks a Rust-hosted stdlib namespace
+/// (spec §18) that has no backing file; `file` is then empty.
 #[derive(Debug)]
 pub struct ResolvedImport {
     pub path: Vec<String>,
     pub file: PathBuf,
     pub kind: ImportKind,
+    pub host: bool,
 }
 
 /// Module dependency graph (spec §15.3 file mapping); resolution only, no evaluation.
@@ -86,23 +88,31 @@ impl Loader {
         self.stack.push((path.clone(), file.clone()));
         for imp in &program.imports {
             let segments = import_segments(imp);
-            let resolved = resolve(dir, &segments).ok_or_else(|| {
-                format!(
-                    "module `{}` not found relative to `{}` (tried `{}.pra` and `{}/main.pra`)",
-                    segments.join("::"),
-                    dir.display(),
-                    segments.join("/"),
-                    segments.join("/")
-                )
-            })?;
-            let target = fs::canonicalize(&resolved).map_err(|e| {
-                format!("cannot access module `{}` (`{}`): {e}", segments.join("::"), resolved.display())
-            })?;
-            if !self.done.contains(&target) {
-                let unit = self.load_module(segments.clone(), &target)?;
-                self.deps.push(unit);
+            let key = segments.join("::");
+            match resolve(dir, &segments) {
+                Some(resolved) => {
+                    let target = fs::canonicalize(&resolved).map_err(|e| {
+                        format!("cannot access module `{key}` (`{}`): {e}", resolved.display())
+                    })?;
+                    if !self.done.contains(&target) {
+                        let unit = self.load_module(segments.clone(), &target)?;
+                        self.deps.push(unit);
+                    }
+                    imports.push(ResolvedImport { path: segments, file: target, kind: imp.kind.clone(), host: false });
+                }
+                // A Rust-hosted stdlib namespace (spec §18): no file on disk, no dependency.
+                None if crate::stdlib::has_namespace(&key) => {
+                    imports.push(ResolvedImport { path: segments, file: PathBuf::new(), kind: imp.kind.clone(), host: true });
+                }
+                None => {
+                    return Err(format!(
+                        "module `{key}` not found relative to `{}` (tried `{}.pra` and `{}/main.pra`)",
+                        dir.display(),
+                        segments.join("/"),
+                        segments.join("/")
+                    ));
+                }
             }
-            imports.push(ResolvedImport { path: segments, file: target, kind: imp.kind.clone() });
         }
         self.stack.pop();
         self.done.insert(file.clone());
@@ -276,5 +286,21 @@ mod tests {
         let (ia, ib, ic) = (pos("a"), pos("b"), pos("c"));
         assert!(ic < ia, "`c` must precede importer `a`: {:?}", g.deps);
         assert!(ic < ib, "`c` must precede importer `b`: {:?}", g.deps);
+    }
+
+    #[test]
+    fn host_namespace_import_resolves_without_file() {
+        // The registry is a process-global `OnceLock`; use a uniquely-named namespace and do not
+        // assume any registration ordering across tests.
+        crate::stdlib::register_namespace("testhost_x", std::collections::HashMap::new());
+        let tmp = TempDir::new("host");
+        let root = write(tmp.dir(), "main.pra", "import testhost_x\n");
+
+        let g = ModuleGraph::load(&root).unwrap();
+        assert_eq!(g.root.imports.len(), 1);
+        let imp = &g.root.imports[0];
+        assert!(imp.host, "host import must be flagged, got {imp:?}");
+        assert!(imp.file.as_os_str().is_empty(), "host import must not map to a file");
+        assert_eq!(g.deps.len(), 0, "host import must not load a file dependency");
     }
 }
