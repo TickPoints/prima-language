@@ -39,6 +39,12 @@ rayon = "1.12"
 nalgebra = "0.33"
 serde_json = "1"
 rustyline = "15"
+criterion = "0.8"
+cranelift-codegen = "0.135"
+cranelift-frontend = "0.135"
+cranelift-jit = "0.135"
+cranelift-module = "0.135"
+target-lexicon = "0.13"
 
 [dependencies]
 prima-syntax = { path = "crates/prima-syntax", version = "0.1.0" }
