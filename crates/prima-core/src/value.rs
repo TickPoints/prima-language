@@ -39,6 +39,10 @@ pub enum Value {
     Tuple(Vec<Value>),
     Result(std::result::Result<Box<Value>, String>),
     Class(u32),                       // class instance handle (spec §5); registry lives in prima-runtime
+    /// Compiled/JIT-ed function handle (spec §19.2/§19.4): a process-local id into the
+    /// `prima-runtime::jit` registry. Only produced by the `jit(...)` builtin. Like `Class`,
+    /// the id is process-local (no cross-process serialization) and lives for the process lifetime.
+    JitFunction(u32),
     Option(Option<Box<Value>>),       // Option<T>: Some(T) / None
 }
 

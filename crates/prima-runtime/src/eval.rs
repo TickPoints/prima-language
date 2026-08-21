@@ -3,6 +3,8 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::{Arc, OnceLock};
 
 use num_bigint::BigInt;
 use prima_core::render::{render_latex, render_number};
@@ -27,6 +29,25 @@ use crate::module::{ModuleGraph, ModuleUnit, ResolvedImport};
 /// evaluator (for access to pool/symbols/output) and the already-evaluated arguments.
 pub type NativeCall = fn(&mut Evaluator, &[Value]) -> Result<Value, RuntimeError>;
 
+/// Default call count before an MFn body is JIT-compiled (spec §19.2); `@jit` functions skip the countdown.
+pub const JIT_CALL_THRESHOLD: u64 = 100;
+
+/// Per-MFn hot-path state (spec §19.2): a monotonic call counter and the compiled artifact, guarded by a
+/// `OnceLock` so the body is compiled at most once per `Function::User` instance. Compilation failure is
+/// cached as `None` so a non-numeric body is never retried.
+pub struct HotState {
+    /// `@jit` annotation: compile on the first numeric call regardless of count.
+    pub force: bool,
+    calls: AtomicU64,
+    compiled: OnceLock<Option<Arc<prima_jit::CompiledScalar>>>,
+}
+
+impl HotState {
+    pub fn new(force: bool) -> HotState {
+        HotState { force, calls: AtomicU64::new(0), compiled: OnceLock::new() }
+    }
+}
+
 /// Function value (spec §11): builtins, pure math functions (MFn/closures), host functions (`fn`),
 /// and a small set of native host functions (`get`, plus the Rust-hosted stdlib `Native`). Closures
 /// carry their defining environment. `parallel` (v2.1, spec §17.1) marks `@parallel` MFn: their bodies
@@ -34,7 +55,15 @@ pub type NativeCall = fn(&mut Evaluator, &[Value]) -> Result<Value, RuntimeError
 #[derive(Clone)]
 pub enum Function {
     Builtin(Builtin),
-    User { params: Vec<Param>, body: Expr, env: EnvRef, parallel: bool },
+    User {
+        params: Vec<Param>,
+        body: Expr,
+        env: EnvRef,
+        parallel: bool,
+        /// Hot-path JIT state (spec §19.2): `@jit` forces compilation; otherwise it compiles after
+        /// `JIT_CALL_THRESHOLD` numeric calls. Shared by every cloned copy of the function.
+        hot: Arc<HotState>,
+    },
     Host { params: Vec<Param>, ret: Option<Type>, body: Block, env: EnvRef },
     /// `get(array, index) -> Option<Number>`: safe array access returning `None` out of range (spec §11.3).
     NativeGet,
@@ -92,6 +121,7 @@ impl Env {
             "partial",
             "grad",
             "limit",
+            "jit",
             "range",
             "sqrt",
             "exp",
@@ -511,7 +541,14 @@ impl Evaluator {
         match inner {
             Stmt::MathDef { name, params, annotations, body, .. } => {
                 let parallel = annotations.contains(&Annotation::Parallel);
-                let f = Function::User { params: params.clone(), body: body.clone(), env: Rc::clone(env), parallel };
+                let force = annotations.contains(&Annotation::Jit);
+                let f = Function::User {
+                    params: params.clone(),
+                    body: body.clone(),
+                    env: Rc::clone(env),
+                    parallel,
+                    hot: Arc::new(HotState::new(force)),
+                };
                 env.borrow_mut().set_func(&name.value, f.clone());
                 items.insert(name.value.clone(), NamespaceItem::Func(f));
                 Ok(())
@@ -777,6 +814,7 @@ impl Evaluator {
                 Ok(v) => self.format_value(v),
                 Err(msg) => format!("err: {msg}"),
             },
+            Value::JitFunction(id) => format!("jit function {id}"),
             Value::Option(Some(v)) => self.format_value(v),
             Value::Option(None) => "none".into(),
         }
@@ -826,7 +864,13 @@ impl Evaluator {
                 if let Pattern::Binding(name) = pat
                     && let ExprKind::Lambda { params, body } = &value.kind
                 {
-                    let f = Function::User { params: params.clone(), body: (**body).clone(), env: Rc::clone(env), parallel: false };
+                    let f = Function::User {
+                        params: params.clone(),
+                        body: (**body).clone(),
+                        env: Rc::clone(env),
+                        parallel: false,
+                        hot: Arc::new(HotState::new(false)),
+                    };
                     env.borrow_mut().set_func(&name.value, f);
                     return Ok(Flow::Continue);
                 }
@@ -851,7 +895,14 @@ impl Evaluator {
             }
             Stmt::MathDef { name, params, annotations, body, .. } => {
                 let parallel = annotations.contains(&Annotation::Parallel);
-                let f = Function::User { params: params.clone(), body: body.clone(), env: Rc::clone(env), parallel };
+                let force = annotations.contains(&Annotation::Jit);
+                let f = Function::User {
+                    params: params.clone(),
+                    body: body.clone(),
+                    env: Rc::clone(env),
+                    parallel,
+                    hot: Arc::new(HotState::new(force)),
+                };
                 env.borrow_mut().set_func(&name.value, f);
                 Ok(Flow::Continue)
             }
@@ -2001,6 +2052,15 @@ impl Evaluator {
         {
             return self.eval_calc_call(env, b, args);
         }
+        // JIT compilation (spec §19.2): `jit(f)`/`jit(expr)`/`jit(grad(f))` are intercepted before generic
+        // argument evaluation, so the argument may be an MFn *name* or a symbolic expression.
+        if let ExprKind::Path { segments } = &callee.kind
+            && segments.len() == 1
+            && let Some(Function::Builtin(b)) = self.resolve_func(env, segments)
+            && b == Builtin::Jit
+        {
+            return self.eval_jit_call(env, args);
+        }
         // Higher-order convenience functions (spec appendix B.1): `map`/`filter`/`reduce` receive the
         // function as an un-evaluated expression (a name or a lambda), so they are intercepted before
         // generic argument evaluation, mirroring `derivative`.
@@ -2032,9 +2092,18 @@ impl Evaluator {
             arg_values.push(self.eval_expr(env, a)?);
         }
         let func = match &callee.kind {
-            ExprKind::Path { segments } => self.resolve_func(env, segments).ok_or_else(|| {
-                RuntimeError::Message(format!("unknown function `{}`", path_key(segments)))
-            })?,
+            ExprKind::Path { segments } => {
+                if let Some(f) = self.resolve_func(env, segments) {
+                    f
+                } else if segments.len() == 1
+                    && let Some(Value::JitFunction(id)) = env.borrow().get_value(&segments[0].value)
+                {
+                    // `jit(...)` handle used as a callable (spec §19.2): dispatch through the registry.
+                    return self.call_jit_function(id, arg_values);
+                } else {
+                    return Err(RuntimeError::Message(format!("unknown function `{}`", path_key(segments))));
+                }
+            }
             _ => return crate::error::err("invalid function call"),
         };
         self.apply_function(&func, arg_values)
@@ -2080,6 +2149,93 @@ impl Evaluator {
         }
     }
 
+    /// `jit(...)` (spec §19.2/§19.4): compile a numeric scalar function or expression and return a
+    /// `Value::JitFunction` handle. Accepts, in order: an MFn name (`jit(f)`), a gradient composition
+    /// (`jit(grad(f))` with an MFn name → reverse-mode tape), a symbolic expression, or the symbolic
+    /// tuple `grad(expr)` returns. Native compilation is opportunistic — a callable is registered with
+    /// an interpreted fallback so it still works when `prima-jit` cannot compile the body.
+    fn eval_jit_call(&mut self, env: &EnvRef, args: &[Expr]) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return crate::error::err("`jit` expects a single function or expression");
+        }
+        // `jit(f)` where `f` is an MFn name.
+        if let ExprKind::Path { segments } = &args[0].kind
+            && segments.len() == 1
+            && let Some(Function::User { params, body, env: f_env, .. }) = self.resolve_func(env, segments)
+        {
+            let (dag, names) = self.body_dag(&params, &body, &f_env)?;
+            let compiled = prima_jit::compile_scalar(self.pool, self.builtins, dag, &names);
+            let id = crate::jit::register(crate::jit::JitCallable {
+                params: names,
+                n_out: 1,
+                compiled,
+                tape: None,
+                fallback: Some((params, body, f_env)),
+                expressions: None,
+            });
+            return Ok(Value::JitFunction(id));
+        }
+        // `jit(grad(f))` with an MFn name → reverse-mode gradient composition (spec §19.2/§19.4 stage 3).
+        if let ExprKind::Call { callee, args: inner } = &args[0].kind
+            && inner.len() == 1
+            && let ExprKind::Path { segments: callee_segs } = &callee.kind
+            && callee_segs.len() == 1
+            && let Some(Function::Builtin(Builtin::Grad)) = self.resolve_func(env, callee_segs)
+            && let ExprKind::Path { segments: inner_segs } = &inner[0].kind
+            && inner_segs.len() == 1
+            && let Some(Function::User { params, body, env: f_env, .. }) = self.resolve_func(env, inner_segs)
+        {
+            let (dag, names) = self.body_dag(&params, &body, &f_env)?;
+            let tape = crate::ad::Tape::build(self.pool, self.builtins, dag, &names)
+                .ok_or_else(|| RuntimeError::Message("`jit(grad(f))` requires a numeric-scalar function body".into()))?;
+            let id = crate::jit::register(crate::jit::JitCallable {
+                params: names,
+                n_out: params.len(),
+                compiled: None,
+                tape: Some(tape),
+                fallback: None,
+                expressions: None,
+            });
+            return Ok(Value::JitFunction(id));
+        }
+        // Otherwise evaluate the argument and dispatch on the resulting value.
+        let v = self.eval_expr(env, &args[0])?;
+        match v {
+            Value::Expr(id) => {
+                let syms = crate::diff::free_symbols(self.pool, self.builtins, id);
+                let names: Vec<String> = syms.iter().map(|s| self.symbols.name(*s).unwrap_or_default()).collect();
+                let compiled = prima_jit::compile_scalar(self.pool, self.builtins, id, &names);
+                let n = crate::jit::register(crate::jit::JitCallable {
+                    params: names.clone(),
+                    n_out: 1,
+                    compiled,
+                    tape: None,
+                    fallback: None,
+                    // Symbolic fallback: the DAG itself, evaluated numerically per call when compilation is unavailable.
+                    expressions: Some((vec![id], names)),
+                });
+                Ok(Value::JitFunction(n))
+            }
+            Value::Tuple(items) if !items.is_empty() && items.iter().all(|it| matches!(it, Value::Expr(_) | Value::Number(_))) => {
+                // `grad(expr)` returns a symbolic tuple (spec §19.4): register each component as an output.
+                let ids: Vec<ExprId> = items.iter().map(|it| self.to_expr_id(it)).collect::<Result<_, _>>()?;
+                let syms = crate::diff::free_symbols(self.pool, self.builtins, ids[0]);
+                let names: Vec<String> = syms.iter().map(|s| self.symbols.name(*s).unwrap_or_default()).collect();
+                let n_out = items.len();
+                let n = crate::jit::register(crate::jit::JitCallable {
+                    params: names.clone(),
+                    n_out,
+                    compiled: None,
+                    tape: None,
+                    fallback: None,
+                    expressions: Some((ids, names)),
+                });
+                Ok(Value::JitFunction(n))
+            }
+            _ => crate::error::err("`jit` argument must be a function, a symbolic expression, or a `grad(...)` result"),
+        }
+    }
+
     /// `map`/`filter`/`reduce` (spec appendix B.1): the first argument is the function — a single-segment
     /// path resolving to a `Function` or a `Lambda` expression (evaluated to a `Function::User`); the
     /// remaining arguments are evaluated normally. These are explicit higher-order calls, so they do NOT
@@ -2099,6 +2255,7 @@ impl Evaluator {
                 body: (**body).clone(),
                 env: Rc::clone(env),
                 parallel: false,
+                hot: Arc::new(HotState::new(false)),
             },
             _ => return crate::error::err("`map`/`filter`/`reduce` first argument must be a function"),
         };
@@ -2156,6 +2313,59 @@ impl Evaluator {
         }
         let v = self.eval_expr(env, e)?;
         self.to_expr_id(&v)
+    }
+
+    /// Build the numeric-scalar DAG of an MFn body (spec §19.2): bind each parameter to its symbol in a
+    /// child env of the function's defining env, evaluate the body, and return the DAG plus the
+    /// parameter names. Mirrors `lower_symbolic` and is reused by the JIT hot path and `jit(...)`.
+    fn body_dag(&mut self, params: &[Param], body: &Expr, f_env: &EnvRef) -> Result<(ExprId, Vec<String>), RuntimeError> {
+        let call_env = Env::child(f_env);
+        let mut names = Vec::with_capacity(params.len());
+        for p in params.iter() {
+            names.push(p.name.value.clone());
+            let sym = self.pool.symbol(self.symbols.intern(&p.name.value));
+            call_env.borrow_mut().set_value(&p.name.value, Value::Expr(sym));
+        }
+        let v = self.eval_expr(&call_env, body)?;
+        let dag = self.to_expr_id(&v)?;
+        Ok((dag, names))
+    }
+
+    /// Attempt to compile an MFn body once (spec §19.2); `None` on any error (non-numeric body, …
+    /// unknown free symbol), cached by the caller so it is never retried.
+    fn try_compile_body(
+        &mut self,
+        params: &[Param],
+        body: &Expr,
+        f_env: &EnvRef,
+    ) -> Option<Arc<prima_jit::CompiledScalar>> {
+        let (dag, names) = self.body_dag(params, body, f_env).ok()?;
+        prima_jit::compile_scalar(self.pool, self.builtins, dag, &names)
+    }
+
+    /// Dispatch a `Value::JitFunction(id)` call (spec §19.2): the arguments are already evaluated.
+    fn call_jit_function(&mut self, id: u32, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        crate::jit::call(self, id, args)
+    }
+
+    /// Interpreted fallback for a registered JIT callable (spec §19.2): bind the parameters in a child
+    /// env of the function's defining env and evaluate the body — the same path `apply_function` takes
+    /// for a `Function::User`, kept so a `JitFunction` works even when native compilation is unavailable.
+    pub(crate) fn apply_jit_fallback(
+        &mut self,
+        params: &[Param],
+        body: &Expr,
+        f_env: &EnvRef,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() != params.len() {
+            return crate::error::err(format!("expected {} arguments, got {}", params.len(), args.len()));
+        }
+        let call_env = Env::child(f_env);
+        for (p, a) in params.iter().zip(args) {
+            call_env.borrow_mut().set_value(&p.name.value, a);
+        }
+        self.eval_expr(&call_env, body)
     }
 
     /// Evaluate a variable argument to a `SymbolId` (spec §19.4): accepts a symbolic expression
@@ -2945,7 +3155,7 @@ impl Evaluator {
         };
         let key = |i: usize| -> Result<ValueKey, RuntimeError> {
             args.get(i)
-                .and_then(|v| ValueKey::from_value(v))
+                .and_then(ValueKey::from_value)
                 .ok_or_else(|| RuntimeError::Message("dict key must be a hashable value".into()))
         };
         let out = match name {
@@ -3038,7 +3248,7 @@ impl Evaluator {
         };
         let key = |i: usize| -> Result<ValueKey, RuntimeError> {
             args.get(i)
-                .and_then(|v| ValueKey::from_value(v))
+                .and_then(ValueKey::from_value)
                 .ok_or_else(|| RuntimeError::Message("set element must be a hashable value".into()))
         };
         let out = match name {
@@ -3196,7 +3406,13 @@ impl Evaluator {
                 self.apply_function(&func, cargs)
             }
             ExprKind::Lambda { params, body } => {
-                let func = Function::User { params: params.clone(), body: (**body).clone(), env: Rc::clone(env), parallel: false };
+                let func = Function::User {
+                    params: params.clone(),
+                    body: (**body).clone(),
+                    env: Rc::clone(env),
+                    parallel: false,
+                    hot: Arc::new(HotState::new(false)),
+                };
                 self.apply_function(&func, vec![v])
             }
             _ => crate::error::err("pipeline right-hand side must be a function"),
@@ -3231,9 +3447,32 @@ impl Evaluator {
                 self.call_array_get(args[0].clone(), args[1].clone())
             }
             Function::Native { call, .. } => call(self, &args),
-            Function::User { params, body, env: f_env, .. } => {
+            Function::User { params, body, env: f_env, hot, .. } => {
                 if args.len() != params.len() {
                     return crate::error::err(format!("expected {} arguments, got {}", params.len(), args.len()));
+                }
+                // JIT hot path (spec §19.2): when every argument is a non-complex number, run the body
+                // natively. `@jit` forces compilation on the first call; otherwise the body is compiled
+                // once after `JIT_CALL_THRESHOLD` numeric calls. Failed compilations are cached so a
+                // non-numeric body always falls through to the interpreted path below.
+                if let Some(inputs) = numeric_args(&args) {
+                    if let Some(Some(f)) = hot.compiled.get() {
+                        return Ok(Value::Number(Number::Real(Real::F64(f.call(&inputs)))));
+                    }
+                    if hot.compiled.get().is_none() {
+                        // Compile on the call that makes the count reach `JIT_CALL_THRESHOLD` (spec §19.2
+                        // default 100), so `for i in 1..100 { f(to_f64(i)) }` warms up and the next call
+                        // (`f(to_f64(101))`) runs native.
+                        let c = hot.calls.fetch_add(1, AtomicOrdering::Relaxed);
+                        let attempt = hot.force || c + 1 >= JIT_CALL_THRESHOLD;
+                        if attempt {
+                            let compiled = self.try_compile_body(params, body, f_env);
+                            let _ = hot.compiled.set(compiled);
+                            if let Some(Some(f)) = hot.compiled.get() {
+                                return Ok(Value::Number(Number::Real(Real::F64(f.call(&inputs)))));
+                            }
+                        }
+                    }
                 }
                 let call_env = Env::child(f_env);
                 for (p, a) in params.iter().zip(args) {
@@ -3875,6 +4114,9 @@ impl Evaluator {
             Builtin::Map | Builtin::Filter | Builtin::Reduce => {
                 crate::error::err("`map`/`filter`/`reduce` must be called directly with a function")
             }
+            // `jit` is intercepted in `eval_call` (the argument is an un-evaluated function/expression);
+            // reaching here means the name was used as a value.
+            Builtin::Jit => crate::error::err("`jit` must be called directly with a function or expression"),
             Builtin::Collapse(name) => crate::collapse::call(name, &args, self.pool, self.builtins),
             // Math operators: build an `Apply` node, then simplify the whole thing (spec §8.3 level 2 constant folding).
             _ => {
@@ -3988,6 +4230,23 @@ const PARALLEL_BROADCAST_THRESHOLD: usize = 1024;
 
 fn path_key(segments: &[Spanned<String>]) -> String {
     segments.iter().map(|s| s.value.as_str()).collect::<Vec<_>>().join("::")
+}
+
+/// Map arguments to `f64` when every argument is a non-complex number; otherwise `None` (spec §19.2:
+/// only numeric scalars participate in the JIT hot path).
+fn numeric_args(args: &[Value]) -> Option<Vec<f64>> {
+    let mut out = Vec::with_capacity(args.len());
+    for a in args {
+        if let Value::Number(n) = a {
+            if n.is_complex() {
+                return None;
+            }
+            out.push(n.to_f64_lossy());
+        } else {
+            return None;
+        }
+    }
+    Some(out)
 }
 
 /// Collect every single-segment variable path referenced in `e` (spec §17.2 read set): used to bind
@@ -4195,6 +4454,7 @@ fn value_type_name(v: &Value) -> String {
         Value::Indeterminate(_) => "indeterminate".into(),
         Value::Undefined => "undefined".into(),
         Value::Error(_) => "error".into(),
+        Value::JitFunction(_) => "jit function".into(),
     }
 }
 

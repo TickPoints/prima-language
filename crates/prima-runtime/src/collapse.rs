@@ -624,6 +624,7 @@ fn value_to_string(pool: &ExprPool, v: &Value) -> String {
         Value::Option(None) => "none".into(),
         Value::Result(Ok(v)) => value_to_string(pool, v),
         Value::Result(Err(msg)) => format!("err: {msg}"),
+        Value::JitFunction(id) => format!("jit function {id}"),
     }
 }
 

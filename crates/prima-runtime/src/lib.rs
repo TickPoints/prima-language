@@ -1,3 +1,4 @@
+pub mod ad;
 pub mod builtins;
 pub mod capi;
 pub mod check;
@@ -7,6 +8,7 @@ pub mod config;
 pub mod diff;
 pub mod error;
 pub mod eval;
+pub mod jit;
 pub mod module;
 pub mod stdlib;
 

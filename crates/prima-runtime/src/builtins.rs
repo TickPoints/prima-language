@@ -25,6 +25,10 @@ pub enum Builtin {
     Limit,
     /// `range(start, end, step = 1) -> Array` (spec §18.1b convenience): half-open integer range.
     Range,
+    /// JIT compilation (spec §19.2): `jit(f)`/`jit(expr)`/`jit(grad(f))` produce a `Value::JitFunction`
+    /// handle — dispatched through `eval_call` (the argument may be an MFn name or a symbolic expression),
+    /// so it never reaches `call_builtin`.
+    Jit,
     /// Collection convenience functions (spec appendix B.1, core pre-import): polymorphism over the
     /// collection types plus the explicit higher-order forms. `map`/`filter`/`reduce` never reach
     /// `call_builtin` — they are intercepted in `eval_call` so the function argument may be a name
@@ -75,6 +79,9 @@ impl Builtin {
             "grad" => Some(Builtin::Grad),
             "limit" => Some(Builtin::Limit),
             "range" => Some(Builtin::Range),
+            // JIT compilation (spec §19.2): intercepted in `eval_call` like `derivative` — the
+            // argument is an MFn name or a symbolic expression, not a plain value.
+            "jit" => Some(Builtin::Jit),
             // Collection convenience functions (spec appendix B.1, core pre-import).
             "len" => Some(Builtin::Len),
             "enumerate" => Some(Builtin::Enumerate),
