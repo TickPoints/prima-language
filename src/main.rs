@@ -6,6 +6,7 @@ use prima_runtime::check::check_src;
 use prima_runtime::Evaluator;
 use prima_syntax::parse_checked;
 
+mod cabi;
 mod diagnostics;
 mod doc;
 mod fmt;
@@ -30,6 +31,8 @@ enum Command {
         output: Option<PathBuf>,
         #[arg(long)]
         emit_headers: bool,
+        #[arg(long)]
+        emit_c_abi: bool,
     },
     Repl,
     Fmt {
@@ -58,9 +61,11 @@ fn main() -> ExitCode {
         Command::Run { file } => run_file(&file),
         Command::Parse { file } => parse_file(&file),
         Command::Check { file, deny } => check_file(&file, &deny),
-        Command::Compile { file, output, emit_headers: true } => compile_headers(&file, output.as_deref()),
-        Command::Compile { emit_headers: false, .. } => {
-            diagnostics::print_colored_error("compilation requires `--emit-headers` in this build (spec §20)");
+        // `--emit-c-abi` also writes the header, so it takes precedence when both flags are set.
+        Command::Compile { file, output, emit_c_abi: true, .. } => cabi::run(&file, output.as_deref()),
+        Command::Compile { file, output, emit_headers: true, .. } => compile_headers(&file, output.as_deref()),
+        Command::Compile { .. } => {
+            diagnostics::print_colored_error("compilation requires `--emit-headers` or `--emit-c-abi` in this build (spec §20)");
             ExitCode::FAILURE
         }
         Command::Repl => repl::run(),

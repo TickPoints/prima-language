@@ -485,6 +485,35 @@ impl Evaluator {
         result
     }
 
+    /// Like [`Evaluator::eval_file`] but retains the root environment, so a named function can be
+    /// invoked afterwards (used by the C ABI export path, spec §18.4).
+    pub fn eval_file_keep_env(&mut self, path: &Path) -> Result<EnvRef, RuntimeError> {
+        let graph = ModuleGraph::load(path).map_err(RuntimeError::Message)?;
+        self.reset_config();
+        self.module_items.clear();
+        for dep in &graph.deps {
+            if let Err(e) = self.eval_module(dep) {
+                self.reset_config();
+                return Err(e);
+            }
+        }
+        let root = &graph.root;
+        let env = Env::new().into_ref();
+        let result = self
+            .bind_imports(&env, &root.imports)
+            .and_then(|_| self.eval_root(&env, root));
+        self.reset_config();
+        result?;
+        Ok(env)
+    }
+
+    /// Invoke a function bound in `env` by name with already-evaluated arguments (spec §15.1).
+    /// Public so the C ABI export wrappers can call into a loaded module (spec §18.4).
+    pub fn call_function(&mut self, env: &EnvRef, name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let func = env.borrow().get_func(name).ok_or_else(|| RuntimeError::Message(format!("unknown function `{name}`")))?;
+        self.apply_function(&func, args)
+    }
+
     fn eval_root(&mut self, env: &EnvRef, root: &ModuleUnit) -> Result<(), RuntimeError> {
         self.push_module_config(root.program.config.as_ref())?;
         for stmt in &root.program.stmts {
