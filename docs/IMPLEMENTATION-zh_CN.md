@@ -112,7 +112,8 @@ prima-language/                        # workspace 根 = 根包（CLI 二进制�
 ├── crates/
 │   ├── prima-syntax/                  # 词法、语法、AST、Span/SourceMap、语法诊断
 │   ├── prima-core/                    # Number 塔、Value、ExprPool/ExprId、化简引擎、Symbol 表、渲染器
-│   ├── prima-runtime/                 # 解释器、模块系统、策略系统(Config)、内置函数、类型检查、符号微分、parfor
+│   ├── prima-jit/                     # cranelift JIT：数值标量 ExprDAG → 字节码 → 原生码（Phase 5）
+│   ├── prima-runtime/                 # 解释器、模块系统、策略系统(Config)、内置函数、类型检查、符号微分、parfor、AD、jit 注册表
 │   └── prima-stdlib/                  # linalg(nalgebra 桥)/stats/io/physics/plot 等显式导入模块
 ├── tests/                             # 集成测试（根）：词法/解析快照、core、CLI、proptest
 ├── benches/                           # criterion 基准（化简、ExprPool、数值层）
@@ -120,6 +121,7 @@ prima-language/                        # workspace 根 = 根包（CLI 二进制�
 ```
 
 依赖关系：`syntax → core → runtime → stdlib`，禁止反向；CLI 在根包依赖全部 crate。理由：rustc 同构；crate 间编译隔离（JIT 引入后尤其重要）；`prima-syntax` 可独立被 fmt/check 复用；根包承载 CLI 使 `cargo run`/`cargo test` 在仓库根直接可用，且测试统一放根 `tests/`。
+> **Phase 5 定稿**：依赖序扩展为 `syntax → core → prima-jit → runtime → stdlib`（`prima-jit` 只依赖 core/syntax；runtime 触发编译并持有 `CompiledScalar`）。
 
 > 注：原计划 `crates/prima-cli` 已改为根包承载（2026-08 落地调整）；`src/main.rs` 原 Hello world 占位已替换为 clap CLI。
 
@@ -524,6 +526,15 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 - C ABI 导出（§18.4）：`--emit-c-abi` 生成动态库 + 头文件。
 - **验收**：`f(to_f64(101))` 走原生路径；criterion 对比解释/编译耗时，阈值调优。
 
+> **Phase 5 落地记录（2026-08）**：全部完成。与本文档的偏差/定稿：
+> - **新 crate `prima-jit`**（依赖方向 `syntax → core → prima-jit → runtime`）：`ExprDAG → Bytecode → cranelift IR → 原生码`。字节码是纯 `f64` 栈机（`Const`/`Param`/四则/`Pow`/超越函数）；**超越函数不依赖 cranelift 的 libcall 符号名解析**，而是经 `#[unsafe(no_mangle)] extern "C"` trampoline（`pj_sin/pj_cos/...`）在 `JITBuilder::symbol` 注册后由生成码直接 `call`。`CompiledScalar::call` 无锁线程安全；编译在进程级 `OnceLock<Mutex<JitEngine>>` 下串行。cranelift 0.135 注意：无 `frem`（`Rem` 走 `pj_rem`）、`MemFlagsData`/`Offset32` 路径、`JITModule::new` 需 `is_pic=false`。
+> - **自动热点编译**：`Function::User` 增加 `hot: Arc<HotState>`（`force` + `AtomicU64` 调用计数 + `OnceLock<Option<Arc<CompiledScalar>>>`，克隆共享）。实参全为非复数 `Number` 时走热点：`@jit`（`MathDef` 注解）首调用即编译；否则第 `JIT_CALL_THRESHOLD`（默认 100）次调用触发编译并原生返回，失败结果缓存（不重试）；非数值实参回落到解释路径。语义不变（原生与解释结果一致）。
+> - **`jit(...)` 内建**（`Builtin::Jit`，`eval_call` 拦截）：接受 MFn 名 → 编译前向标量；`jit(grad(f))` → **反向模式**（`ad::Tape`）多变量梯度（`Value::Array`）；裸符号表达式 → 以自由符号为参数编译；`grad` 的符号元组 → 逐分量数值求值。产物是 **`Value::JitFunction(u32)`**（`prima-core` 新变体，句柄指向 `runtime::jit` 进程级注册表，含 `compiled`/`tape`/`expressions`/`fallback` 多形态，编译不可用时自动回落）；调用点在 `eval_call` 支持该值作被调对象。
+> - **AD**（`crates/prima-runtime/src/ad.rs`）：前向 `Dual`（`forward_derivative`）+ 反向 `Tape`（post-order DFS + memo 建图，`grad(inputs)` 一次反向传播得全偏导，支持 `Pow` 对数导数链式、内置常数）。反向 Tape 是 `jit(grad(f))` 的运行引擎。
+> - **优化管道**（§10.2）：`core::opt`（`const_fold`=simplify、`cse`=hash-consing 天然共享、`optimize`）；`runtime::opt`（`tail_call_of` 纯 AST 尾调用分析：末语句直接 `return f(args)` 且前置语句 effect-free）；解释器 `Function::Host` 分支以 trampoline 实现 **TCO**（常量栈空间跑 10 万层尾递归；前置 `if` 内提前 `return` 正确退出）。自动内联=MFn 替换天然内联；循环优化沿用 Phase 2；标量字节码无分支故 DCE 为空（常量折叠已消死）。
+> - **C ABI 导出**（`--emit-c-abi`）：按维护者决策采用 **cdylib 壳工程**——解析后收集 `@c_api::extern` 导出清单，生成头文件（`-o` 基名 + `.h`），并在临时目录生成 `cdylib` 壳 crate（绝对路径依赖 `prima-runtime`/`prima-core`，内嵌源文件绝对路径，每个导出一个 `#[unsafe(no_mangle)] extern "C"` 包装函数，`call_file_export` 线程本地缓存求值后按 C 类型转换），`cargo build --release` 产出 `.so`/`.dylib`/`.dll`。运行时需 cargo；`--emit-headers` 仍为离线路径。ctypes 实测 `add(2.5,3.0)=5.5`、`hello("world")` 往返成功。
+> - **criterion 基准**（`benches/bench_jit.rs`）：同一 `x^4 + sin(x)·x + exp(x)` DAG，解释递归 ~373ns vs 原生 ~34ns（约 11× 加速），`f(101)` 双路结果一致——即验收 `f(to_f64(101))` 走原生路径。
+
 > AOT（§19.3，WASM/独立可执行）不在本路线图内，待 Phase 5 完成后再立项评估。
 
 ---
@@ -581,6 +592,14 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 | §15.3（v2.1） | 模块解析仅文件映射 | **解析顺序：内嵌 stdlib → 宿主命名空间 → 本地文件；stdlib 路径名保留** | 确定性、类 Rust `std`；本地同名文件不再遮蔽内建模块 |
 | §18.2（v2.1） | `import sys::path` 后以 `path::join` 访问 | **绑定全路径 `sys::path::join`** | 与 §15.3 嵌套导入约定一致（`import linalg::fft` → `linalg::fft::double`）；§18.2 示例的简写不支持 |
 | §7.3（v2.1） | 物理常数以 `\planck_const` 符号名访问 | **模块键用裸名 `physics::planck_const`** | 注册表键是纯字符串；TeX 名仅作显示层概念 |
+
+**v2.1 Phase 5 ADR 新增**：
+
+| 规范条款 | 规范建议 | 本方案 | 理由 |
+|---------|---------|--------|------|
+| §19.3（v2.0） | C ABI 导出（`--emit-c-abi`）直接生成动态库 | **cdylib 壳工程**：生成内嵌源文件绝对路径的 `cdylib` crate（`#[no_mangle] extern "C"` 包装经 `call_file_export` 走解释器），用 cargo 编译产出 `.so/.dylib/.dll` | 导出目标是任意控制流的 `pub fn`（`print`/字符串/分支），纯 cranelift 无法直接编译；壳工程复用完整语言语义、跨平台可靠；要求运行时 cargo，`--emit-headers` 保留离线路径 |
+| §19.4（v2.0） | `grad`/`jit` 组合需函数作值 | **新增 `Value::JitFunction(u32)` 句柄 + runtime `jit` 进程级注册表** | `jit(grad(f))` 返回可调用值；句柄模式与 `Value::Class` 一致，不引入 `Function` 值变体；编译不可用时回落解释 |
+| §19.2（v2.0） | JIT 触发阈值「如 100 次」 | **默认 `JIT_CALL_THRESHOLD = 100`，第 100 次数值调用触发编译** | 与规范 §19.2 示例对齐：`for i in 1..100` 预热后 `f(to_f64(101))` 走原生路径 |
 
 其余所有设计（三世界架构、Number 塔、ExprPool、策略三级、模块系统、错误模型、并行哲学、类所有权）与规范完全一致。
 

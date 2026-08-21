@@ -1,0 +1,28 @@
+// JIT hot-path compilation (spec §19.2): numeric MFn bodies are compiled to native code with
+// cranelift after `JIT_CALL_THRESHOLD` (default 100) numeric calls, or eagerly with the `@jit`
+// annotation. The symbol layer stays interpreted; results are identical either way.
+let f(x) = x^2 + sin(x);
+
+for i in 1..100 {
+    let _ = f(to_f64(i));         // warm up (interpreted)
+}
+
+println(f(to_f64(101)));          // 101st call runs native ≈ 10201.452025787179
+
+// Explicit `@jit` annotation (spec §19.2): compiled on the first numeric call.
+let g(x) @jit = x^3 + 2*x;
+println(g(to_f64(3)));            // → 33
+
+// `jit(...)` builtin composes with symbolic differentiation (spec §19.2 可组合优化):
+// `jit(grad(f))` = reverse-mode gradient compiled/tape-backed, callable as a value.
+let df = jit(grad(f));
+println(df(to_f64(2)));           // → 2x + cos(x) at 2 ≈ 3.5838531634528574
+
+// Multi-variable gradient via reverse-mode tape (spec §19.4 stage 3).
+let q(x, y) = x^2*y + y^3;
+let dq = jit(grad(q));
+println(dq(to_f64(1), to_f64(2)));  // → [4, 13]
+
+// `jit` also accepts a bare symbolic expression; the free symbols become the parameters.
+let h = jit(x^4 + 1);
+println(h(to_f64(2)));            // → 17

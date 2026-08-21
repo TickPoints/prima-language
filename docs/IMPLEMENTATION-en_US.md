@@ -113,14 +113,16 @@ prima-language/                        # workspace root = root package (CLI bina
 ├── crates/
 │   ├── prima-syntax/                  # lexing, parsing, AST, Span/SourceMap, syntax diagnostics
 │   ├── prima-core/                    # Number tower, Value, ExprPool/ExprId, simplification engine, Symbol table, renderers
-│   ├── prima-runtime/                 # interpreter, module system, policy system (Config), built-in functions, type checking, symbolic differentiation, parfor
+│   ├── prima-jit/                     # cranelift JIT: numeric scalar ExprDAG → bytecode → native code (Phase 5)
+│   ├── prima-runtime/                 # interpreter, module system, policy system (Config), built-in functions, type checking, symbolic differentiation, parfor, AD, jit registry
 │   └── prima-stdlib/                  # linalg (nalgebra bridge)/stats/io/physics/plot etc., explicitly imported modules
 ├── tests/                             # integration tests (root): lexer/parser snapshots, core, CLI, proptest
-├── benches/                           # criterion benchmarks (simplification, ExprPool, numeric layer)
+├── benches/                           # criterion benchmarks (simplification, ExprPool, numeric layer, JIT)
 └── examples/                          # .pra samples (used by CLI integration tests)
 ```
 
 Dependencies: `syntax → core → runtime → stdlib`, reverse is forbidden; the CLI lives in the root package and depends on all crates. Rationale: isomorphic to rustc; compile isolation between crates (especially important after the JIT arrives); `prima-syntax` can be reused independently by fmt/check; the root package carrying the CLI makes `cargo run`/`cargo test` work directly at the repository root, and tests uniformly live in the root `tests/`.
+> **Phase 5 finalization**: the dependency order extends to `syntax → core → prima-jit → runtime → stdlib` (`prima-jit` depends only on core/syntax; the runtime triggers compilation and holds `CompiledScalar`).
 
 > Note: the originally planned `crates/prima-cli` was changed to be carried by the root package (landed adjustment, 2026-08); the placeholder Hello world in `src/main.rs` was replaced with the clap CLI.
 
@@ -524,6 +526,15 @@ Each Phase ends with runnable acceptance commands. Phases 0–2 have been delive
 - C ABI export (§18.4): `--emit-c-abi` produces a dynamic library + header files.
 - **Acceptance**: `f(to_f64(101))` takes the native path; criterion compares interpreted vs. compiled time, with threshold tuning.
 
+> **Phase 5 landing record (2026-08)**: all complete. Deviations/finalizations vs. this document:
+> - **New crate `prima-jit`** (dependency direction `syntax → core → prima-jit → runtime`): `ExprDAG → Bytecode → cranelift IR → native`. The bytecode is a pure `f64` stack machine (`Const`/`Param`/arithmetic/`Pow`/transcendentals); **transcendentals do not depend on cranelift's libcall symbol-name resolution** — they call `#[unsafe(no_mangle)] extern "C"` trampolines (`pj_sin`/`pj_cos`/…) registered via `JITBuilder::symbol`. `CompiledScalar::call` is lock-free and thread-safe; compilation is serialized under a process-global `OnceLock<Mutex<JitEngine>>`. cranelift 0.135 notes: no `frem` (`Rem` goes through `pj_rem`), `MemFlagsData`/`Offset32` paths, `JITModule::new` requires `is_pic=false`.
+> - **Automatic hot-path compilation**: `Function::User` gains `hot: Arc<HotState>` (`force` + `AtomicU64` call counter + `OnceLock<Option<Arc<CompiledScalar>>>`, shared across clones). With all non-complex `Number` arguments the hot path applies: `@jit` (a `MathDef` annotation) compiles on the first call; otherwise the `JIT_CALL_THRESHOLD`-th (default 100) numeric call triggers compilation and returns natively, and failures are cached (never retried); non-numeric arguments fall back to the interpreted path. Semantics are unchanged (native and interpreted agree).
+> - **`jit(...)` builtin** (`Builtin::Jit`, intercepted in `eval_call`): accepts an MFn name → compiles a forward scalar; `jit(grad(f))` → **reverse mode** (`ad::Tape`) multi-variable gradient (`Value::Array`); a bare symbolic expression → compiles with its free symbols as parameters; a `grad` symbolic tuple → per-component numeric evaluation. The product is **`Value::JitFunction(u32)`** (a new `prima-core` variant, a handle into the process-global `runtime::jit` registry, with `compiled`/`tape`/`expressions`/`fallback` forms — automatically falling back to interpretation when compilation is unavailable); the call site in `eval_call` supports a `JitFunction` as the callee.
+> - **AD** (`crates/prima-runtime/src/ad.rs`): forward `Dual` (`forward_derivative`) + reverse `Tape` (post-order DFS + memo to build the graph; `grad(inputs)` computes all partials in one backward pass, supporting the `Pow` log-derivative chain rule and built-in constants). The reverse tape is the runtime engine behind `jit(grad(f))`.
+> - **Optimization pipeline** (§10.2): `core::opt` (`const_fold` = simplify, `cse` = natural sharing via hash-consing, `optimize`); `runtime::opt` (`tail_call_of`, a pure-AST tail-call analysis: a final direct `return f(args)` preceded only by effect-free statements); the interpreter's `Function::Host` branch implements **TCO** with a trampoline loop (100k-deep tail recursion runs in constant stack space; early `return`s inside the effect-free prefix still exit correctly). Automatic inlining is inherent to MFn substitution; loop optimization reuses Phase 2; scalar bytecode is branch-free so DCE is vacuous (constant folding already removes dead code).
+> - **C ABI export** (`--emit-c-abi`): per the maintainer's decision, a **cdylib shell crate** — after parsing, collect the `@c_api::extern` exports, generate the C header (`-o` base + `.h`), and in a temp directory generate a `cdylib` shell crate (absolute-path deps on `prima-runtime`/`prima-core`, embedding the source file's absolute path, one `#[unsafe(no_mangle)] extern "C"` wrapper per export backed by `call_file_export`'s thread-local cached evaluation), built with `cargo build --release` to produce `.so`/`.dylib`/`.dll`. Requires cargo at runtime; `--emit-headers` stays as the offline path. Verified via ctypes: `add(2.5,3.0)=5.5`, `hello("world")` round-trips.
+> - **criterion benchmark** (`benches/bench_jit.rs`): the same `x^4 + sin(x)·x + exp(x)` DAG — interpreted recursive ~373ns vs. native ~34ns (≈11× speedup), with `f(101)` agreeing on both paths — i.e., the `f(to_f64(101))` acceptance criterion takes the native path.
+
 > AOT (§19.3, WASM/standalone executables) is outside this roadmap; it will be scoped and evaluated only after Phase 5 completes.
 
 ---
@@ -581,6 +592,14 @@ Each Phase ends with runnable acceptance commands. Phases 0–2 have been delive
 | §15.3 (v2.1) | Module resolution is file mapping only | **Resolution order: embedded stdlib → host namespace → local files; stdlib path names reserved** | Deterministic and Rust-like `std`; local same-named files no longer shadow built-in modules |
 | §18.2 (v2.1) | After `import sys::path`, access via `path::join` | **Bind the full path `sys::path::join`** | Consistent with the §15.3 nested-import convention (`import linalg::fft` → `linalg::fft::double`); the §18.2 example's shorthand is unsupported |
 | §7.3 (v2.1) | Physical constants accessed by the `\planck_const` symbol name | **Module keys use the bare name `physics::planck_const`** | Registry keys are plain strings; TeX names are only a display-layer concept |
+
+**v2.1 Phase 5 ADRs added**:
+
+| Spec clause | Spec suggestion | This plan | Rationale |
+|---------|---------|--------|------|
+| §19.3 (v2.0) | C ABI export (`--emit-c-abi`) directly produces a dynamic library | **cdylib shell crate**: generate a `cdylib` crate embedding the source file's absolute path (`#[no_mangle] extern "C"` wrappers run the interpreter through `call_file_export`), built with cargo to produce `.so/.dylib/.dll` | Exports are arbitrary-control-flow `pub fn` (`print`/strings/branches) that pure cranelift cannot compile directly; the shell reuses the full language semantics and is cross-platform; requires cargo at runtime, with `--emit-headers` kept as the offline path |
+| §19.4 (v2.0) | `grad`/`jit` composition requires functions as values | **New `Value::JitFunction(u32)` handle + a process-global `runtime::jit` registry** | `jit(grad(f))` returns a callable value; the handle pattern mirrors `Value::Class` and avoids a `Function` value variant; falls back to interpretation when compilation is unavailable |
+| §19.2 (v2.0) | JIT trigger threshold "e.g. 100 calls" | **Default `JIT_CALL_THRESHOLD = 100`; the 100th numeric call triggers compilation** | Aligns with the spec §19.2 example: after a `for i in 1..100` warm-up, `f(to_f64(101))` takes the native path |
 
 All remaining design (three-world architecture, Number tower, ExprPool, the three-level Config policy, module system, error model, parallelism philosophy, class ownership) is fully consistent with the spec.
 

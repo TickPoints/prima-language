@@ -1,0 +1,25 @@
+// Automatic differentiation (spec §19.4 stages 2–3): forward mode via dual numbers and reverse mode
+// via a tape, over numeric scalar expressions. Composes with the JIT through `jit(grad(f))`
+// (spec §19.2); the forward path backs scalar `jit`, the reverse tape backs multi-variable
+// gradients.
+let f(x) = x^2 + sin(x);
+
+// Forward-mode dual: the single-variable derivative of `f` at a numeric point, computed exactly.
+let df = jit(grad(f));
+println(df(to_f64(2)));              // → 2x + cos(x) at 2 ≈ 3.5838531634528574
+
+// Reverse-mode tape: all partials of a multi-variable scalar in one backward pass (spec §19.4 stage 3).
+let g(x, y) = x^2*y + y^3;
+let dg = jit(grad(g));
+println(dg(to_f64(1), to_f64(2)));   // → [4, 13]   (∂g/∂x, ∂g/∂y)
+
+// Gradient descent step on a small quadratic loss, using the reverse-mode gradient as a callable.
+let loss(w) = (w - 3.0)^2;
+let grad_loss = jit(grad(loss));
+let w0 = to_f64(0);
+let rate = to_f64(0.25);
+for i in 1..6 {
+    let dw = grad_loss(w0);
+    w0 = w0 - rate * dw;
+    println(w0);
+}
