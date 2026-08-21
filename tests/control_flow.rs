@@ -73,3 +73,18 @@ fn success_result_skips_err_arm() {
 fn fn_returns_nil_without_return() {
     assert_eq!(eval_fmt("fn f(x: Integer) -> Integer {\n    let y = x\n}\nf(3)"), "nil");
 }
+
+#[test]
+fn tail_call_optimization_avoids_stack_overflow() {
+    // TCO (spec §10.2): a tail-recursive `fn` is trampolined, so a 100k-deep recursion runs in
+    // constant stack space instead of overflowing.
+    let v = eval("fn sum(n: Integer, acc: Integer) -> Integer {\n    if n == 0 {\n        return acc\n    }\n    return sum(n - 1, acc + n)\n}\nsum(100000, 0)");
+    assert_eq!(v, prima_core::Value::Number(Number::from(5000050000_i64)));
+}
+
+#[test]
+fn tail_call_early_return_in_prefix_still_works() {
+    // An early `return` inside the effect-free prefix of a tail-call body must exit, not tail-jump.
+    let v = eval("fn f(n: Integer) -> Integer {\n    if n == 0 {\n        return 42\n    }\n    return f(n - 1)\n}\nf(5)");
+    assert_eq!(v, prima_core::Value::Number(Number::from(42)));
+}

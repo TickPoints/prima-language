@@ -10,6 +10,7 @@ pub mod error;
 pub mod eval;
 pub mod jit;
 pub mod module;
+pub mod opt;
 pub mod stdlib;
 
 pub use builtins::Builtin;

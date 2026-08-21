@@ -3484,11 +3484,49 @@ impl Evaluator {
                 if args.len() != params.len() {
                     return crate::error::err(format!("expected {} arguments, got {}", params.len(), args.len()));
                 }
-                let call_env = Env::child(f_env);
-                for (p, a) in params.iter().zip(args) {
-                    call_env.borrow_mut().set_value(&p.name.value, a);
+                // Tail-call optimization (spec §10.2 item 6): when a host body ends in a direct
+                // `return f(args)` preceded only by effect-free statements (see `crate::opt`), the
+                // call is trampolined so tail recursion runs in constant stack space. Early `return`s
+                // in the effect-free prefix are honored; the prefix is re-evaluated per iteration but
+                // is pure, so this cannot change observable behavior.
+                let mut cparams = params.clone();
+                let mut cbody = body.clone();
+                let mut cenv = Rc::clone(f_env);
+                let mut cargs = args;
+                loop {
+                    let call_env = Env::child(&cenv);
+                    for (p, a) in cparams.iter().zip(&cargs) {
+                        call_env.borrow_mut().set_value(&p.name.value, a.clone());
+                    }
+                    let Some(tc) = crate::opt::tail_call_of(&cbody) else {
+                        return self.eval_block_tail(&call_env, &cbody);
+                    };
+                    let n = cbody.stmts.len();
+                    for stmt in &cbody.stmts[..n - 1] {
+                        if let Flow::Return(v) = self.eval_stmt(&call_env, stmt)? {
+                            return Ok(v);
+                        }
+                    }
+                    let ExprKind::Path { segments } = &tc.callee.kind else {
+                        return self.eval_block_tail(&call_env, &cbody);
+                    };
+                    let next = self.resolve_func(&call_env, segments).ok_or_else(|| {
+                        RuntimeError::Message(format!("unknown function `{}`", path_key(segments)))
+                    })?;
+                    let nargs: Vec<Value> = tc.args.iter().map(|a| self.eval_expr(&call_env, a)).collect::<Result<_, _>>()?;
+                    match next {
+                        Function::Host { params: np, ret: _, body: nb, env: nenv } => {
+                            if nargs.len() != np.len() {
+                                return crate::error::err(format!("expected {} arguments, got {}", np.len(), nargs.len()));
+                            }
+                            cparams = np;
+                            cbody = nb;
+                            cenv = nenv;
+                            cargs = nargs;
+                        }
+                        other => return self.apply_function(&other, nargs),
+                    }
                 }
-                self.eval_block_tail(&call_env, body)
             }
         }
     }
