@@ -3,6 +3,7 @@ pub mod collapse;
 pub mod error;
 pub mod expr_pool;
 pub mod number;
+pub mod opt;
 pub mod render;
 pub mod simplify;
 pub mod symbol;
