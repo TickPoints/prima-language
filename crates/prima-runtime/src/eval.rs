@@ -325,7 +325,7 @@ pub struct Evaluator {
     config: Vec<Config>,
     /// Evaluated module public items (indexed by module path), available for `import` binding (spec §15).
     module_items: HashMap<String, HashMap<String, NamespaceItem>>,
-    /// Collected warnings (spec §16.5): parse warnings plus `W0002`/`W0005` from the evaluator.
+    /// Collected warnings (spec §16.5): only the operator-overload `W0005` is emitted by the evaluator.
     warnings: Vec<SyntaxWarning>,
     /// Class registry (spec §4.7): class name → definition, shared across the evaluation run.
     class_defs: HashMap<String, ClassDef>,
@@ -405,8 +405,8 @@ impl Evaluator {
         self.builtins
     }
 
-    /// Warnings collected since the last parse entry point (spec §16.5): parse warnings (`W0001`)
-    /// plus deprecation/overload warnings emitted during evaluation (`W0002`/`W0005`).
+    /// Warnings collected since the last parse entry point (spec §16.5): parse-time warnings no
+    /// longer exist; only the operator-overload `W0005` is emitted during evaluation.
     pub fn warnings(&self) -> &[SyntaxWarning] {
         &self.warnings
     }
@@ -1559,11 +1559,6 @@ impl Evaluator {
             }
             ExprKind::Lambda { .. } => crate::error::err("lambda must be assigned to a variable to be callable"),
             ExprKind::Match { scrutinee, arms } => self.eval_match(env, scrutinee, arms),
-            ExprKind::Pipeline { lhs, rhs } => {
-                // Deprecated pipeline (spec §9.7/§16.5 W0002): rewritten as a call.
-                self.push_warning("W0002", expr.span, "`|>` pipeline is deprecated (spec §9.7); use class methods".into());
-                self.eval_pipeline(env, lhs, rhs)
-            }
             ExprKind::Custom(_) => crate::error::err("`custom` config block is not valid here"),
         }
     }
@@ -3412,42 +3407,6 @@ impl Evaluator {
         }
     }
 
-    fn eval_pipeline(&mut self, env: &EnvRef, lhs: &Expr, rhs: &Expr) -> Result<Value, RuntimeError> {
-        let v = self.eval_expr(env, lhs)?;
-        match &rhs.kind {
-            ExprKind::Path { segments } => {
-                let func = self.resolve_func(env, segments).ok_or_else(|| {
-                    RuntimeError::Message(format!("unknown function `{}`", path_key(segments)))
-                })?;
-                self.apply_function(&func, vec![v])
-            }
-            ExprKind::Call { callee, args } => {
-                let func = match &callee.kind {
-                    ExprKind::Path { segments } => self.resolve_func(env, segments).ok_or_else(|| {
-                        RuntimeError::Message(format!("unknown function `{}`", path_key(segments)))
-                    })?,
-                    _ => return crate::error::err("invalid pipeline target"),
-                };
-                let mut cargs = vec![v];
-                for a in args {
-                    cargs.push(self.eval_expr(env, a)?);
-                }
-                self.apply_function(&func, cargs)
-            }
-            ExprKind::Lambda { params, body } => {
-                let func = Function::User {
-                    params: params.clone(),
-                    body: (**body).clone(),
-                    env: Rc::clone(env),
-                    parallel: false,
-                    hot: Arc::new(HotState::new(false)),
-                };
-                self.apply_function(&func, vec![v])
-            }
-            _ => crate::error::err("pipeline right-hand side must be a function"),
-        }
-    }
-
     fn apply_function(&mut self, func: &Function, args: Vec<Value>) -> Result<Value, RuntimeError> {
         // Collection convenience functions receive their array argument whole (spec appendix B.1):
         // they are not subject to the implicit-broadcast path (spec §11.4).
@@ -4362,7 +4321,7 @@ fn collect_read_names(e: &Expr, out: &mut HashSet<String>) {
                 }
             }
         }
-        ExprKind::Binary { lhs, rhs, .. } | ExprKind::Pipeline { lhs, rhs } => {
+        ExprKind::Binary { lhs, rhs, .. } => {
             collect_read_names(lhs, out);
             collect_read_names(rhs, out);
         }
@@ -4791,17 +4750,16 @@ mod tests {
     }
 
     #[test]
-    fn pipeline_emits_w0002() {
+    fn semicolon_statements_evaluate_without_warnings() {
         let mut ev = Evaluator::new();
-        ev.eval_value("let x = 1;\nx |> to_f64").expect("eval failed");
-        assert!(ev.warnings().iter().any(|w| w.code == "W0002"));
+        ev.eval_value("let a = 1;\nlet b = 2;\na + b").expect("eval failed");
+        assert!(ev.warnings().is_empty(), "`;`-separated statements emit no warnings");
     }
 
     #[test]
-    fn parse_warnings_are_surfaced() {
-        let mut ev = Evaluator::new();
-        ev.eval_value("let x = 1\nx + 1\n").expect("eval failed");
-        assert!(ev.warnings().iter().any(|w| w.code == "W0001"));
+    fn newline_separated_statements_fail_to_evaluate() {
+        // Spec §4.2: newline statement separation was removed; the parser rejects it (E0011).
+        assert!(Evaluator::new().eval_value("let a = 1\nlet b = 2\n").is_err());
     }
 
     #[test]

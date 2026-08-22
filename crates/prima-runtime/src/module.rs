@@ -283,8 +283,8 @@ mod tests {
     #[test]
     fn single_import_resolution() {
         let tmp = TempDir::new("single");
-        let root = write(tmp.dir(), "main.pra", "import a\nx = 1\n");
-        write(tmp.dir(), "a.pra", "y = 2\n");
+        let root = write(tmp.dir(), "main.pra", "import a;\nx = 1;\n");
+        write(tmp.dir(), "a.pra", "y = 2;\n");
 
         let g = ModuleGraph::load(&root).unwrap();
         assert!(g.root.path.is_empty());
@@ -349,9 +349,9 @@ mod tests {
     #[test]
     fn dependency_ordering_and_dedup() {
         let tmp = TempDir::new("ordering");
-        let root = write(tmp.dir(), "main.pra", "import a\nimport b\n");
-        write(tmp.dir(), "a.pra", "import c\n");
-        write(tmp.dir(), "b.pra", "import c\n");
+        let root = write(tmp.dir(), "main.pra", "import a;\nimport b;\n");
+        write(tmp.dir(), "a.pra", "import c;\n");
+        write(tmp.dir(), "b.pra", "import c;\n");
         write(tmp.dir(), "c.pra", "");
 
         let g = ModuleGraph::load(&root).unwrap();
@@ -404,7 +404,7 @@ mod tests {
     fn embedded_source_import_dedups() {
         crate::stdlib::register_module_source("testem2", "@builtin pub fn f() -> Integer;");
         let tmp = TempDir::new("embedded-dedup");
-        let root = write(tmp.dir(), "main.pra", "import testem2\nimport testem2\n");
+        let root = write(tmp.dir(), "main.pra", "import testem2;\nimport testem2;\n");
 
         let g = ModuleGraph::load(&root).unwrap();
         assert_eq!(g.deps.len(), 1, "duplicate embedded imports must dedup to a single dependency");

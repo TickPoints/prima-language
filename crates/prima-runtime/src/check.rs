@@ -511,10 +511,6 @@ fn collect_expr_errors(src: &str, expr: &Expr, errors: &mut Vec<TypeError>, ctx:
             collect_expr_errors(src, scrutinee, errors, ctx, sigs);
             collect_arms_errors(src, arms, errors, ctx, sigs);
         }
-        ExprKind::Pipeline { lhs, rhs } => {
-            collect_expr_errors(src, lhs, errors, ctx, sigs);
-            collect_expr_errors(src, rhs, errors, ctx, sigs);
-        }
         ExprKind::Custom(items) => {
             for (p, v) in items {
                 collect_expr_errors(src, p, errors, ctx, sigs);
@@ -904,7 +900,7 @@ mod tests {
 
     #[test]
     fn errors_are_reported_in_source_order() {
-        let errs = check_src("let a: String = 1\nlet b: Integer = 2.5\n");
+        let errs = check_src("let a: String = 1;\nlet b: Integer = 2.5;\n");
         assert_eq!(errs.len(), 2);
         assert!(errs[0].line < errs[1].line);
     }

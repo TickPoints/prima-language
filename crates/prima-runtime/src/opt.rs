@@ -1,7 +1,7 @@
 //! Tail-call optimization analysis (spec §10.2 item 6): detects when a function block ends in a
 //! direct `return f(args)` tail call after only effect-free statements, enabling a trampoline loop.
 
-use prima_syntax::ast::{BinOp, Block, Expr, ExprKind, Stmt};
+use prima_syntax::ast::{Block, Expr, ExprKind, Stmt};
 
 /// A detected tail call: the callee expression and the argument expressions, evaluated in the
 /// caller's scope before the jump.
@@ -42,9 +42,9 @@ fn is_effect_free_or_return(block: &Block) -> bool {
 fn is_pure_expr(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Literal(_) | ExprKind::Symbol(_) | ExprKind::Path { .. } => true,
-        ExprKind::Binary { lhs, rhs, op } => {
+        ExprKind::Binary { lhs, rhs, .. } => {
             // All binary math/comparison/logic/set operators are pure when their operands are.
-            !matches!(op, BinOp::Pipeline) && is_pure_expr(lhs) && is_pure_expr(rhs)
+            is_pure_expr(lhs) && is_pure_expr(rhs)
         }
         ExprKind::Unary { operand, .. } => is_pure_expr(operand),
         ExprKind::Array(items) | ExprKind::Tuple(items) | ExprKind::Set(items) => {
