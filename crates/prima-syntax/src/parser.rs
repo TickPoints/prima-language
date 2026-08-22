@@ -30,9 +30,7 @@ pub fn parse_checked(src: &str) -> (Program, Vec<SyntaxError>, Vec<SyntaxWarning
 pub(crate) struct Parser {
     tokens: Vec<Token>,
     pos: usize,
-    /// Deprecated newline-as-statement-separator span seen most recently (spec §4.2), cleared by `end_statement`.
-    pending_newline: Option<Span>,
-    /// Collected warnings (spec §16.5), e.g. `W0001` newline statement separation.
+    /// Collected warnings (spec §16.5). Parse-time warnings are currently not produced.
     warnings: Vec<SyntaxWarning>,
     /// Disables struct-literal parsing in control-flow conditions (`if x {` must stay a block, not `x { ... }`).
     no_struct_literal: bool,
@@ -40,7 +38,7 @@ pub(crate) struct Parser {
 
 impl Parser {
     pub(crate) fn new(tokens: Vec<Token>) -> Parser {
-        Parser { tokens, pos: 0, pending_newline: None, warnings: Vec::new(), no_struct_literal: false }
+        Parser { tokens, pos: 0, warnings: Vec::new(), no_struct_literal: false }
     }
 
     fn peek(&self) -> &TokenKind {
@@ -63,12 +61,10 @@ impl Parser {
         t
     }
 
-    /// Skip newlines; remember the last one so `end_statement` can warn about the deprecated newline separator (spec §4.2, W0001).
+    /// Skip newlines between tokens; statement separation is now enforced by `end_statement` (spec §4.2).
     fn skip_newlines(&mut self) {
         while matches!(self.peek(), TokenKind::Newline) {
-            let span = self.tokens[self.pos].span;
             self.bump();
-            self.pending_newline = Some(span);
         }
     }
 
@@ -96,29 +92,33 @@ impl Parser {
         SyntaxError { span, message }
     }
 
-    fn warn(&mut self, span: Span, code: &'static str, message: &str) {
-        self.warnings.push(SyntaxWarning { span, code, message: message.to_string() });
+    /// First token kind at or after `self.pos`, skipping any `Newline` tokens (spec §4.2).
+    fn peek_non_newline(&self) -> &TokenKind {
+        let mut i = self.pos;
+        while i < self.tokens.len() && matches!(self.tokens[i].kind, TokenKind::Newline) {
+            i += 1;
+        }
+        self.tokens.get(i).map(|t| &t.kind).unwrap_or(&TokenKind::Eof)
     }
 
-    /// Statement terminator (spec §4.2): `;` is the canonical separator; a deprecated newline separator is warned (W0001).
-    /// EOF/`}` (block end) terminate silently. Block-level statements use `finish_block_statement` instead.
-    fn end_statement(&mut self) {
+    /// Statement terminator (spec §4.2): `;` is the only separator; a trailing statement at
+    /// end-of-input or before a block end `}` may omit it. Any other following token is E0011.
+    fn end_statement(&mut self) -> Result<(), SyntaxError> {
         if self.eat(&TokenKind::Semicolon).is_some() {
-            self.pending_newline = None;
-            return;
+            return Ok(());
         }
-        if let Some(span) = self.pending_newline.take()
-            && !matches!(self.peek(), TokenKind::Eof | TokenKind::RBrace)
-        {
-            self.warn(span, "W0001", "statements separated by newlines are deprecated; use `;`");
+        if matches!(self.peek_non_newline(), TokenKind::Eof | TokenKind::RBrace) {
+            return Ok(());
         }
+        Err(self.err(
+            self.span(),
+            "expected `;` to separate statements (E0011); newline statement separation was removed in v2.3 (spec §4.2)".into(),
+        ))
     }
 
-    /// Terminator for block-level statements (spec §4.2): the trailing `;` is optional and never warned.
+    /// Terminator for block-level statements (spec §4.2): the trailing `;` is optional.
     fn finish_block_statement(&mut self) {
-        if self.eat(&TokenKind::Semicolon).is_some() {
-            self.pending_newline = None;
-        }
+        self.eat(&TokenKind::Semicolon);
     }
 
     fn parse_ident(&mut self, what: &str) -> Result<Spanned<String>, SyntaxError> {
@@ -302,7 +302,7 @@ impl Parser {
             }
             _ => unreachable!(),
         };
-        self.end_statement();
+        self.end_statement()?;
         let end = self.tokens[self.pos.saturating_sub(1)].span;
         Ok(Import { kind, span: Span::merge(start, end) })
     }
@@ -344,7 +344,9 @@ impl Parser {
             _ if !annotations.is_empty() => self.apply_annotations(stmt, &annotations)?,
             _ => stmt,
         };
-        // Statement terminator (spec §4.2): block-level statements may omit `;`; the rest require `;` (newline is deprecated, W0001).
+        // Statement terminator (spec §4.2): block-level statements may omit `;`; the rest require `;`.
+        // A `pub`-wrapped item already enforced its own terminator via the recursive `parse_stmt`
+        // (or `parse_fn_stmt`) inside `parse_pub_stmt`; only block-level kinds take the optional `;`.
         match &stmt {
             Stmt::FnDef { .. }
             | Stmt::ClassDef { .. }
@@ -357,7 +359,21 @@ impl Parser {
             | Stmt::WhileLet { .. }
             | Stmt::Match { .. }
             | Stmt::WithConfig { .. } => self.finish_block_statement(),
-            _ => self.end_statement(),
+            Stmt::Pub(inner) => match &**inner {
+                Stmt::FnDef { .. }
+                | Stmt::ClassDef { .. }
+                | Stmt::Impl { .. }
+                | Stmt::For { .. }
+                | Stmt::ParFor { .. }
+                | Stmt::While { .. }
+                | Stmt::If { .. }
+                | Stmt::IfLet { .. }
+                | Stmt::WhileLet { .. }
+                | Stmt::Match { .. }
+                | Stmt::WithConfig { .. } => self.finish_block_statement(),
+                _ => {}
+            },
+            _ => self.end_statement()?,
         }
         Ok(stmt)
     }
@@ -497,7 +513,7 @@ impl Parser {
         // both mark the signature-only form.
         let is_builtin = annotations.contains(&Annotation::Builtin);
         let body = if is_builtin && !self.at(&TokenKind::LBrace) {
-            self.end_statement();
+            self.end_statement()?;
             Block { stmts: Vec::new(), span: start }
         } else {
             self.parse_block()?
@@ -1057,11 +1073,20 @@ impl Parser {
         self.parse_expr_bp(0)
     }
 
-    // Pratt climbing (implementation plan §2.2 precedence table): `|>` lowest, `^`/`**` highest and right-associative.
+    // Pratt climbing (implementation plan §2.2 precedence table): `^`/`**` highest and right-associative.
     fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr, SyntaxError> {
         let mut lhs = self.parse_prefix()?;
         loop {
             self.skip_newlines();
+            // `|>` was removed in v2.3 (spec §9.7); report it at the point of use instead of a generic `expected expression`.
+            if self.at(&TokenKind::PipeArrow) {
+                let span = self.span();
+                self.skip_to_statement_boundary();
+                return Err(self.err(
+                    span,
+                    "`|>` pipeline was removed in v2.3 (E0010); use class methods or a direct function call (spec §9.7)".into(),
+                ));
+            }
             let Some((op, lbp, rbp)) = binop_bp(self.peek()) else { break };
             if lbp < min_bp {
                 break;
@@ -1069,12 +1094,7 @@ impl Parser {
             self.bump();
             let rhs = self.parse_expr_bp(rbp)?;
             let span = Span::merge(lhs.span, rhs.span);
-            lhs = if op == BinOp::Pipeline {
-                // Deprecated `|>` pipeline (spec §9.7): keep the AST node; the runtime emits `W0002` and rewrites it.
-                Expr { kind: ExprKind::Pipeline { lhs: Box::new(lhs), rhs: Box::new(rhs) }, span }
-            } else {
-                Expr { kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span }
-            };
+            lhs = Expr { kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span };
         }
         Ok(lhs)
     }
@@ -1739,7 +1759,6 @@ impl Parser {
 
 fn binop_bp(kind: &TokenKind) -> Option<(BinOp, u8, u8)> {
     let (op, lbp, rbp) = match kind {
-        TokenKind::PipeArrow => (BinOp::Pipeline, 1, 2),
         TokenKind::PipePipe => (BinOp::Or, 2, 3),
         TokenKind::AmpAmp => (BinOp::And, 3, 4),
         TokenKind::EqEq => (BinOp::Eq, 4, 5),
@@ -1999,6 +2018,25 @@ mod tests {
     #[test]
     fn negative_set_literal_with_colon() {
         assert!(parse_err("{1, 2: 3}"));
+    }
+
+    #[test]
+    fn negative_newline_separated_statements() {
+        // Spec §4.2: statements must be separated by `;`; a bare newline separator is E0011.
+        assert!(parse_err("x = 1\ny = 2"), "newline-separated statements must be a parse error");
+        let errs = crate::parse("x = 1\ny = 2").unwrap_err();
+        assert!(errs.iter().any(|e| e.message.contains("E0011") && e.message.contains("newline statement separation was removed")));
+        let errs = crate::parse("1\n2\n").unwrap_err();
+        assert!(errs.iter().any(|e| e.message.contains("E0011")));
+    }
+
+    #[test]
+    fn negative_pipeline_operator_removed() {
+        // Spec §9.7: `|>` was removed in v2.3; its use is E0010.
+        assert!(parse_err("a |> f"), "`|>` must be a parse error");
+        let errs = crate::parse("a |> f").unwrap_err();
+        assert!(errs.iter().any(|e| e.message.contains("E0010") && e.message.contains("pipeline was removed")));
+        assert!(parse_err("let x = a |> f;"));
     }
 
     #[test]

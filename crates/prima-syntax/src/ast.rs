@@ -344,7 +344,6 @@ pub enum ExprKind {
     KeyValue { key: Box<Expr>, value: Box<Expr> },
     Lambda { params: Vec<Param>, body: Box<Expr> },
     Match { scrutinee: Box<Expr>, arms: Vec<MatchArm> },
-    Pipeline { lhs: Box<Expr>, rhs: Box<Expr> },
     Custom(Vec<(Expr, Expr)>),
 }
 
@@ -419,7 +418,6 @@ pub enum BinOp {
     /// Set difference `\` (spec §11.6).
     Difference,
     Broadcast,
-    Pipeline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

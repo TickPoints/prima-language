@@ -1,7 +1,7 @@
 use crate::span::Span;
 
 /// Token: `kind` + source range (spec §3). Statements are separated by `;` (spec §4.2);
-/// the lexer emits `Newline` so the parser can detect the deprecated newline-separated form and warn (W0001).
+/// the lexer emits `Newline` so the parser can report the removed newline-separated form as E0011.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,
