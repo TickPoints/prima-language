@@ -1,8 +1,9 @@
-# **Prima** —— 语言规范 v2.1
+# **Prima** —— 语言规范 v2.2
 
-> **声明**：本规范为 **Prima 语言** 的正式语言规范 v2.1，是设计与实现统一的最终依据。
+> **声明**：本规范为 **Prima 语言** 的正式语言规范 v2.2，是设计与实现统一的最终依据。
 > **v2.0 变更摘要**：①错误处理改为 Rust 式 `Result`/`?`/`match`（移除 `try/catch`）；②语句统一以 `;` 划分（换行分隔进入弃用流程，逐步移除）；③引入 Rust 式模式与解构（`if let`/`while let`/`match` 全模式）；④引入 Class（类）与所有权语义；⑤建立编号错误/警告码表（英文，附录 C）；⑥完整字符串支持与 `format`；⑦坍缩后数值类型与 Rust 基本数值类型一一对应；⑧互操作（`@c_api::extern` 导出 C ABI、`@builtin` Rust 实现）；⑨标准库扩充 `sys`/`time`/`num`/`ops`。
 > **v2.1 变更摘要（基础类型可用性增强，偏向 Python 风格）**：⑩`Array` 改为**可变长度**序列，支持 `push`/`pop`/`append`/`insert`/`remove`/`extend`/切片赋值/拼接/成员测试（`in`）/负索引/可嵌套（作为数据）；⑪新增**映射类型 `Dict`** 与**集合类型 `Set`**（字面量、索引、方法、迭代）；⑫常用集合便捷函数：`len`/`enumerate`/`sorted`/`reversed`/`sum`/`prod`/`min`/`max`/`all`/`any`/`join`/`count` 等；⑬`print` 与 `println` **区分**（前者不换行，后者换行）；⑭控制台输入 `input`/`read_line`；⑮列表/字典/集合**推导式**（`[x^2 for x in v if x > 0]`）；⑯符号微分原语 `derivative`/`partial`/`grad`/`limit` 纳入 core（§十九）。
+> **v2.2 变更摘要**：⑰**`format` 移除，改用 Python 式 f-string** `f"a={a}"`；字符串同时支持 `"..."` / `'...'` 定界与原始字符串 `r"..."`（§18.1）；⑱**文档注释稳定化**：`///`/`//!` 成为规范注释并纳入 AST，`prima doc` 覆盖内置标准库，方法调用出错时在诊断 note 中附带方法定义与文档（§4.1/16.4）；⑲**`@builtin(O1)` 分层优化**：按优化等级在 Rust 实现与 `.pra` 原实现之间切换（§18.4）；⑳**优化等级体系**：新增 `opt_level` 策略（`O0`–`O3`），各等级对应优化通道（§10.2/13.2）；㉑**内置方法体系**：`String` 等常用类方法集以 Python 稳定方法为参照，清单与文档统一维护于内嵌 `.pra` 模块的文档注释（§18.1）；㉒**标准库扩充**：`math` 数值工具（因式分解、泰勒展开）、`physics` 常用公式（Rust 实现）、系统交互、`plot`/`render` 绘图与公式渲染（§十八）；㉓**宿主层内存改为 GC**，标准库提供 `mem::Arc` 显式引用计数（§12.3/12.4）。
 
 ## 标识
 
@@ -47,6 +48,7 @@
 **Prima** 是一门**符号优先**的科学计算语言。它默认精确、默认保留表达式、默认以 LaTeX 渲染结果；通过**丰富的显式坍缩函数族**安全地下降到数值世界；一切行为定制统一由**模块级策略系统**管理；并行完全显式；错误处理采用 **Rust 式 `Result`/`?`** 模型。
 
 **设计哲学**：
+
 - 数学的「真」优先于机器的「快」；
 - 性能与精度是**显式选择**，缺省值守恒数学本真；
 - 一切可配置项归属**模块**，污染性配置必须声明于项目入口；
@@ -59,7 +61,7 @@
 
 ## 二、总体架构与执行模型
 
-```
+```text
 源码(.pra)
  ↓ Lexer → Parser
 文件（模块主体：策略区 + import 区 + 代码区）
@@ -78,7 +80,7 @@ AST
 ------|------|---------|--------|---------|------|
  **W_symbol** | 符号世界 | 表达式、符号、化简 | `ExprId`（hash-consing DAG，不可变） | hash-consing interner + 线程本地缓存 | 精确、可化简、线程安全 |
  **W_numeric** | 数值世界 | 基本数值（i8…f64、BigInt、复数）、矩阵、数组 | 栈上值类型 | 栈 + 线性内存（BLAS） | 原生速度 |
- **W_host** | 宿主世界 | 控制流、Class 对象、I/O | 用户对象（类实例） | 引用计数（浅拷贝共享）+ 值语义（深拷贝） | 功能性 |
+ **W_host** | 宿主世界 | 控制流、Class 对象、I/O | 用户对象（类实例） | GC（追踪式，浅拷贝共享）+ 值语义（深拷贝）；`mem::Arc` 显式引用计数（§12.4） | 功能性 |
 
 **核心规则**：表达式离开符号世界进入数值/宿主世界，**必须**经过显式坍缩函数（§九）；**无隐式转换**（除 §十三 策略允许的例外）。**可失败的运算不 panic（除非显式 `unwrap`/`to_*`），一律以 `Result` 返回值形式传播。**
 
@@ -88,12 +90,17 @@ AST
 
 - **标识符**：`[a-zA-Z_][a-zA-Z0-9_]*`（可扩展 Unicode 字母，含希腊字母）。
 - **数字字面量**：`123`、`3.14`、`1e-9`、`0x1F`、`0b1010`。
-- **字符串**：`"..."`（转义，含 `\u{XXXX}`）+ 原始字符串 `r"..."`。
+- **字符串**：
+  - 普通字符串：`"..."` 与 `'...'` 两种定界**等价**，均支持转义（含 `\u{XXXX}`）；
+  - 原始字符串：`r"..."` / `r'...'`——不处理转义（`\n` 即字面反斜杠 + `n`），`\u{XXXX}` 不展开；
+  - **插值字符串（f-string）**：`f"..."` / `f'...'`——`{expr}` 插值、`{:spec}` 格式精化、`{{`/`}}` 转义（§18.1）；
+  - 上述前缀可组合（`rf"..."` 原始 + 插值）。
 - **TeX 字面量**：``tex"..."``。
 - **运算符**：`+ - * / ^ ** @ % == != < <= > >= && || ! = += -= ?`。其中 `^` 与 `**` 均表示幂运算（互为别名）；`?` 为 **try 运算符**（错误传播，§16.3）；`in` 在**表达式位置**为**成员测试**（§11.3），在 `for`/`parfor` 中为迭代关键字。
-- **注释**：`//` 行注释、`/* */` 块注释。
+- **注释**：`//` 行注释、`/* */` 块注释、**`///` 文档注释**（紧跟其后项，§4.1）、**`//!` 模块文档注释**（§4.1）。
 - **保留关键字**（未来扩展）：`async`、`yield`、`macro`、`trait`。
 - **生效关键字**：`let`、`const`、`fn`、`class`、`pub`、`self`、`Self`、`if`、`else`、`while`、`for`、`in`、`step`、`parfor`、`return`、`match`、`impl`、`with`、`config`、`import`、`from`、`as`、`true`、`false`。
+- **注解**：`@parallel`、`@jit`、`@gpu`、`@builtin`（可带优化等级参数 `@builtin(O1)`，§18.4）、`@c_api::extern`。
 - **语句分隔符**：`;`（规范、§4.2）；换行分隔为**弃用形式**（§16.5 W0001）。
 - **集合字面量**：`{ ... }` 按上下文区分为 `Dict`/`Set` 字面量（§4.6）与代码块；推导式复用 `[ ... ]`/`{ ... }`/`( ... )` 外框（§11.7）。
 
@@ -120,6 +127,21 @@ let f(x) = x^2 + 6;
 print(f(3));
 ```
 
+#### 文档注释（v2.2）
+
+- **`///`**：文档注释，紧跟其后的**项**（`fn`/`let`（MFn）/`class`/方法/字段/`const`/`import` 绑定）——多个连续 `///` 行合并为该项的文档文本。
+- **`//!`**：模块文档注释，置于模块文件顶部（`config`/`import` 区之前），描述整个模块。
+- 文档注释属于**语言语义的一部分**：随项一起被解析进 AST 并保留；`prima doc`（§二十）生成文档、`prima check`/解释器的诊断 note（§16.4）读取它。
+- 文档注释支持简单标记（如 `` `code` ``、标题行、`# Examples` 等），渲染规则由 `prima doc` 定义（§实现方案）。
+- 例：
+
+  ```prima
+  //! The `String` type and its method set.
+
+  /// Returns the number of Unicode scalar values in `self`.
+  pub fn len(self) -> Integer
+  ```
+
 ### 4.2 语句划分
 
 - **规范形式**：每条语句以 `;` 结尾（`;` 是唯一规范语句分隔符）。
@@ -139,7 +161,7 @@ if a > 0 {                 // ✓ 块级语句省略末尾 ;
 
 ### 4.3 文法骨架
 
-```
+```text
 program      := config? import* item*
 item         := pub_item | statement
 pub_item     := "pub" statement
@@ -156,8 +178,10 @@ control_stmt := for_stmt | while_stmt | if_stmt | if_let_stmt
               | with_config_stmt
 math_expr    := expr               // 纯数学函数体，默认符号世界
 type_ann     := ":" type
-annotation   := "@parallel" | "@jit" | "@gpu" | "@builtin"
+annotation   := "@parallel" | "@jit" | "@gpu"
+              | "@builtin" ("(" opt_level ")")?    // 默认 @builtin(O0)（§18.4）
               | "@c_api" "::" "extern"
+opt_level    := "O0" | "O1" | "O2" | "O3"           // §10.2
 ```
 
 > 语句分隔：`;` 规范；换行弃用（§4.2）。`pub` 可修饰 `let`/`const`/`fn`/`math_def`/`class_def`。
@@ -166,7 +190,7 @@ annotation   := "@parallel" | "@jit" | "@gpu" | "@builtin"
 
 模式用于 `let` 解构、`if let`、`while let`、`match` 分支：
 
-```
+```text
 pattern        := pattern_alt
 pattern_alt    := pattern_simple ("|" pattern_simple)*      // 或模式
 pattern_simple := "_" | ident | literal | "-"? literal
@@ -183,6 +207,7 @@ guard          := pattern_alt "if" expr                     // match 守卫
 ```
 
 **规则**：
+
 - `_` 通配；`ident` 绑定；字面量匹配；`-` 用于负数字面量。
 - 元组/数组模式支持 `..` 省略其余元素。
 - 类模式 `Point { x, y: 0, .. }` 匹配字段。
@@ -192,6 +217,7 @@ guard          := pattern_alt "if" expr                     // match 守卫
 - `match` 分支守卫 `pattern if cond => ...`。
 
 **示例**：
+
 ```prima
 let v = [1, 2, 3];
 let (first, ..) = v;                 // 元组/数组解构
@@ -210,8 +236,8 @@ while let Some(x) = iter.next() {    // 迭代
 }
 
 match try_f64("3.14") {
-    Ok(x)  => print(format("parsed {}", x)),
-    Err(e) => print(format("failed: {}", e))
+    Ok(x)  => print(f"parsed {x}"),
+    Err(e) => print(f"failed: {e}")
 }
 ```
 
@@ -238,6 +264,7 @@ print(test1.get_a());                 // 方法调用
 ```
 
 **规则**：
+
 1. **可见性**（成员）：
    - 无修饰 → 类内私有（仅本类方法可访问）。
    - `pub(mod)` → 当前模块可见（模块内可调用/访问）。
@@ -251,6 +278,7 @@ print(test1.get_a());                 // 方法调用
 8. **管道弃用**：`|>` 管道（§9.7）为弃用语法（`W0002`），其职责逐步由「类方法 + 方法链」取代。
 
 **示例（方法链取代管道）**：
+
 ```prima
 // 弃用：a |> to_f64 |> rounded_f64(3)
 // 规范：通过类方法组合
@@ -288,6 +316,7 @@ let pairs   = ((x, x+1) for x in range(0, 3));             // Tuple（惰性生�
 ```
 
 **规则**：
+
 1. `{ k: v }` 判定为 Dict 字面量（键值对形式）；`{ a, b }` 判定为 Set 字面量；`{}` 为空 Dict。
 2. Dict 键必须是**不可变且可哈希**的值（`Number`/`String`/`Char`/`Bool`/`Expr`/`Symbol`）；Set 元素同理。
 3. 集合字面量在**表达式位置**才有效；`{` 紧跟控制流关键字时仍是代码块。
@@ -328,7 +357,7 @@ enum Value {
 
 ### 6.1 数值类型层次
 
-```
+```text
 Number
  ├── 表达式形式（默认，精确）
  │    ├── Expr(ExprId)
@@ -355,11 +384,13 @@ Number
 ### 6.2 不定式与未定义的严格区分
 
 #### 符号层：`Indeterminate`
+
 - **定义**：数学上的不定式（indeterminate form），如 `0/0`、`∞/∞`、`0*∞`、`∞-∞`。
 - **行为**：
   - 保留为符号节点 `Indeterminate(form_type)`，**不立即报错**。
   - 可参与后续符号化简、极限计算、洛必达法则。
   - 示例：
+
     ```prima
     let expr = (sin(x) - x) / x^3;   // 在 x=0 处形成 0/0，保留为 Indeterminate
     limit(expr, x, 0);               // → -1/6（通过泰勒展开或洛必达）
@@ -367,6 +398,7 @@ Number
     ```
 
 #### 数值层：`Undefined`
+
 - **定义**：无法给出有意义数值的错误状态。
 - **产生时机**：
   - 不定式**坍缩到数值层**时，若无法化简 → `Undefined`。
@@ -374,6 +406,7 @@ Number
 - **严格规则**：
   - **`Undefined` 不得参与任何运算**：任何一元/二元算子输入含 `Undefined` 即**报错**（可静态判定则编译期，否则运行时 `R0006`），**不传播**。
   - 示例：
+
     ```prima
     let a = 0/0;                     // 符号层 → Indeterminate
     let b = to_f64(a);               // 坍缩失败 → panic（to_* 家族）
@@ -381,13 +414,15 @@ Number
     ```
 
 #### 特殊数值：`NaN` 和 `Inf`
+
 - `0.0/0.0` → `NaN`（浮点运算规则）；`1.0/0.0` → `PlusInf`。
 - **`NaN` / `Inf` 不允许在符号层显式存在**，仅显式坍缩到数值层后才出现。
 
 ### 6.3 类型系统
 
 #### 类型语法
-```
+
+```text
 type :=
     // 基础数值类型
     | "Number" | "Integer" | "Rational" | "F64" | "F32"
@@ -412,6 +447,7 @@ type :=
 #### 类型推断规则（效仿 Rust）
 
 **字面量推断**：
+
 ```prima
 let x = 1;          // → Integer（整数字面量）
 let y = 1.0;        // → F64（浮点字面量，有小数点或科学记数法）
@@ -421,6 +457,7 @@ let b = true;       // → Bool
 ```
 
 **表达式推断**：
+
 ```prima
 let a = sqrt(2);           // → Expr（符号函数，未坍缩）
 let b = 1 + 2;             // → Integer（精确整数运算）
@@ -431,6 +468,7 @@ let f = [[1, 2], [3, 4]];  // 错误：拒绝嵌套数组
 ```
 
 **函数推断**：
+
 ```prima
 let f(x) = x^2;           // → MFn(Expr) -> Expr（纯数学函数）
 fn g(x: F64) -> F64 {     // → Fn(F64) -> F64（功能函数）
@@ -439,6 +477,7 @@ fn g(x: F64) -> F64 {     // → Fn(F64) -> F64（功能函数）
 ```
 
 **显式类型注解**：
+
 ```prima
 let x: F64 = sqrt(2);     // 类型错误：sqrt(2) 是 Expr，需显式坍缩
 let y: F64 = to_f64(sqrt(2));  // 正确
@@ -446,6 +485,7 @@ let z: Integer = 3.14;    // 类型错误
 ```
 
 **类型兼容性**：
+
 - 精确类型可隐式提升（§6.4）：`Integer → Rational → Complex`。
 - 不精确类型传染：`Integer + F64 → F64`。
 - 符号类型不自动坍缩：`Expr` 需显式转换才能进入数值计算。
@@ -456,12 +496,15 @@ let z: Integer = 3.14;    // 类型错误
 采用 Julia 的**提升（promotion）/转换（convert）** 思想，但实现为**内置固定规则**，不暴露用户扩展点：
 
 **提升序列**：
-```
+
+```text
 Integer < Rational < Complex<Rational> < F64 < Complex<F64>
 ```
 
 **提升规则**：
+
 1. **同类精确运算保持精确**：
+
    ```prima
    1 + 2                  // → Integer(3)
    1/3 + 2/5              // → Rational(11/15)
@@ -469,31 +512,37 @@ Integer < Rational < Complex<Rational> < F64 < Complex<F64>
    ```
 
 2. **不精确传染**：
+
    ```prima
    let a = 1/3;            // → Rational(1/3)
    let b = to_f64(a);      // → F64(0.333...)
    let c = Complex(0, 1);  // → Complex<Rational>(0, 1)
    b + c;                  // → Complex<F64>(0.333..., 1.0)
    ```
+
    **规则**：遇到 `F64`，整个 `Complex` 提升为 `Complex<F64>`。
 
 3. **自动约分与规范化**：
+
    ```prima
    2/4                    // → Rational(1/2)（自动约分）
    Rational(6, -9)        // → Rational(-2/3)（分母为正）
    ```
 
 **复数函数**：
+
 - `real(z)`、`imag(z)`、`conj(z)`、`abs(z)`、`abs2(z)`（避免开方）、`angle(z)`。
 - 精确指数：`(-1)^(1/2)` 在复数域 → `\i`（§6.5）。
 
 **实现选型**：
+
 - 基础层：`num-complex` + `num-rational`（纯 Rust，MIT/Apache-2.0）。
 - 可选加速：`rug`（GMP，LGPL）作为 feature flag（`--features=rug-backend`）。
 
 ### 6.5 域标注（Domain Annotation）
 
 **域类型**：
+
 ```rust
 enum Domain {
     Real,          // 实数域
@@ -506,8 +555,10 @@ enum Domain {
 ```
 
 **默认行为**：
+
 - 全局策略 `domain := complex`（默认）或 `domain := real`。
 - 符号化简时，采用**最高域**（最宽松的域）：
+
   ```prima
   let x: Real = -1;
   let y = x^(1/2);     // 化简时：最高域 = Complex → y 内部表示为 Complex(\i)
@@ -516,6 +567,7 @@ enum Domain {
 **域的继承与传播**：
 
 1. **赋值时的域继承**（外部优先性）：
+
    ```prima
    let x: Real = -1;
    let y = x;           // y 继承 Real 域标注
@@ -523,6 +575,7 @@ enum Domain {
    ```
 
 2. **显式域转换**（型变能力）：
+
    ```prima
    let x: Real = -1;
    let y = with_domain(x, Complex);  // 显式放宽为 Complex 域
@@ -530,6 +583,7 @@ enum Domain {
    ```
 
 3. **函数参数的域继承**：
+
    ```prima
    let f(x: Real): Real = x^2;    // 函数内 x 受 Real 约束
    f(-1);                         // 正确 → 1
@@ -542,6 +596,7 @@ enum Domain {
    ```
 
 4. **混合运算的域提升**：
+
    ```prima
    let a: Real = 2;
    let b: Complex = \i;
@@ -549,11 +604,13 @@ enum Domain {
    ```
 
 **符合直觉的原则**：
+
 - 化简/计算时宽松（允许中间步骤使用更高域）。
 - 赋值/绑定时严格（外部类型约束优先）。
 - 提供显式工具（`with_domain`）打破约束。
 
 ### 6.6 默认规则
+
 - **默认精确**：字面量 `2` 是 `Integer`；`sqrt(2)` 保持 `Expr`。
 - **不精确传染**：坍缩到 `F64` 后参与的混合运算趋于不精确。
 - **分数默认**：默认 `fraction := true`，有理数保留 `Rational`（可配置）。
@@ -565,9 +622,11 @@ enum Domain {
 **内置符号是语言固有的一部分，独立于 TeX**（TeX 仅是视图）。物理常数值基于 **CODATA 2022**。
 
 ### 7.1 数学常数
+
 `\e`（欧拉数）、`\pi`、`\i`（虚数单位）、`\tau`、`\infty`、`\gamma`（欧拉-马歇罗尼常数）、`\phi`（黄金分割）。
 
 ### 7.2 算子（表达式结构实体）
+
 `\log`（对数）、`\ln`、`\exp`（指数）、`\sqrt`、`\sin`、`\cos`、`\tan`、`\sigma`（求和）、`\prod`（连乘）、`\int`（积分）、`\partial`（偏导）。
 
 **关键**：**对数、指数等不仅是函数名，更是表达式结构实体**（如 `Apply(Log, [x])`、`Apply(Exp, [x])`），可进入化简、求导、积分。
@@ -586,6 +645,7 @@ enum Domain {
  其他 | `\standard_gravity`、`\stefan_boltzmann`、`\standard_atmosphere` | 同上 |
 
 **使用示例**：
+
 ```prima
 import physics;              // 仅导入模块命名空间
 
@@ -599,6 +659,7 @@ let E = h * c;
 > 物理常数以**高精度**存储（默认不自动坍缩，需显式 `to_f64(\planck_const)` 等）。
 
 ### 7.4 符号性质
+
 - 内置符号可化简：`\e^{i\pi}` = `Pow(\e, Mul(\i, \pi))`。
 - `sqrt(-1)` 复数域 → `\i`；`(-1)^0.5` 由符号携带的 `Domain` 元数据决定（§6.5）。
 
@@ -636,11 +697,13 @@ thread_local! {
 ```
 
 **实现策略**：
+
 1. **线程本地缓存优先**：每次 intern 先查 `LOCAL_CACHE`，命中则直接返回。
 2. **未命中查全局**：查 `global: DashMap`，查到后回写本地缓存。
 3. **延迟全局化**（可选优化）：符号计算过程中先在本地 DAG 累积，计算完成后批量 intern 到全局池。
 
 ### 8.2 性能收益（JuliaSymbolics 实测参考）
+
 - 结构共享去重（消除 expression swell）：内存 ↓2×，符号运算快达 3.2×。
 - 相等 = 整数/指针比较（O(1)）。
 - interner 缓存加速：数值求值快达 100×；codegen/编译 5–10×。
@@ -658,6 +721,7 @@ thread_local! {
 **默认策略**：打印/渲染 = 等级 0（保留原形态，除非先 `simplify()`）；进入数值坍缩 = 等价于等级 2。化简不改变数学真值。
 
 ### 8.4 规范形
+
 `Add`/`Mul` 以 n 元有序列表存储并规范化排序 → `x+1 ≡ 1+x`，同一 `ExprId`，可哈希、可作 `HashMap` 键。
 
 ---
@@ -669,6 +733,7 @@ thread_local! {
 ### 9.1 坍缩函数命名体系
 
 **设计原则**：
+
 - **基础形式** `to_<type>(x)`：失败则 **panic**，适合受信输入。
 - **尝试形式** `try_<type>(x)`：返回 `Result<T, Error>`，适合非受信输入。
 - **检查形式** `checked_<type>(x)`：检查溢出/边界，返回 `Result<T, Error>`。
@@ -678,6 +743,7 @@ thread_local! {
 **类型覆盖**：所有坍缩函数族覆盖与 Rust 基本数值一一对应的全部类型：`i8/i16/i32/i64/i128/u8/u16/u32/u64/u128/isize/usize/f32/f64`，外加 `bigint/rational/bigfloat/complex`。
 
 ### 9.2 基础坍缩（可能 panic）
+
 ```prima
 to_i8(x)   to_i16(x)  to_i32(x)  to_i64(x)  to_i128(x)
 to_u8(x)   to_u16(x)  to_u32(x)  to_u64(x)  to_u128(x)
@@ -687,6 +753,7 @@ to_bigint(x) to_rational(x) to_bigfloat(x) to_complex(x)
 ```
 
 **示例**：
+
 ```prima
 let a = sqrt(2);
 let b = to_f64(a);          // 1.414...
@@ -696,6 +763,7 @@ let d = to_i32(c);          // panic: 值超出 i32 范围
 ```
 
 ### 9.3 安全坍缩（返回 `Result<T, Error>`，不 panic）
+
 ```prima
 try_i8(x)  try_i16(x)  try_i32(x)  try_i64(x)  try_i128(x)
 try_u8(x)  try_u16(x)  try_u32(x)  try_u64(x)  try_u128(x)
@@ -705,11 +773,12 @@ try_bigint(x) try_rational(x) try_complex(x)
 ```
 
 **示例**（与 `match`/`?` 组合）：
+
 ```prima
 let a = sqrt(2) + \pi;
 match try_i32(a) {
-    Ok(n)  => print(format("converted {}", n)),
-    Err(e) => print(format("failed: {}", e))
+    Ok(n)  => print(f"converted {n}"),
+    Err(e) => print(f"failed: {e}")
 }
 
 // 或使用 ? 传播（仅可在返回 Result 的函数内）
@@ -720,6 +789,7 @@ fn parse(x) -> Result<F64, Error> {
 ```
 
 ### 9.4 检查坍缩（检查溢出/范围）
+
 ```prima
 checked_i8(x)  checked_i16(x)  checked_i32(x)  checked_i64(x)  checked_i128(x)
 checked_u8(x)  checked_u16(x)  checked_u32(x)  checked_u64(x)  checked_u128(x)
@@ -728,6 +798,7 @@ checked_mul(a, b)    // 检查乘法溢出
 ```
 
 **示例**：
+
 ```prima
 let a = 2^31 - 1;
 let b = checked_i32(a);     // Ok(2147483647)
@@ -735,6 +806,7 @@ let c = checked_i32(a + 1); // Err(Error::Overflow)
 ```
 
 ### 9.5 钳制坍缩
+
 ```prima
 clamped_i32(x, min, max)   // 钳制到 [min, max]
 clamped_u8(x, min, max)
@@ -743,12 +815,14 @@ clamped_f64(x, min, max)   // 钳制浮点范围
 ```
 
 **示例**：
+
 ```prima
 let a = 1000;
 let b = clamped_i32(a, 0, 255);  // → 255（钳制到上界）
 ```
 
 ### 9.6 舍入坍缩
+
 ```prima
 rounded_f64(x, digits)       // 舍入到指定小数位
 rounded_i32(x)               // 四舍五入到最近整数
@@ -756,6 +830,7 @@ truncated_i32(x)             // 截断小数部分
 ```
 
 **示例**：
+
 ```prima
 let a = \pi;
 let b = rounded_f64(a, 3);    // → 3.142
@@ -776,32 +851,38 @@ let d = try_f64(a).expect("convert pi");  // 自定义 panic 消息
 **弃用管道**：`|>` 管道（`a |> f`）为弃用语法（§16.5 `W0002`），逐步被方法链取代（§4.5 示例）。
 
 **多值返回**：
+
 ```prima
 complex_to_parts(z)          // → Tuple<(re, im)> 两个独立值
 polar_form(z)                // → Tuple<(r, theta)>
 ```
 
 **示例**（`let` 元组解构）：
+
 ```prima
 let z = Complex(3, 4);
 let (r, theta) = polar_form(z);  // r = 5, theta = arctan(4/3)
 ```
 
 ### 9.8 无隐式坍缩 + 不提示精度
+
 - 表达式不自动抬入浮点运算。
 - **坍缩 = 用户自决 → 不产生精度告警**（语言不支持精度提示，用户显式选择即主动接受）。
 - 仅当坍缩结果是**错误**时（`to_i32()` 遇非整数 → panic；`checked_i32` 溢出 → `Err`）按 §九 处理。
 
 ### 9.9 幂与定义域
+
 - `sqrt(-1)` 在 `domain := complex` → `\i`。
 - 分式指数（如 `(-1)^0.5`）由 `Domain` 元数据（§6.5）决定：
   - `domain := complex` → 允许，得 `\i`。
   - `domain := real` → 报错或产生 `Undefined`。
 
 ### 9.10 算子的惰性求值
+
 `\sigma`（求和）、`\prod`（连乘）、`\int`（积分）等算子**默认惰性保留**，直到遇到强制求值函数（显式坍缩或 `loop_optimization` 触发的闭式优化）才数值化。
 
 **示例**：
+
 ```prima
 let s = sum(i, 1, n);          // 保持符号形式 Σ(i, 1, n)
 print(s);                      // LaTeX 输出：\sum_{i=1}^{n} i
@@ -817,6 +898,7 @@ let s_eval = to_f64(s);        // 此时才数值求值（需 n 已绑定具体�
 - **循环公式优化**（`loop_optimization := true` 默认开）：`sum(1..n) i → n(n+1)/2`。
 
 **示例**：
+
 ```prima
 let f(x) = x^2 + 6;
 let a = f(sqrt(2));       // → Expr: (sqrt(2))^2 + 6 → 2 + 6 → 8（符号化简）
@@ -832,40 +914,58 @@ for i in 1..100 {
 
 ### 10.2 优化系统（现代语言优化）
 
-**原则**：优化全部**自动**发生，不向开发者暴露优化指令（无 `#[inline]` 之类注解）。`@parallel`/`@jit`/`@gpu` 是**并行/执行模型**注解，不是优化指令。
+**原则**：优化全部**自动**发生，不向开发者暴露逐函数优化指令（无 `#[inline]` 之类注解）；全局/局部优化强度由 **`opt_level` 策略**控制（§13.2）。`@parallel`/`@jit`/`@gpu` 是**并行/执行模型**注解，不是优化指令；`@builtin(O1)`（§18.4）是**实现分层**注解，受 `opt_level` 影响但不替代它。
 
-**优化管道（管线）**：
+**优化等级（v2.2，策略 `opt_level`）**：`O0`–`O3`，默认 `O2`。每个等级是**递增通道集合**，`opt_level := On` 启用等级 `≤ n` 的全部通道：
+
+| 等级 | 启用的优化通道 |
+|------|----------------|
+| `O0` | 无优化管道：逐条解释、保留循环原语义；`simplify_level`/`fraction` 等**符号与数值语义**策略仍生效；`loop_optimization`/JIT 自动编译不生效 |
+| `O1` | 基础通道：常量折叠/传播、死代码消除（DCE）、循环闭式公式（§10.1）；`@builtin(O1)` Rust 实现启用 |
+| `O2`（默认） | `O1` + 公共子表达式消除（CSE）、自动内联（启发式）、尾调用优化（TCO）、JIT 自动热点编译（§19.2） |
+| `O3` | `O2` + 激进通道：SIMD 识别与向量化、循环展开、无条件内联小函数、`@builtin(O3)` 实现启用（§18.4） |
+
+**优化通道详述**：
+
 1. **常量折叠/传播**（constant folding/propagation）：字面量与 `const` 的编译期求值。
 2. **死代码消除**（dead code elimination）：不可达分支、无用赋值剔除。
 3. **公共子表达式消除**（CSE）：重复子表达式只算一次。
 4. **循环优化**：闭式公式（§10.1）、循环不变量提升（hoisting）、向量化预判。
 5. **自动内联**（automatic inlining）：对**满足启发式的纯/小函数**自动内联展开——阈值由编译器内部判定（如调用次数、函数体规模、无副作用），**开发者不可干预**。内联不改变可观察语义（包括错误时机与 `Result` 传播）。
 6. **尾调用优化**（TCO）：尾部递归/尾调用栈复用（纯函数与 `fn` 均可）。
-7. **化简等级**：与 §8.3 的化简系统协同，`simplify_level` 策略控制符号化简深度，数值优化在其后。
+7. **SIMD 识别与向量化**（`O3`）：对稠密数值数组的逐元素运算（广播、循环内元素操作）识别为可向量化模式，映射到 SIMD 指令或按块并行；仅在可证明数值语义不变时应用（含 IEEE 舍入例外按 `print_format`/精度策略保守处理）。
+8. **化简等级**：与 §8.3 的化简系统协同，`simplify_level` 策略控制符号化简深度，数值优化在其后。
 
 **内联规则**：
+
 - 内联对象：纯数学函数（MFn）与无副作用宿主函数。
 - 禁止内联：含 `@parallel` 副作用、递归函数、体积超阈值函数。
 - 内联在**类型检查之后**、代码生成之前进行（不影响错误诊断定位，诊断仍以源码位置为准）。
+
+**与既有策略的协同**：`loop_optimization := false` 在任意等级下都显式关闭循环闭式公式；`broadcast`/`fraction` 等语义策略优先于优化等级；`opt_level` 只决定**编译器自动施加的优化**，不改变可观察语义（结果、错误时机、`Result` 传播）。
 
 ---
 
 ## 十一、函数、数组与广播
 
 ### 11.1 纯数学函数（MFn）
+
 ```prima
 let f(x) = x^2 + 1;       // 纯函数，默认符号世界
 let g(x): F64 = to_f64(x^2);  // 显式声明返回类型
 ```
+
 **特性**：纯、无副作用、可化简、可组合、一等公民、支持自动微分（§19.4）。可 `@parallel` 注解（§十七）。自动内联优先对象（§10.2）。
 
 ### 11.2 功能函数（fn）
+
 ```prima
 fn process(x: F64) -> F64 {
-    print(format("Processing: {}", x));
+    print(f"Processing: {x}");
     return x * 2.0;
 }
 ```
+
 **特性**：可有副作用、控制流、I/O。可返回 `Result`（§16.3）。
 
 ### 11.3 数组（Array，v2.1 可变长序列）
@@ -873,6 +973,7 @@ fn process(x: F64) -> F64 {
 **`Array` 是可变长度、可变的同质或异质序列**（v2.1，效仿 Python `list`）：长度可增长/收缩，元素可为任意值（数字/字符串/布尔/`Expr`/类实例/嵌套数组等）。广播与矩阵接口仍要求**同质数值数组**（§11.4 调用点校验）。
 
 #### 字面量与构造
+
 ```prima
 let v = [1, 2, 3];            // Array：可含任意值
 let w = [1.0, 2.0, 3.0];
@@ -883,6 +984,7 @@ let f = [x^2 for x in range(0, 5)];  // 推导式（§11.7）
 ```
 
 #### 索引与切片（含负索引）
+
 ```prima
 let v = [10, 20, 30, 40];
 let a = v[0];                 // → 10
@@ -894,6 +996,7 @@ let f = v[-2..];              // → [30, 40]
 ```
 
 #### 切片赋值（v2.1）
+
 ```prima
 let v = [1, 2, 3, 4];
 v[1..3] = [20, 30];           // v == [1, 20, 30, 4]
@@ -901,6 +1004,7 @@ v[0..1] = [];                 // 删除元素：v == [20, 30, 4]
 ```
 
 #### 拼接与成员测试
+
 ```prima
 let a = [1, 2];
 let b = [3, 4];
@@ -911,6 +1015,7 @@ let has5 = 5 in c;            // → false
 ```
 
 #### 可变方法（在持有者可变绑定上调用）
+
 ```prima
 let mut v = [1, 2, 3];
 v.push(4);                    // [1, 2, 3, 4]
@@ -923,6 +1028,7 @@ v.clear();                    // v == []
 ```
 
 #### 只读方法与便捷函数
+
 ```prima
 let v = [3, 1, 2];
 v.len()                       // → 3
@@ -942,6 +1048,7 @@ let M = max(v);               // → 3
 ```
 
 #### 越界处理
+
 ```prima
 let v = [1, 2, 3];
 let x = v[10];                // 运行时错误 R0003：索引越界
@@ -950,6 +1057,7 @@ let z = v.get(1);             // → Some(2)
 ```
 
 #### 矩阵构造
+
 ```prima
 let M = Matrix::from_rows([[1, 2], [3, 4]]);  // 2×2 矩阵
 let N = Matrix::zeros(3, 3);                  // 3×3 零矩阵
@@ -966,6 +1074,7 @@ let h = A[0..2, 1..3];        // → [[2, 3], [5, 6]]（子矩阵）
 ### 11.4 广播（Broadcast）
 
 **规则**（v2.1 收紧为「数值同质数组」）：
+
 - **仅作用于同质数值数组**：广播要求数组元素为 `Number`；元素含非数值（字符串/数组/类等）即**报错**（`R0009`），不静默降级。
 - **拒绝嵌套数值数组**：广播遇到「数组的数组」**报错**，不递归；一般嵌套数组仅作数据（§11.3）不参与广播。
 - **空数组报错**：广播遇到空数组即报错（`R0014`），不产生静默空结果。
@@ -973,6 +1082,7 @@ let h = A[0..2, 1..3];        // → [[2, 3], [5, 6]]（子矩阵）
 - **并行广播**：`@parallel` 纯函数 + 大数组自动走 rayon 并行（§17.4）。
 
 **示例**：
+
 ```prima
 config { broadcast := true }
 
@@ -995,6 +1105,7 @@ let i = f(h);                // 错误 R0014：空数组
 ```
 
 **显式控制**（`broadcast := false` 时）：
+
 ```prima
 config { broadcast := false }
 
@@ -1005,6 +1116,7 @@ let x = v @. f;              // 广播算子（语法糖）
 ```
 
 ### 11.5 函数上下文
+
 - 纯函数体 → W_symbol（表达式形态，保持精确）。
 - 功能函数体 → 默认数值，显式坍缩按需。
 
@@ -1013,6 +1125,7 @@ let x = v @. f;              // 广播算子（语法糖）
 `Dict` 是键 → 值的可变映射（效仿 Python `dict`），`Set` 是去重的可变集合（效仿 Python `set`）。两者均要求键/元素**不可变且可哈希**（`Number`/`String`/`Char`/`Bool`/`Expr`/`Symbol`）。
 
 #### 字面量与构造
+
 ```prima
 let d = { "a": 1, "b": 2 };   // Dict：{ key: value }
 let d0 = Dict::new();         // 空 Dict
@@ -1022,6 +1135,7 @@ let t = {};                   // 空花括号 → 空 Dict
 ```
 
 #### Dict 索引与成员测试
+
 ```prima
 let d = { "a": 1, "b": 2 };
 let a = d["a"];               // → 1
@@ -1033,6 +1147,7 @@ let n = d.len();              // → 2（条目数）
 ```
 
 #### Dict 方法
+
 ```prima
 let d = { "a": 1 };
 d["b"] = 2;                   // 插入/更新键（元素赋值）
@@ -1047,6 +1162,7 @@ let dd = d.update({ "x": 9 }); // 合并：d + { "x": 9 }（后者覆盖前者�
 ```
 
 #### Set 方法与集合代数
+
 ```prima
 let s = {1, 2, 3};
 s.add(4);                     // 添加元素
@@ -1060,6 +1176,7 @@ let diff = s \ {3};           // 差集
 ```
 
 #### 迭代与通用便捷
+
 ```prima
 for k in d.keys() { print(k); }      // 遍历键
 for (k, v) in d.items() { ... }      // 遍历键值对
@@ -1094,6 +1211,7 @@ let n = len(squares);         // → 10
 ## 十二、变量、作用域与所有权
 
 ### 12.1 变量与常量
+
 ```prima
 let a = sqrt(2);              // 变量：符号默认保留；标量可变
 let mut b = 0;                // 显式可变（需 mut 关键字）
@@ -1102,25 +1220,28 @@ let d: Number = 0;            // 显式类型注解
 ```
 
 **可变性规则**（v2.1）：
+
 - **数值标量**：`let mut` 作用域内可变。
 - **集合**（`Array`/`Dict`/`Set`）：**可变宿主值**——长度/内容可变（`push`/`pop`/`d[k]=v`/`add`/…，§11.3/11.6）；可变方法要求绑定为 `let mut`（`let` 绑定也可就地调用只读方法）。
 - **复合数学值**（`Expr`/`Matrix`/`Symbol`）：默认不可变，共享引用。
 - **常量**：全局不可变、编译期可内联。
 
 ### 12.2 作用域与可见性
+
 - 块作用域（`{}`）遮蔽外层同名变量。
 - `let (a, b) = tuple;` 等**不可反驳模式解构**创建多个绑定（§4.4）。
 - 模块间变量不互通（§十五）：使用某模块公开项需 `import`。
 
 ### 12.3 所有权（Class 语义）
 
-**类实例所有权**（与 Rust `Arc`/`&self` 类比，对开发者隐藏）：
+**类实例所有权**（GC 句柄语义；需要确定性生命周期时可用 `mem::Arc`（§12.4））：
 
-- **默认值语义**：类实例通过引用计数管理；**赋值、传参、返回实例**均为**浅拷贝**（共享底层对象，计数 +1）。
+- **默认值语义**：类实例由宿主层 **GC** 管理；**赋值、传参、返回实例**均为**浅拷贝**（共享底层对象的句柄，无计数开销）。
 - **`self` 参数**：方法接收 `self` 即接收**对象本身的浅拷贝**；方法内对 `self` 字段的读取为共享读。
 - **深拷贝**：当方法**返回基本值字段**（`Expr`/`Number`/`String` 等标量/不可变值）时，传出的值独立持有（这些基本值本身不可变，深拷贝即复制句柄/缓冲）。返回类实例则保持共享。
 - **结构字面量**：`Test { a, b }` 创建新实例（拥有新字段值）。
 - **无手动所有权语法**：不暴露 `&` / `move` 等 Rust 风格借用语法（保留 `let mut` 表明可变绑定）。可变类字段修改可通过显式构造新实例或 `mut self` 方法实现。
+- **GC 对语义透明**：GC 自动回收不可达实例（含**循环引用**）；不暴露析构时机。需要**确定性释放/析构钩子**或跨 FFI 保持存活时，使用标准库 `mem::Arc`（显式引用计数，`mem::Arc::new(x)`/`x.strong_count()`）。
 - **`ExprId` 是 `Copy` 值句柄**，自然共享；底层 `ExprPool` 只读并发安全。
 
 ### 12.4 内存策略
@@ -1129,7 +1250,15 @@ let d: Number = 0;            // 显式类型注解
 ----|------|
  W_symbol | hash-consing `ExprPool`（线程本地缓存 + 全局 `DashMap`，可共享、无环、O(1) 相等） |
  W_numeric | 栈值 + nalgebra + 批量算法（BLAS） |
- W_host | 类实例引用计数（浅拷贝共享 + 基本值深拷贝）；`String` 缓冲内联/SSO |
+ W_host | **GC（追踪式，标记-清除/分代）**管理类实例与宿主值（浅拷贝共享 + 基本值深拷贝）；`String` 缓冲内联/SSO；`mem::Arc` 供显式引用计数 |
+
+**GC 设计要点（v2.2，§实现方案 Phase 12）**：
+
+- GC 作用域：**宿主世界（W_host）** 的类实例与集合缓冲；符号层（`ExprPool`）与数值层（栈值）不参与。
+- 触发：求值器内可安全收集点（块/函数/循环边界）按水位触发，不引入异步扫描线程（单线程 GC，确定性优先）。
+- 根集：环境链 `EnvRef` + 当前求值栈 + 模块表；从根追踪 `Value` 图可达的实例。
+- 无析构陷阱：GC 实例不提供析构；需要确定性释放用 `mem::Arc`。
+- 并行求值（`parfor`/`@parallel`）每任务独立 GC 堆，任务结束整堆回收。
 
 ---
 
@@ -1148,6 +1277,7 @@ Prima 采用**三级策略系统**，从全局到局部逐层覆盖：
 ### 13.2 策略表（定稿）
 
 #### 全局（污染性）策略
+
 **必须**声明于 `src/main.pra` 最上方，在非入口文件声明则**编译报错**（`E0021`）。
 
  策略 | 类型 | 默认 | 说明 |
@@ -1156,6 +1286,7 @@ Prima 采用**三级策略系统**，从全局到局部逐层覆盖：
  `undefined_handling` | enum | `strict` | `Undefined` 行为（`strict` 报错 / `custom { 0/0 := 1 }` 黑魔法） |
 
 #### 模块/局部策略
+
 可在模块顶部或局部 `with config` 声明。
 
  策略 | 类型 | 默认 | 说明 |
@@ -1163,7 +1294,8 @@ Prima 采用**三级策略系统**，从全局到局部逐层覆盖：
  `fraction` | bool | `true` | 有理数偏好分数 vs 浮点 |
  `broadcast` | bool | `true` | 纯函数自动逐元素（v2.1：仅限数值同质数组，拒嵌套/空数组，§11.4） |
  `loop_optimization` | bool | `true` | 循环闭式公式优化 |
- `simplify_level` | int 0-3 | `2` | 默认化简等级 |
+ `opt_level` | enum | `O2` | 优化等级（`O0`/`O1`/`O2`/`O3`，v2.2，§10.2）：编译器自动施加的优化通道集合 |
+ `simplify_level` | int 0-3 | `2` | 默认化简等级（符号层，独立于 `opt_level`） |
  `num_to_big` | bool | `true` | 整数溢出自动升级 BigInt（否则报错） |
  `print_format` | enum | `latex` | 打印格式（`latex` / `unicode` / `ascii`） |
  `overload_policy` | enum | `warn` | 运算符重载使用策略：`warn`（默认，带 `W0005` 警告）/ `allow`（解除）/ `deny`（报错），§18.5 |
@@ -1171,6 +1303,7 @@ Prima 采用**三级策略系统**，从全局到局部逐层覆盖：
 ### 13.3 策略使用示例
 
 #### 全局策略（入口文件）
+
 ```prima
 // src/main.pra
 config {
@@ -1184,6 +1317,7 @@ let a = (-1)^0.5;                  // 正确 → \i（全局 complex 域）
 ```
 
 #### 模块策略
+
 ```prima
 // src/numerical.pra
 config {
@@ -1195,6 +1329,7 @@ let compute(x) = x / 3;            // → F64(x / 3.0)
 ```
 
 #### 局部策略
+
 ```prima
 config { domain := complex }       // 模块级：复数域
 
@@ -1208,6 +1343,7 @@ let z = (-1)^0.5;                  // 正确 → \i（回到模块级 complex �
 ```
 
 ### 13.4 特殊值「黑魔法」（实验性）
+
 ```prima
 // src/main.pra（必须在入口）
 config {
@@ -1217,6 +1353,7 @@ config {
     }
 }
 ```
+
 **警告**：此特性破坏数学一致性，仅用于特定领域（如某些极限计算约定）。
 
 ---
@@ -1263,10 +1400,11 @@ fn f(x) -> F64 {
 ```
 
 **模式解构控制流**（§4.4）：
+
 ```prima
 // if let
 if let Some(x) = v.get(0) {
-    print(format("first: {}", x));
+    print(f"first: {x}");
 }
 
 // while let
@@ -1287,6 +1425,7 @@ let kind = match x {
 **`?` 运算符**（§16.3）：仅在返回 `Result` 的函数内传播错误。
 
 **规则**：
+
 - 控制流变量**默认数值**，**允许符号**（策略/显式标记）。
 - 循环公式优化默认开（`loop_optimization := true`）。
 - `match` 是表达式（可作右值）；`if`/`while` 是语句。
@@ -1299,6 +1438,7 @@ let kind = match x {
 **哲学**：`import` 语法（Python 风格）+ 编译单元/可见性/路径（Rust 风格）+ 模块间变量不互通。
 
 ### 15.1 导入语法（`import` 统一）
+
 ```prima
 import core;                    // 引入命名空间
 import linalg as la;            // 别名
@@ -1307,6 +1447,7 @@ from mymath import *;           // 通配（不推荐）
 ```
 
 ### 15.2 模块 / 编译单元（Rust 结构）
+
 - **模块是编译单元**，独立作用域。
 - **默认私有**：所有项默认私有，跨模块需显式 `pub`。
 - **变量不互通**：`import` 把**公开项**引入命名空间，不共享内部状态。
@@ -1317,6 +1458,7 @@ from mymath import *;           // 通配（不推荐）
   - 无修饰：所在**类**/作用域私有。
 
 **示例**：
+
 ```prima
 // src/math_utils.pra
 pub let square(x) = x^2;        // 公开函数
@@ -1348,12 +1490,14 @@ let n = v.norm();               // 错误：norm 是 pub(mod)，main 模块不�
 ```
 
 ### 15.3 文件映射
+
 - **一个 `.pra` 文件 = 一个模块主体**。
 - **一个目录 = 一个子模块**，其 `main.pra` 为该目录模块入口（仿 Rust `mod.rs`）。
 - **项目入口 = `src/main.pra`**（根模块）。
 
 **示例目录结构**：
-```
+
+```text
 src/
 ├── main.pra               // 根模块
 ├── physics.pra            // 模块 physics
@@ -1370,6 +1514,7 @@ import linalg::fft;
 ```
 
 ### 15.4 导入冲突
+
 同名符号从多个模块导入：冲突时报错，需别名或 `::` 限定消除。
 
 ```prima
@@ -1388,10 +1533,12 @@ let b = custom_math::sin(x);
 ```
 
 ### 15.5 预导入
-- **预导入 `core`**，且 **`core` 常用功能（内置符号、坍缩函数族、基础算子、`format`、`Option`/`Result` 变体）全部暴露**。
-- 其余模块（`linalg`/`stats`/`plot`/`math`/`io`/`parallel`/`physics`/`sys`/`time`/`num`/`ops`/`c_api`）必须显式 `import`。
+
+- **预导入 `core`**，且 **`core` 常用功能（内置符号、坍缩函数族、基础算子、f-string（§18.1）、`Option`/`Result` 变体）全部暴露**。
+- 其余模块（`linalg`/`stats`/`plot`/`render`/`math`/`io`/`parallel`/`physics`/`sys`/`time`/`num`/`ops`/`c_api`/`mem`）必须显式 `import`。
 
 **`core` 预导入内容**：
+
 - 数值类型：`Integer`、`Rational`、`F64`、`Complex`、`Expr`、`Symbol`、定宽类型名
 - 坍缩函数：`to_*`/`try_*`/`checked_*`/`clamped_*`/`rounded_*` 全族（§九）
 - 内置符号：`\e`、`\pi`、`\i`、`\infty`、`\gamma`、`\phi`
@@ -1399,7 +1546,7 @@ let b = custom_math::sin(x);
 - 化简函数：`simplify`、`limit`、`derivative`、`partial`、`grad`（§19.4）
 - 集合：`Array`/`Dict`/`Set` 及方法（§11）、`len`/`enumerate`/`sorted`/`reversed`/`sum`/`prod`/`min`/`max`/`all`/`any`/`zip`/`join` 等便捷函数
 - 控制台：`print`（不换行）、`println`（换行）、`input`、`read_line`（§18.1b）
-- 工具函数：`format`、`range`、`map`、`filter`、`Some`、`None`、`Ok`、`Err`
+- 工具函数：`range`、`map`、`filter`、`Some`、`None`、`Ok`、`Err`；字符串格式化使用 **f-string**（§18.1），`format` 函数已移除（调用得 `W0006`）
 
 ---
 
@@ -1516,15 +1663,17 @@ pub struct SourceLocation {
 **`Result<T, Error>`** 是唯一的一等错误表示；`Option<T>` 表示可能缺失的值。
 
 #### match 处理
+
 ```prima
 let result = try_i32(1e20);
 match result {
-    Ok(n) => print(format("success: {}", n)),
-    Err(e) => print(format("failed: {}", e))
+    Ok(n) => print(f"success: {n}"),
+    Err(e) => print(f"failed: {e}")
 }
 ```
 
 #### `?` 运算符（错误传播）
+
 ```prima
 // ? 只能在返回 Result/Option 的函数体内使用
 fn parse_and_double(s: String) -> Result<F64, Error> {
@@ -1539,6 +1688,7 @@ fn first(list: Array) -> Option<Integer> {
 ```
 
 #### unwrap 家族（显式放弃错误，panic 兜底）
+
 ```prima
 let a = try_i32(100).unwrap();              // 失败则 panic
 let b = try_i32(1e20).unwrap_or(0);         // 失败返回默认值
@@ -1546,6 +1696,7 @@ let c = try_i32(1e20).expect("conversion failed");  // 自定义 panic 消息
 ```
 
 #### 安全访问（Option）
+
 ```prima
 let v = [1, 2, 3];
 if let Some(x) = v.get(1) {
@@ -1555,6 +1706,7 @@ let y = v.get(10).unwrap_or(0);  // 0
 ```
 
 **规则**：
+
 - `?` 只允许出现在返回 `Result`/`Option` 的函数内，否则编译期错误（`E0054`）。
 - `to_*` 家族直接 panic，不返回 `Result`；需要错误处理请用 `try_*`。
 - **`try/catch` 语法在 v2.0 中移除**：解析即报编译期错误（`E0010` 语法错误，提示改用 `Result`）。
@@ -1564,7 +1716,8 @@ let y = v.get(10).unwrap_or(0);  // 0
 **格式**：**编号 + 来源定位（文件:行:列）+ 相关表达式（LaTeX）+ 可恢复建议**。
 
 **错误示例**：
-```
+
+```text
 error[E0050]: type mismatch
   --> src/main.pra:15:9
    |
@@ -1575,7 +1728,7 @@ error[E0050]: type mismatch
    = expression: √2
 ```
 
-```
+```text
 error[R0005]: invalid operation in real domain
   --> src/numerical.pra:42:18
    |
@@ -1588,7 +1741,8 @@ error[R0005]: invalid operation in real domain
 ```
 
 **警告示例**（§16.5）：
-```
+
+```text
 warning[W0001]: statements separated by newlines are deprecated
   --> src/main.pra:8:12
    |
@@ -1596,6 +1750,24 @@ warning[W0001]: statements separated by newlines are deprecated
    |              ^ use `;` to terminate statements; newline separation will be removed
    |
    = help: replace the trailing newline with `;`
+```
+
+**方法调用错误的文档 note（v2.2）**：当**方法调用**（`obj.method(...)`）失败时——无论失败原因是编译期（未知方法、参数个数/类型不符）还是运行时（方法内抛错）——诊断必须在 note 中附带**该方法的相关定义与文档注释**（§4.1）：
+
+- **方法定义**：完整签名（含参数类型与返回类型）与定义位置（`file:line:col`）。
+- **文档注释**：该方法的 `///` 文档文本；若无则附所属类（或模块）的文档文本。
+- 标准库方法（§18.1/§18.4）的文档同样来自内嵌 `.pra` 模块的 `///` 注释，可离线查看（`prima doc`，§二十）。
+
+```text
+error[E0040]: undefined name `toUpperCase`
+  --> src/main.pra:20:14
+   |
+20 |     print(name.toUpperCase());
+   |              ^^^^^^^^^^^^ no method named `toUpperCase` on `String`
+   |
+   = note: method `to_upper(self) -> Self` defined at core/string.pra:42:5
+           /// Returns a copy of `self` with every character uppercased.
+   = help: did you mean `to_upper`?
 ```
 
 ### 16.5 警告系统
@@ -1611,17 +1783,20 @@ warning[W0001]: statements separated by newlines are deprecated
  `W0003` | `unused_binding` | `let` 绑定未被使用 |
  `W0004` | `unreachable_code` | 不可达代码 |
  `W0005` | `overloaded_operator` | 使用运算符重载（§18.5；`overload_policy := warn` 默认触发，`allow` 解除） |
+ `W0006` | `deprecated_format` | 调用已移除的 `format` 函数（改用 f-string，§18.1；过渡期警告，目标版本移除） |
 
 **规则**：
+
 - 警告在诊断通道输出，不影响退出码；`prima check` 可选择 `--deny W0001` 将警告升级为错误（工具层）。
 - 警告可通过策略解除（如 `overload_policy := allow` 解除 `W0005`），**不提供逐条 `allow` 注解**（避免噪音）。
-- 弃用型警告（`W0001`/`W0002`）在目标版本移除对应语法后随之删除。
+- 弃用型警告（`W0001`/`W0002`/`W0006`）在目标版本移除对应语法后随之删除。
 
 ## 十七、并行与多线程
 
 **哲学**：**无隐式并行，并行必须显式**。语言绝不隐式使用线程/`rayon`；是否并行由用户明确指定。
 
 ### 17.1 语法：`@parallel` 注解
+
 ```prima
 let f(x): MFn @parallel = x^2;          // 纯函数并行（安全）
 
@@ -1630,12 +1805,14 @@ let f(x): MFn @parallel = x^2;          // 纯函数并行（安全）
 ```
 
 **规则**（v2.1 定稿）：
+
 - `@parallel` 仅可标注**纯数学函数**（安全，编译器验证无副作用）。
 - `@parallel` 函数体必须**自包含**：只依赖形参与内置数学符号/常数，不得引用外部自由变量（并行子任务各自求值，无共享环境）。
 - 调用点在**广播上下文**（数组参数）下并行：数组长度 ≥ 阈值（默认 1024）时按线程数分块交给 rayon；小数组走顺序路径（避免开销）。
 - 功能函数并行标记为 `[EXPERIMENTAL]`，需用户手动保证线程安全。
 
 ### 17.2 `parfor` 显式并行循环
+
 ```prima
 parfor i in 0..n {
     A[i] = compute(i);              // 迭代体必须无副作用
@@ -1648,11 +1825,13 @@ parfor i in 0..n step 2 {
 ```
 
 **规则**（v2.1 定稿）：
+
 - 仅限**无副作用**迭代体，否则编译报错（`E0082`）。允许的语句形态：对**索引槽**的赋值（`A[i] = …`/`A[i] += …`，`i` 为循环变量或其纯函数，越界报 `R0003`）与纯函数调用；禁止 `print`、外部变量赋值、`let` 绑定、类实例修改等。
 - 结果写入：各数组槽位独立计算，结束后整数组回写绑定（rayon 并行）。
 - 底层使用 `rayon` 线程池，粒度自动调优。
 
 ### 17.3 线程安全保证
+
 - **数学不可变值**（`ExprId` + `ExprPool`）只读共享，天然线程安全。
 - **可变 `W_host` 状态**并行需用户显式管理原语（如 `Mutex`、`Atomic`）。
 - **类实例**在并行上下文中只读共享安全；写操作需显式同步。
@@ -1661,6 +1840,7 @@ parfor i in 0..n step 2 {
 ### 17.4 并行示例
 
 #### 并行纯函数广播
+
 ```prima
 let f(x) @parallel = x^2 + sin(x);
 let v = range(0, 1000000);
@@ -1668,6 +1848,7 @@ let w = f(v);                       // 自动并行广播（broadcast + @paralle
 ```
 
 #### 并行矩阵运算
+
 ```prima
 parfor i in 0..rows {
     for j in 0..cols {
@@ -1680,69 +1861,67 @@ parfor i in 0..rows {
 
 ## 十八、标准库规划
 
+> **方法级清单的管理原则（v2.2）**：各模块**具体实现哪些函数/方法/Class，以该模块内嵌 `.pra` 源码的 `///` 文档注释为准**，规范与实现文档不再逐条枚举；本表维护**模块目录与职责范畴**，§18.1/附录 B 保留核心示意清单。
+
  模块 | 内容 | 导入 |
 ------|------|------|
- **core** | 数字塔、ExprDAG、化简、内置符号、坍缩函数族、基础算子、`format`、`Result`/`Option` | **预导入，常用全暴露** |
+ **core** | 数字塔、ExprDAG、化简、内置符号、坍缩函数族、基础算子、f-string（§18.1）、`Result`/`Option`、`String` 类 | **预导入，常用全暴露** |
  **linalg** | 矩阵、线性代数（nalgebra/faer）、求解器 | 显式 |
  **stats** | 统计基础（均值、方差、分位数、分布） | 显式 |
- **plot** | 绘图（SVG 起步，可选 matplotlib-rs 后端） | 显式 |
- **math** | 特殊函数（贝塞尔、伽马、超几何）、数值积分、ODE、FFT | 显式 |
+ **plot** | 绘图（SVG 起步，可选 plotly 后端）；科学绘图（线/散点/柱/等高线/热图） | 显式 |
+ **render** | **公式渲染（v2.2）**：TeX/LaTeX 表达式 → SVG/PNG/终端文本（复用 ExprDAG 渲染器，§7）；`print` 输出公式的可选终端渲染以 cargo feature 提供 | 显式 |
+ **math** | 特殊函数（贝塞尔、伽马、超几何）、数值积分、ODE、FFT、**数值工具（v2.2）：因式分解、素数筛、Taylor 展开、多项式运算等** | 显式 |
  **io** | 文件 I/O、序列化（JSON/CSV/HDF5）、格式化输出 | 显式 |
  **parallel** | 并行原语（`parfor` 辅助、线程池配置、任务调度） | 显式 |
- **physics** | 物理常数（CODATA 2022）、单位系统（可选） | 显式 |
+ **physics** | 物理常数（CODATA 2022）、单位系统（可选）、**常用公式（v2.2：Rust 实现，便于快速优化，§18.6）** | 显式 |
  **symbolic** | 高级符号操作（求导、积分、级数展开、方程求解） | 显式 |
  **optimize** | 优化算法（梯度下降、牛顿法、BFGS、约束优化） | 显式 |
- **sys** | 底层系统操作：`sys::path`（跨平台路径）、`sys::env`（环境）、`sys::os`（平台特定） | 显式 |
+ **sys** | 底层系统操作：`sys::path`（跨平台路径）、`sys::env`（环境）、`sys::os`（平台特定）、**v2.2 扩展：进程、文件系统元数据、终端** | 显式 |
  **time** | 时间系统：`now`、`Duration`、格式化、时钟 | 显式 |
  **num** | 更复杂数字类型（`BigInt` 算法扩展、`Complex` 工具）与额外数字运算 | 显式 |
  **ops** | 运算符重载接口（`impl Add for T` 等，§18.5） | 显式 |
+ **mem** | **内存（v2.2）**：`mem::Arc` 显式引用计数（§12.3/12.4）；GC 控制（`collect`） | 显式 |
  **c_api** | C ABI 类型（`int`/`uint`/`float`/`double`/`bool`/`char`/`ptr`…）与 `@c_api::extern` 导出支持（§18.4） | 显式 |
 
-### 18.1 字符串（core 预导入 `String` 类与 `format`）
+### 18.1 字符串（core 预导入 `String` 类与 f-string）
 
-**字面量**：`"..."`（转义）、`r"..."`（原始字符串）、`"..."` 内 `\u{XXXX}` Unicode 转义。
+**字面量（v2.2）**：
+
+- **普通字符串**：`"..."` 与 `'...'` **等价**，均支持转义（含 `\u{XXXX}` Unicode 转义）。
+- **原始字符串**：`r"..."` / `r'...'`——**不处理转义**（`\n` 是字面反斜杠 + `n`，`\u{XXXX}` 不展开）。
+- **f-string**：`f"..."` / `f'...'`——`{expr}` 插值、`{:spec}` 精化、`{{`/`}}` 转义；可与原始字符串组合（`rf"..."`）。
 
 **转义序列**：`\n` `\t` `\r` `\\` `\"` `\'` `\0` `\a` `\b` `\f` `\v` `\u{XXXX}`（任意 Unicode 码点）。
 
-**`format` 函数**：
+**f-string 规则**（取代 v2.1 的 `format` 函数）：
+
 ```prima
-let s = format("a is {}", a);          // 位置占位 {}
-let t = format("{} + {} = {}", x, y, x + y);
-print(format("value = {}", v));        // 所有可打印值均可格式化
+let s = f"a is {a}";                    // 表达式插值
+let t = f"{x} + {y} = {x + y}";
+print(f"value = {v}");                  // 所有可打印值均可插值
+let u = f"{{literal braces}}";          // {{ → {，}} → }
+let w = f"{pi:0.2}";                    // 格式精化：浮点精度 3.14
 ```
 
-**`String` 类**（`@builtin`，Rust 实现）：
+- `{...}` 内为任意 Prima 表达式（**v2.2 不允许嵌套 f-string 字面量**，嵌套即编译期错误）。
+- 插值表达式按 `print_format` 策略渲染（默认 LaTeX）；参数为 `Result`/`Option` 时显示其成功/失败摘要。
+- 格式精化 `{:spec}` 逐步扩充（浮点精度 `{x:0.2}`、对齐、填充等），语法与支持项以 `.pra` 模块文档注释为准。
+- **`format` 函数已移除**：调用名为 `format` 的函数产生过渡警告 `W0006` 并提示改用 f-string（§16.5）；目标版本移除警告后按未定义名报错。
+
+**`String` 类**（内嵌 `core/string.pra`，v2.2）：方法集**以 Python 3 稳定 `str` 方法为参照**，适配 Prima 习惯（大小写转换、查找/替换、拆分/连接、填充对齐、Unicode、切片/迭代、序列化转换等）。**具体方法清单与使用文档以内嵌 `.pra` 模块的 `///` 文档注释为准**（可通过 `prima doc` 或诊断 note 查看，§4.1/16.4），规范不再逐条枚举，此处仅列示意：
+
 ```prima
-@builtin
 pub class String {
-    pub fn new() -> Self
-    pub fn from(value) -> Self                 // 任意值转字符串
-    pub fn push(self, substr: Self)           // 追加
-    pub fn insert(self, index: Integer, substr: Self) -> Result  // 越界 Err
+    /// Returns the number of Unicode scalar values in `self`.
     pub fn len(self) -> Integer
-    pub fn is_empty(self) -> Bool
-    pub fn char_at(self, i: Integer) -> Option<Char>
-    pub fn substring(self, start: Integer, end: Integer) -> Self
-    pub fn contains(self, pat: Self) -> Bool
-    pub fn starts_with(self, pat: Self) -> Bool
-    pub fn ends_with(self, pat: Self) -> Bool
-    pub fn replace(self, from: Self, to: Self) -> Self
-    pub fn trim(self) -> Self
-    pub fn strip(self, pat: Self) -> Self      // v2.1：去首尾字符集
+    pub fn from(value) -> Self
     pub fn split(self, sep: Self) -> Array<String>
-    pub fn join(self, parts: Array<String>) -> Self  // v2.1：以 self 为分隔符连接
-    pub fn find(self, pat: Self) -> Option<Integer>  // v2.1：首次出现下标
     pub fn to_upper(self) -> Self
-    pub fn to_lower(self) -> Self
-    pub fn repeat(self, n: Integer) -> Self
+    // ... 完整方法集见 core/string.pra 的文档注释
 }
 ```
 
-**`format` 规则**：
-- `{}` 按位置取参；`{0}`/`{1}` 按索引取参（可选）。
-- 参数为 `Expr` 时按 `print_format` 策略渲染（默认 LaTeX）。
-- 参数为 `Result`/`Option` 时显示其成功/失败摘要。
-- 支持 `{:format}` 精化（如 `{:0.2}` 浮点精度），逐步扩充。
+- **性能分层**：热点方法（`split`/`replace`/`to_upper`/`to_lower` 等）以 `@builtin(O1)`/`@builtin(O2)` 提供 Rust 实现；低频方法直接以 `.pra` 书写（§18.4 分层优化机制）。
 
 ### 18.1b 控制台输出与输入（core 预导入，v2.1）
 
@@ -1756,11 +1935,13 @@ println("x =", x);          // 同上但末尾换行
 ```
 
 **规则**：
+
 - `print(args...)`：逐一格式化并输出，参数间以**单个空格**分隔，**不追加换行**（可用 `print("\n")` 手动换行）。
 - `println(args...)`：与 `print` 相同，但**末尾追加一个换行**。
 - 两者都按 `print_format` 策略渲染参数（默认 LaTeX）。
 
 **输入（v2.1）**：
+
 ```prima
 let name = input("Name: ");        // 打印提示（可选）并读取一行，返回 String（去掉末尾换行）
 let n = read_line();               // 无提示读取一行
@@ -1768,6 +1949,7 @@ let v = input("n = ").try_f64();   // 读取并坍缩（配合 try_* 家族，§
 ```
 
 **规则**：
+
 - `input(prompt?) -> String`：可选提示语打印到 stdout（不换行），从 stdin 读一行（去掉行尾 `\r\n`/`\n`）；EOF 返回空字符串。
 - `read_line() -> String`：等价 `input()` 无提示。
 - 交互式 CLI/REPL 中不可用时按空串处理（I/O 错误不 panic）。
@@ -1775,6 +1957,7 @@ let v = input("n = ").try_f64();   // 读取并坍缩（配合 try_* 家族，§
 ### 18.2 `sys` 模块（底层系统操作）
 
 **`sys::path`（跨平台路径）**：
+
 ```prima
 import sys::path;
 let p = path::join("a", "b");           // "a/b"（Linux/macOS）或 "a\\b"（Windows）
@@ -1785,6 +1968,7 @@ let abs = path::is_absolute(p);         // Bool
 ```
 
 **`sys::env`（跨平台环境）**：
+
 ```prima
 import sys::env;
 let home = env::home_dir();             // Option<String>
@@ -1794,6 +1978,7 @@ let cwd = env::current_dir();           // String
 ```
 
 **`sys::os`（平台特定功能）**：
+
 ```prima
 import sys::os;
 let name = os::name();                  // "linux" / "macos" / "windows" / ...
@@ -1802,6 +1987,7 @@ os::exit(0);                            // 立即退出进程
 ```
 
 ### 18.3 `time` 模块（时间系统）
+
 ```prima
 import time;
 let now = time::now();                  // 当前时间戳
@@ -1815,24 +2001,49 @@ let parsed = time::parse("2024-01-01", "%Y-%m-%d");  // Result
 ### 18.4 互操作：`@builtin` 与 `@c_api::extern`
 
 #### `@builtin`（Rust 实现，用于编写真正的标准库）
-标注在无函数体（仅有签名）的 `fn`/`class` 上，表示实现由 Rust 宿主提供；运行时按名称绑定到已注册的内建实现。未注册则编译期报错（`E0055`）。
+
+标注在 `fn`/`class` 上，表示该函数的实现由 Rust 宿主提供；运行时按名称绑定到已注册的内建实现。**v2.2 支持分层优化形式 `@builtin(ON)`**（`O0`–`O3`，§10.2），使同一函数同时拥有 Rust 实现与 `.pra` 原实现，由优化等级决定启用哪一份。
+
+**两种形态**：
+
+1. **`@builtin(O0)`**（等价裸 `@builtin`，v2.1 原语义）：
+   - **不允许函数体**（有函数体报 `E0056`）；
+   - Rust 实现**必须**注册，未注册报 `E0055`；
+   - 任何 `opt_level` 下都使用 Rust 实现。
+
+2. **`@builtin(ON)`（`N = 1..3`，分层优化）**：
+   - **必须有函数体**（`.pra` 原实现，作为回退/基线）；
+   - Rust 实现**可选**（未注册不报错）；
+   - 求值时：若**当前 `opt_level` 策略 ≥ `N`** 且 Rust 实现已注册 → 调用 Rust 实现；否则求值函数体的 `.pra` 原实现。
+   - 两实现的语义必须一致（`.pra` 是唯一可观察语义来源，Rust 实现是其性能分层）。
+   - 参数/返回类型在两种实现间相同，由签名统一约束。
 
 ```prima
+// O0：必须无函数体，Rust 实现必须注册
 @builtin
-pub class String {
-    pub fn new() -> Self
-    pub fn push(self, substr: Self)
-    pub fn insert(self, index: Integer, substr: Self) -> Result
-    // ...
+pub fn print(args...)
+
+// O1+：Rust 实现可选；opt_level < 1 时求值 .pra 函数体
+@builtin(O1)
+pub fn to_upper(self: String) -> String {
+    // .pra 原实现（O0/O1 以下路径）
+    ...
 }
 
-@builtin
-pub fn print(args...)        // 可变参数：逐一打印
-@builtin
-pub fn format(fmt: String, args...) -> String
+@builtin(O2)
+pub fn split(self: String, sep: String) -> Array<String> {
+    ...
+}
 ```
 
+**规则**：
+
+- `@builtin(OX)` 的等级参数非法（非 `O0`–`O3`）→ 编译期错误 `E0057`。
+- 注册机制（Rust 侧）在 §实现方案中定稿（键 `"模块::函数"`，尽量**声明式宏**简化注册，避免手工字符串键）。
+- 标准库方法文档照常以 `.pra` 的 `///` 注释维护（§18.1）。
+
 #### `@c_api::extern`（导出 C ABI 接口）
+
 标注在 `pub fn` 上，将该函数以 C 调用约定导出到二进制文件（`.so`/`.dylib`/`.dll`/可执行），供 C/Rust/其他语言调用。
 
 ```prima
@@ -1840,7 +2051,7 @@ import sys::c_api;
 
 @c_api::extern
 pub fn hello(a: c_api::int) {
-    print(format("Hello, a is {}", a));
+    print(f"Hello, a is {a}");
 }
 
 @c_api::extern
@@ -1850,6 +2061,7 @@ pub fn add(a: c_api::double, b: c_api::double) -> c_api::double {
 ```
 
 **规则**：
+
 - 仅 `pub fn`（宿主函数）可导出；参数/返回值必须是 `c_api::*` C 兼容类型（§附录 B.6）。
 - 编译目标产出含 C 头文件（`prima compile --emit-headers`）。
 - 字符串跨界用 `c_api::cstring`（由宿主转换为 Prima `String` 后传入，反之亦然）。
@@ -1878,6 +2090,7 @@ let c = a + b;            // ⚠ W0005：运算符重载使用（默认警告）
 **可重载运算符**（`ops` 提供）：`Add`、`Sub`、`Mul`、`Div`、`Rem`、`Neg`、`Eq`、`Cmp`、`Index`。
 
 **策略控制**（§13.2）：
+
 ```prima
 with config { overload_policy := allow } {   // 解除 W0005 警告
     let c = a + b;
@@ -1888,9 +2101,38 @@ with config { overload_policy := deny } {    // 使用即报错
 ```
 
 **规则**：
+
 - 重载**不影响**内建数值类型的运算符（`Integer + Integer` 等永远使用内建语义）。
 - 重载运算符的调用点按 `overload_policy` 决定警告/放行/报错。
 - `Eq`/`Cmp` 重载改变 `==`/`<` 等比较语义；`Index` 重载 `obj[i]`。
+
+### 18.6 标准库扩展（v2.2）
+
+> 以下模块**方法级清单以各自内嵌 `.pra` 模块的 `///` 文档注释为准**（§十八 管理原则）；此处给出职责范畴与关键实现取向。
+
+**`math` 数值工具**：
+
+- 整数算法：**因式分解**（试除/ Pollard rho）、**素数筛**、`gcd`/`lcm`/CRT（中国剩余定理）、整数幂余。
+- 多项式与级数：**Taylor 展开**（`taylor(f, x, x0, n)` → 截断幂级数）、多项式加减乘除/求值/求根、连分数。
+- 一般以 `.pra` 书写，热点（如大数因式分解核心）用 `@builtin(ON)` 分层到 Rust（§18.4）。
+
+**`physics` 常用公式与 Class**：
+
+- **常用公式直接用 Rust 实现**（`@builtin`/`@builtin(ON)`），便于对该类计算快速优化；示例范畴：运动学（匀速/匀加速直线、抛体）、力学（牛顿定律、能量/动量）、简谐运动、热学基础、电磁基础（库仑、欧姆）等。
+- 提供 **Class**（如 `Vector3`、`Unit` 等）与方法；`physics` 模块同时保留 CODATA 物理常数（§7.3）。
+- 面向的教学/工程取向：以带单位的初等物理公式为主，单位系统（§22.4）仍为未来扩展。
+
+**`sys` 系统交互扩展**：
+
+- 进程：`sys::process`（运行命令、退出码、输出捕获）、`sys::fs`（文件元数据、目录遍历）、`sys::term`（终端尺寸、raw 模式）等子模块，沿用 §18.2 的全路径绑定约定。
+
+**`plot` 绘图**：线/散点/柱/等高线/热图；SVG 为默认后端，PNG 可选（`savefig` 格式参数）。**`render` 公式渲染**：
+
+- `render::to_svg(expr)` / `render::to_png(expr)`：把表达式（`Expr`/f-string 结果）渲染为公式图像（复用 §7 ExprDAG 渲染器）。
+- `render::to_terminal(expr)`：终端文本公式（ASCII/Unicode 数学）；**`print` 输出公式时的可选终端公式渲染以 cargo feature 提供**（§实现方案 §1）。
+- 两者都以 `print_format` 策略为默认风格。
+
+**`mem`**：`mem::Arc` 显式引用计数（§12.3/12.4）、`mem::collect()` 手动触发 GC。
 
 ---
 
@@ -1899,6 +2141,7 @@ with config { overload_policy := deny } {    // 使用即报错
 ### 19.1 MVP（解释器 + 符号引擎）
 
 **核心组件**：
+
 - **词法**：手写 lexer（§实现方案）。
 - **语法**：手写递归下降 + Pratt。
 - **符号层**：`ExprPool`（hash-consing）+ `Number`/`Value` + 化简引擎。
@@ -1913,7 +2156,9 @@ with config { overload_policy := deny } {    // 使用即报错
 - **诊断**：编号化错误/警告（§十六）。
 
 **MVP 里程碑**：
+
 1. **基础符号计算**：
+
    ```prima
    import core;
    let a = tex"\sqrt{2}+\pi";
@@ -1921,6 +2166,7 @@ with config { overload_policy := deny } {    // 使用即报错
    ```
 
 2. **化简与求值**：
+
    ```prima
    const b = tex"\e^{i\pi}+1";
    let c = simplify(b);         // → 0
@@ -1928,6 +2174,7 @@ with config { overload_policy := deny } {    // 使用即报错
    ```
 
 3. **函数与广播**：
+
    ```prima
    let f(x) = x^2;
    let v = [1, 2, 3];
@@ -1935,6 +2182,7 @@ with config { overload_policy := deny } {    // 使用即报错
    ```
 
 4. **策略生效**：
+
    ```prima
    config { fraction := false }
    let x = 1/3;
@@ -1942,6 +2190,7 @@ with config { overload_policy := deny } {    // 使用即报错
    ```
 
 5. **循环优化**：
+
    ```prima
    let s = 0;
    for i in 1..100 { s += i; }  // 编译器优化为 s = 100*101/2
@@ -1949,6 +2198,7 @@ with config { overload_policy := deny } {    // 使用即报错
    ```
 
 6. **并行注解**：
+
    ```prima
    let f(x) @parallel = x^2;
    let v = range(0, 1000000);
@@ -1956,6 +2206,7 @@ with config { overload_policy := deny } {    // 使用即报错
    ```
 
 7. **错误处理（Result + ?）**：
+
    ```prima
    fn parse_double(s: String) -> Result<F64, Error> {
        let v = try_f64(s)?;
@@ -1963,12 +2214,13 @@ with config { overload_policy := deny } {    // 使用即报错
    }
 
    match parse_double("3.14") {
-       Ok(x)  => print(format("parsed {}", x)),
-       Err(e) => print(format("failed: {}", e))
+       Ok(x)  => print(f"parsed {x}"),
+       Err(e) => print(f"failed: {e}")
    }
    ```
 
 8. **Class 与方法链**：
+
    ```prima
    class Float {
        v: Expr,
@@ -1980,16 +2232,19 @@ with config { overload_policy := deny } {    // 使用即报错
    print(r);                    // 3.142
    ```
 
-9. **字符串与 format**：
+9. **字符串与 f-string**：
+
    ```prima
-   let s = format("e = \u{03B5}, pi = \u{03C0}");  // "e = ε, pi = π"
+   let s = "e = \u{03B5}";          // 普通字符串：Unicode 转义
    let t = s.to_upper();
-   print(t);                    // "E = Ε, PI = Π"
+   print(t);                    // "E = Ε"
+   let msg = f"parsed {x}";     // f-string：表达式插值
    ```
 
 ### 19.2 第二阶段：性能优化与 JIT
 
 **JIT 编译**：
+
 - **技术选型**：`inkwell`（LLVM 绑定）或 `cranelift-codegen`（轻量级代码生成，编译速度优先）。
 - **混合执行**：符号层解释，数值热点 JIT 编译为原生码。
 - **编译触发**：
@@ -2000,6 +2255,7 @@ with config { overload_policy := deny } {    // 使用即报错
 **优化管道落地**（§10.2）：JIT 阶段接入常量折叠、CSE、循环优化与**自动内联**；AOT 阶段再做死代码消除与模块级优化。
 
 **示例流程**：
+
 ```prima
 let f(x) = x^2 + sin(x);
 
@@ -2014,6 +2270,7 @@ let result = f(to_f64(101));  // 原生速度
 ```
 
 **可组合优化**：
+
 ```prima
 let f(x) = x^2 + 1;
 let g = jit(grad(f));         // 组合：自动微分 + JIT 编译
@@ -2023,10 +2280,12 @@ print(g(3.0));                // 原生速度的梯度计算
 ### 19.3 第三阶段：AOT 编译
 
 **目标**：
+
 - 生成独立可执行文件（无运行时依赖）。
 - 支持 WebAssembly（浏览器/边缘计算）。
 
 **技术路径**：
+
 1. **查询式编译**（仿 rustc）：
    - 模块依赖图 → 增量编译。
    - 缓存 `ExprId` 化简结果、类型推断信息。
@@ -2039,6 +2298,7 @@ print(g(3.0));                // 原生速度的梯度计算
 4. **C ABI 导出**（§18.4）：`prima compile --emit-c-abi` 生成 `.so`/头文件。
 
 **命令**：
+
 ```bash
 prima compile src/main.pra -o outputs/build/myapp       # 本机可执行文件
 prima compile src/main.pra --target wasm32 -o app.wasm  # WebAssembly
@@ -2050,9 +2310,11 @@ prima compile src/main.pra --emit-c-abi -o libhello     # C ABI 动态库 + 头�
 **实现分阶段**：
 
 #### MVP 阶段：符号微分（v2.1 纳入 core 预导入）
+
 - **基于 ExprDAG 的符号求导**：递归应用求导规则（和差积商、幂、链式、`sin/cos/tan/exp/ln/log/sqrt/abs`）。
 - **接口（core 预导入）**：`derivative(expr, var)` / `partial(expr, var)` / `grad(expr)` / `limit(expr, var, a)`，接受**符号表达式**或 **MFn 名**（`derivative(f, x)` 等价 `derivative(f 的函数体, x)`）。
 - **示例**：
+
   ```prima
   let f(x) = x^2 + sin(x);
   let df = derivative(f, x);    // → 2*x + cos(x)（返回 Expr）
@@ -2069,25 +2331,32 @@ prima compile src/main.pra --emit-c-abi -o libhello     # C ABI 动态库 + 头�
   ```
 
 #### 第二阶段：前向模式 AD（数值）
+
 - **双数（Dual Numbers）实现**：
+
   ```rust
   struct Dual {
       val: f64,
       grad: f64,
   }
   ```
+
 - **重载算术运算**：
+
   ```prima
   fn eval_dual(f: MFn, x: Dual) -> Dual {
       // 自动传播梯度
   }
   ```
+
 - **适用场景**：梯度计算（少量输入，多量输出）。
 
 #### 第三阶段：反向模式 AD（深度学习风格）
+
 - **计算图 + Tape**：记录前向计算，反向传播梯度。
 - **内存管理**：arena 分配器 + 生命周期管理。
 - **可组合性**：
+
   ```prima
   let loss(w) = sum((y - predict(X, w))^2);
   let grad_loss = grad(loss);   // 反向模式自动微分
@@ -2095,6 +2364,7 @@ prima compile src/main.pra --emit-c-abi -o libhello     # C ABI 动态库 + 头�
   ```
 
 **参考实现**：
+
 - `alkahest`（Julia，符号 + AD + JIT 组合）。
 - `enzyme`（LLVM 插件，自动微分）。
 - `zygote.jl`（Julia 反向 AD）。
@@ -2105,7 +2375,7 @@ prima compile src/main.pra --emit-c-abi -o libhello     # C ABI 动态库 + 头�
 
 **设计规则**：**一切代码（入口/导入区/模块）放 `src/`**；**配置与 README 留在项目根目录**；运行产物放入 `outputs/`。
 
-```
+```text
 prima_project/                      # 项目根
 │
 ├── src/                            # ★ 所有 Prima 源码（.pra）
@@ -2128,6 +2398,7 @@ prima_project/                      # 项目根
 ```
 
 ### 规则说明
+
 1. **`src/main.pra` = 项目入口/根模块**。污染性策略（§13.1）只能出现在这里。
 2. **一个 `.pra` 文件 = 一个模块主体**；**一个目录 = 一个子模块**，其 `main.pra` 为目录模块入口。
 3. **`config {}` + 全部 `import` 必须位于文件顶部**，之后才是代码。
@@ -2136,6 +2407,7 @@ prima_project/                      # 项目根
 6. **运行产物**统一进 `outputs/`，`src/` 保持纯源码。
 
 ### 工具命令
+
 由 `prima` CLI 提供：
 
 ```bash
@@ -2157,15 +2429,18 @@ prima check src/main.pra
 # 测试
 prima test
 
-# 文档生成
-prima doc
+# 文档生成（v2.2：解析 `///`/`//!` 文档注释，覆盖项目与内置标准库）
+prima doc                        # 输出到 stdout（Markdown）
+prima doc -o docs/api.md         # 写入文件
+prima doc --stdlib               # 只输出内置标准库（含 core/string.pra 等）文档
 ```
 
 ---
 
 ## 二十一、已定决策总表
 
- # | 决策 | 结论 |
+## | 决策 | 结论 |
+
 ---|------|------|
  1 | 默认精确 | 表达式/分数优先，`sqrt(2)` 保留为 Expr（§六） |
  2 | 不定式与未定义 | 符号层 `Indeterminate` 可化简；数值层 `Undefined` 报错（§6.2） |
@@ -2202,12 +2477,12 @@ prima doc
  33 | Class | **字段 + 方法聚合类型，`Self`/`new`/`self`，浅拷贝共享 + 基本值深拷贝**（§4.5/12.3） |
  34 | 管道 | **`\|>` 弃用（W0002），由类方法链取代**（§9.7） |
  35 | 警告系统 | **编号 `W####`，英文码表记录于附录 C；策略可解除**（§16.5） |
- 36 | 字符串 | **完整转义（含 `\u{XXXX}`）、`format("...{}...")`、`String` 类方法集**（§18.1） |
+ 36 | 字符串（v2.2） | **`format` 移除，改用 f-string `f"..."`；`"..."`/`'...'` 双定界 + 原始字符串 `r"..."`；`String` 类方法集以 Python `str` 为参照，清单见 `.pra` 文档注释**（§18.1） |
  37 | 坍缩类型 | **与 Rust 基本数值一一对应：i8…u128/isize/usize/f32/f64**（§6.1/九） |
  38 | 互操作 | **`@builtin` Rust 实现 + `@c_api::extern` 导出 C ABI**（§18.4） |
- 39 | 优化 | **自动内联（开发者不可干预）+ 常量折叠/CSE/循环优化/TCO 等现代优化管道**（§10.2） |
+ 39 | 优化 | **`opt_level` 等级化优化管道（`O0`–`O3`）+ 自动内联（开发者不可干预）+ 常量折叠/CSE/循环优化/TCO/SIMD（O3）**（§10.2） |
  40 | 运算符重载 | **`ops` 模块 `impl`；`overload_policy` 默认 `warn`（W0005）**（§18.5） |
- 41 | 标准库扩充 | **`sys`（path/env/os）、`time`、`num`、`ops`、`c_api`**（§十八） |
+ 41 | 标准库扩充 | **`sys`（path/env/os/process/fs/term）、`time`、`num`、`ops`、`c_api`、`mem`、`render`；`math`/`physics`/`plot` 按 v2.2 扩展**（§十八） |
  42 | 数组语义（v2.1） | **`Array` 可变长可变序列，元素任意值，方法齐全，可嵌套作为数据**；广播仅限数值同质数组（§11.3/11.4） |
  43 | 集合类型（v2.1） | **`Dict`/`Set` 为基本类型**：字面量、索引、方法、成员测试、集合代数（§4.6/11.6） |
  44 | 推导式（v2.1） | **`[x for ...]`/`{k: v for ...}`/`{x for ...}`** 统一迭代协议（§11.7） |
@@ -2215,34 +2490,44 @@ prima doc
  46 | 便捷函数（v2.1） | **`len`/`enumerate`/`sorted`/`reversed`/`sum`/`prod`/`min`/`max`/`all`/`any`/`zip`/`join` 等** core 预导入（附录 B） |
  47 | 并行细节（v2.1） | **`@parallel` 广播按阈值并行；`parfor` 只允许索引槽写入（E0082）**（§十七） |
  48 | 符号微分（v2.1） | **`derivative`/`partial`/`grad`/`limit` 纳入 core**，基于 ExprDAG 符号求导（§19.4） |
+ 49 | 文档注释（v2.2） | **`///`/`//!` 规范文档注释随 AST 保留；`prima doc` 覆盖项目与内置标准库；方法调用出错时 note 附方法定义与文档**（§4.1/16.4） |
+ 50 | 优化等级（v2.2） | **`opt_level` 策略（`O0`–`O3`，默认 `O2`）控制优化通道集合；SIMD 识别等激进通道在 `O3`**（§10.2/13.2） |
+ 51 | `@builtin(O1)`（v2.2） | **分层优化：`opt_level ≥ N` 时用 Rust 实现，否则求值 `.pra` 原实现；`@builtin(O0)` 原语义保留**（§18.4） |
+ 52 | 标准库清单（v2.2） | **模块方法级清单以 `.pra` 的 `///` 文档注释为唯一来源；规范/实现文档只维护模块目录**（§十八） |
+ 53 | 内存（v2.2） | **宿主层 GC 取代引用计数；`mem::Arc` 提供显式引用计数，`mem::collect()` 手动 GC**（§12.3/12.4） |
 
 ---
 
-## 二十二、未来扩展方向
+### 二十二、未来扩展方向
 
-### 22.1 宏系统（保留）
+#### 22.1 宏系统（保留）
+
 - 保留关键字 `macro`，未来支持编译期代码生成。
 - 参考 Rust 声明宏 + 过程宏。
 
-### 22.2 异步支持（保留）
+#### 22.2 异步支持（保留）
+
 - 保留关键字 `async` / `await`，未来支持异步 I/O。
 - 参考 Rust `async-std` / `tokio` 生态。
 
-### 22.3 trait 系统（实验性）
+#### 22.3 trait 系统（实验性）
+
 - 保留关键字 `trait`，未来支持泛型约束。
 - `ops` 模块的运算符重载（§18.5）是 trait 系统的先行者；`impl Add for T` 语法与其衔接。
 
-### 22.4 单位系统（可选模块）
+#### 22.4 单位系统（可选模块）
+
 - 物理量带单位：`let v = 3.0 * meter / second;`。
 - 编译期单位检查，避免火星气候轨道器式灾难。
 
-### 22.5 GPU 加速（第三阶段）
+#### 22.5 GPU 加速（第三阶段）
+
 - `@gpu` 注解：自动生成 CUDA/OpenCL/WGSL 代码。
 - 矩阵运算、并行循环自动卸载到 GPU。
 
 ---
 
-## 附录 A：完整语法 BNF
+### 附录 A：完整语法 BNF
 
 ```bnf
 program          ::= config? import* item*
@@ -2279,8 +2564,10 @@ params           ::= (param ("," param)*)?
 param            ::= ident type_ann? | "self" type_ann?
 type_ann         ::= ":" type
 
-annotation       ::= "@parallel" | "@jit" | "@gpu" | "@builtin"
+annotation       ::= "@parallel" | "@jit" | "@gpu"
+                   | "@builtin" ("(" opt_level ")")?     // 缺省 O0（§18.4）
                    | "@c_api" "::" "extern"
+opt_level        ::= "O0" | "O1" | "O2" | "O3"            // §10.2
 
 control_stmt     ::= for_stmt | parfor_stmt | while_stmt | if_stmt
                    | if_let_stmt | while_let_stmt | match_stmt
@@ -2352,13 +2639,21 @@ comp_entry       ::= expr ":" expr
 comp_for         ::= "for" ident "in" expr (comp_if | comp_for)*
 comp_if          ::= "if" expr
 
-literal          ::= number | string | char | bool | tex_literal
+literal          ::= number | string | f_string | char | bool | tex_literal
 number           ::= integer | float | hex | binary
 integer          ::= [0-9]+
 float            ::= [0-9]+ "." [0-9]+ (("e"|"E") ("+"|"-")? [0-9]+)?
 hex              ::= "0x" [0-9a-fA-F]+
 binary           ::= "0b" [01]+
-string           ::= "\"" char* "\"" | "r\"" char* "\""
+// v2.2：普通字符串 `"..."`/`'...'`（转义等价）；原始字符串 `r"..."`/`r'...'`（不转义）
+string           ::= "\"" char* "\"" | "'" char* "'"
+                   | "r" "\"" char* "\"" | "r" "'" char* "'"
+// v2.2：f-string `f"..."`/`f'...'`（`{expr}` 插值、`{:spec}` 精化、`{{`/`}}` 转义）；`rf"..."` 组合
+f_string         ::= "f" string_tpl | "rf" string_tpl
+string_tpl       ::= "\"" string_part* "\"" | "'" string_part* "'"
+string_part      ::= tpl_char | "{{" | "}}" | "{" tpl_expr (":" tpl_spec)? "}"
+tpl_expr         ::= expr        // v2.2：不允许嵌套 f-string 字面量
+tpl_spec         ::= [^{}]+
 char             ::= "'" character "'"
 bool             ::= "true" | "false"
 tex_literal      ::= "tex\"" tex_content "\""
@@ -2402,11 +2697,12 @@ ident            ::= [a-zA-Z_] [a-zA-Z0-9_]* | "\\" [a-zA-Z_]+
 
 ---
 
-## 附录 B：标准库函数速查
+### 附录 B：标准库函数速查
 
-### B.1 Core（预导入）
+#### B.1 Core（预导入）
 
-#### 坍缩函数
+##### 坍缩函数
+
 ```prima
 // 基础坍缩（panic on failure）
 to_i8(x), to_i16(x), to_i32(x), to_i64(x), to_i128(x)
@@ -2435,7 +2731,8 @@ clamped_f32(x, min, max), clamped_f64(x, min, max)
 rounded_f64(x, digits), rounded_f32(x, digits), rounded_i32(x), truncated_i32(x)
 ```
 
-#### 数学函数
+##### 数学函数
+
 ```prima
 // 基础算术
 sqrt(x), exp(x), log(x), ln(x), log10(x), log2(x)
@@ -2453,7 +2750,8 @@ polar_form(z), complex_to_parts(z)
 pow(base, exp), cbrt(x), nth_root(x, n)
 ```
 
-#### 化简与符号操作
+##### 化简与符号操作
+
 ```prima
 simplify(expr, level = 2)      // 化简表达式
 expand(expr)                   // 展开
@@ -2468,18 +2766,19 @@ integral(f, var)               // 不定积分
 definite_integral(f, var, a, b)  // 定积分
 ```
 
-#### 字符串与格式化
+##### 字符串与 f-string（v2.2）
+
 ```prima
-format(fmt, args...)           // 格式化生成 String（§18.1）
-to_string(x)                   // 任意值转 String
+f"a = {a}"                       // f-string 插值（§18.1）；`format` 已移除（W0006）
+to_string(x)                     // 任意值转 String
+"..." / '...' / r"..." / r'...'  // 字面量（§三/18.1）
 String::new(), String::from(v)
-s.push(t), s.insert(i, t), s.len(), s.is_empty()
-s.char_at(i), s.substring(a, b), s.contains(p), s.starts_with(p), s.ends_with(p)
-s.replace(f, t), s.trim(), s.strip(p), s.split(sep), s.join(parts)
-s.find(p), s.to_upper(), s.to_lower(), s.repeat(n)
+s.len(), s.is_empty(), s.split(sep), s.join(parts), s.to_upper(), s.to_lower()
+// 完整方法集见 core/string.pra 的 /// 文档注释（§十八 管理原则）
 ```
 
-#### 控制台（v2.1，§18.1b）
+##### 控制台（v2.1，§18.1b）
+
 ```prima
 print(args...)                 // 格式化输出，参数空格分隔，不追加换行（v2.1）
 println(args...)               // 同 print，末尾追加换行
@@ -2487,7 +2786,8 @@ input(prompt?)                 // 打印提示（可选）并读取一行 → St
 read_line()                    // 无提示读取一行 → String
 ```
 
-#### 集合便捷函数（v2.1，core 预导入）
+##### 集合便捷函数（v2.1，core 预导入）
+
 ```prima
 // 多态长度与构造
 len(x)                         // Array/Dict/Set/String/Tuple 的元素数
@@ -2525,14 +2825,16 @@ s.union(other) / s ∪ other, s.intersection(other) / s ∩ other
 s.difference(other) / s \ other
 ```
 
-#### 工具函数
+##### 工具函数
+
 ```prima
 map(f, array)                  // 映射
 filter(pred, array)            // 过滤
 reduce(f, array, init)         // 归约
 ```
 
-#### 内建变体构造器（core 预导入）
+##### 内建变体构造器（core 预导入）
+
 ```prima
 Some(x)     // Option 的 Some
 None        // Option 的 None
@@ -2540,7 +2842,7 @@ Ok(x)       // Result 的 Ok
 Err(e)      // Result 的 Err
 ```
 
-### B.2 Linalg（显式导入）
+#### B.2 Linalg（显式导入）
 
 ```prima
 // 矩阵构造
@@ -2564,7 +2866,7 @@ solve(A, b)                    // 解 Ax = b
 lstsq(A, b)                    // 最小二乘
 ```
 
-### B.3 Stats（显式导入）
+#### B.3 Stats（显式导入）
 
 ```prima
 // 描述统计
@@ -2583,7 +2885,7 @@ pdf(dist, x), cdf(dist, x), quantile(dist, p)
 sample(dist, n)
 ```
 
-### B.4 Plot（显式导入）
+#### B.4 Plot（显式导入）
 
 ```prima
 // 基础绘图
@@ -2603,7 +2905,7 @@ savefig(filename, format = "svg", dpi = 300)
 show()
 ```
 
-### B.5 Sys / Time / Num / Ops（显式导入）
+#### B.5 Sys / Time / Num / Ops（显式导入）
 
 ```prima
 // sys::path —— 跨平台路径
@@ -2634,7 +2936,7 @@ impl ops::Add for Vec2 { fn add(self, rhs: Vec2) -> Vec2 { ... } }
 impl ops::Index for Vec2 { fn index(self, i: Integer) -> F64 { ... } }
 ```
 
-### B.6 C ABI 类型（`sys::c_api`，显式导入）
+#### B.6 C ABI 类型（`sys::c_api`，显式导入）
 
 ```prima
 c_api::int          // C int → I32
@@ -2650,13 +2952,43 @@ c_api::ptr          // C void* → 不透明指针
 c_api::unit         // C void
 ```
 
+#### B.7 v2.2 标准库扩展（示意；完整清单见 `.pra` 模块文档注释）
+
+```prima
+// math —— 数值工具（§18.6）
+math::factor(n)                  // 整数因式分解 → Array<Integer>
+math::primes(limit)              // 素数筛 → Array<Integer>
+math::gcd(a, b), math::lcm(a, b) // 已从 num 归并的整数算法
+math::taylor(f, x, x0, n)        // Taylor 展开（MFn 名或表达式，截断 n 阶）
+math::polynomial(roots, coeffs)  // 多项式构造/求值/求根
+
+// physics —— 常用公式（Rust 实现）与 Class（§18.6）
+physics::projectile_range(v0, angle, g)
+physics::kinetic_energy(m, v)    // ½mv²
+physics::simple_pendulum(L, g)
+// 完整公式与 Class（如 Vector3）见 physics.pra 文档注释
+
+// sys 扩展 —— 进程/文件系统/终端（§18.6）
+sys::process::run(cmd) -> Result<String>    // 运行命令并捕获输出
+sys::fs::metadata(p) -> Option<Dict>        // 文件元数据
+sys::term::size() -> (Integer, Integer)     // (rows, cols)
+
+// render —— 公式渲染（§18.6）
+render::to_svg(expr), render::to_png(expr)  // Expr → 公式图像
+render::to_terminal(expr)                   // 终端文本公式
+
+// mem —— 显式引用计数与 GC（§12.3/12.4）
+mem::Arc::new(x), mem::Arc::strong_count(x)
+mem::collect()                              // 手动触发 GC
+```
+
 ---
 
-## 附录 C：错误与警告码表（Error & Warning Codes）
+### 附录 C：错误与警告码表（Error & Warning Codes）
 
 > 码表为**英文**。编译期错误 `E####`；运行时错误 `R####`；警告 `W####`。所有码在诊断输出中以 `error[CODE]`/`warning[CODE]` 形式呈现（§16.4）。
 
-### C.1 编译期错误（E）
+#### C.1 编译期错误（E）
 
  码 | 名称 | 含义 |
 ----|------|------|
@@ -2676,8 +3008,9 @@ c_api::unit         // C void
  `E0052` | `unknown_type` | 未知类型 |
  `E0053` | `irrefutable_pattern` | `let` 使用了可反驳模式 |
  `E0054` | `try_operator_context` | `?` 用在非 `Result`/`Option` 返回函数外 |
- `E0055` | `unregistered_builtin` | `@builtin` 未注册实现 |
- `E0056` | `builtin_body` | `@builtin` 函数/类不应有函数体 |
+ `E0055` | `unregistered_builtin` | `@builtin`（`O0`）未注册实现 |
+ `E0056` | `builtin_body` | `@builtin(O0)` 函数/类不应有函数体 |
+ `E0057` | `invalid_opt_level` | `@builtin(OX)` 优化等级参数非法（v2.2，须 `O0`–`O3`，§18.4） |
  `E0060` | `unknown_field` | 结构字面量/类模式引用了未知字段 |
  `E0061` | `missing_field` | 结构字面量缺少字段 |
  `E0062` | `self_outside_method` | `self`/`Self` 用在类方法外 |
@@ -2689,7 +3022,7 @@ c_api::unit         // C void
   `E0081` | `op_overload_bad_arity` | 运算符重载函数签名不合法 |
   `E0082` | `parfor_side_effect` | `parfor` 迭代体含副作用（v2.1，仅允许索引槽赋值/纯函数调用，§17.2） |
 
-### C.2 运行时错误（R）
+#### C.2 运行时错误（R）
 
  码 | 名称 | 含义 |
 ----|------|------|
@@ -2708,7 +3041,7 @@ c_api::unit         // C void
   `R0013` | `not_found` | `Array.index`/`Set.remove` 找不到目标（v2.1 §11.3/11.6） |
   `R0014` | `empty_collection` | 对空数组/空集合做广播或归约（v2.1 §11.4） |
 
-### C.3 警告（W）
+#### C.3 警告（W）
 
  码 | 名称 | 含义 |
 ----|------|------|
@@ -2717,7 +3050,8 @@ c_api::unit         // C void
  `W0003` | `unused_binding` | 绑定未使用 |
  `W0004` | `unreachable_code` | 不可达代码 |
  `W0005` | `overloaded_operator` | 运算符重载使用（`overload_policy := allow` 解除） |
+ `W0006` | `deprecated_format` | 调用已移除的 `format` 函数（改用 f-string，§18.1；过渡期警告） |
 
 ---
 
-*语言规范 Prima v2.1 · 作为 Prima 语言设计与实现的最终依据*
+*语言规范 Prima v2.2 · 作为 Prima 语言设计与实现的最终依据*

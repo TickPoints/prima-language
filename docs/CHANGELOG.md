@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Revised the language spec and implementation plan to **v2.2** (docs only, no code landed yet). Planning for: removing `format` in favor of Python-style f-strings (plus `'...'`/raw-string literals), stabilizing `///`/`//!` doc comments with `prima doc` coverage of the embedded standard library and method-error diagnostic notes, `@builtin(ON)` layered optimization by optimization level, the `opt_level` (`O0`–`O3`) optimization-level policy, a Python-`str`-referenced builtin method set maintained in `.pra` doc comments, stdlib expansion (`math`/`physics`/`sys`/`plot`/`render`/`mem`), and a host-layer GC replacing reference counting for class instances. The implementation roadmap is split into Phase 6–12 in `docs/IMPLEMENTATION-zh_CN.md` §5.
+
 ## [0.2.0-alpha] - 2026-08-21
 
 ### Added
+
 - Phase 5 JIT (spec §19.2): new `prima-jit` crate compiles numeric scalar MFn bodies (`ExprDAG → bytecode → cranelift IR → native`) with cranelift; the interpreter auto-compiles a numeric MFn after 100 numeric calls (or on the first call with the `@jit` annotation), and runs it natively (`f(to_f64(101))` after a `1..100` warm-up loop goes native).
 - `jit(...)` builtin: returns a callable `Value::JitFunction` for an MFn name, a symbolic expression, or `grad(f)` — single-output forward compilation, multi-variable reverse-mode gradient, with an interpreted fallback when compilation is unavailable (spec §19.2 composable optimization).
 - Automatic differentiation (spec §19.4 stages 2–3): forward-mode dual numbers (`ad::forward_derivative`) and reverse-mode tape (`ad::Tape`) over numeric scalar DAGs; the tape powers `jit(grad(f))`.
@@ -23,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-08-14
 
 ### Added
+
 - Symbol-first scientific computing toolchain: hand-written lexer, recursive-descent/Pratt parser, AST and diagnostics (`prima-syntax`).
 - Numeric tower `Integer < Rational < Complex<Rational> < F64 < Complex<F64>` with hash-consing expression pool (`prima-core`).
 - Symbolic engine: MFn evaluation, implicit broadcasting, TeX literals, simplification levels 0–3.
@@ -34,4 +40,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MIT license and a release workflow building all Rust Tier-1 platforms with SHA-256 checksums.
 
 ### Changed
+
 - Language spec and implementation plan revised to v2.1.
