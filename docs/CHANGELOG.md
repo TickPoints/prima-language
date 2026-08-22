@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Revised the language spec and implementation plan to **v2.2** (docs only, no code landed yet). Planning for: removing `format` in favor of Python-style f-strings (plus `'...'`/raw-string literals), stabilizing `///`/`//!` doc comments with `prima doc` coverage of the embedded standard library and method-error diagnostic notes, `@builtin(ON)` layered optimization by optimization level, the `opt_level` (`O0`–`O3`) optimization-level policy, a Python-`str`-referenced builtin method set maintained in `.pra` doc comments, stdlib expansion (`math`/`physics`/`sys`/`plot`/`render`/`mem`), and a host-layer GC replacing reference counting for class instances. The implementation roadmap is split into Phase 6–12 in `docs/IMPLEMENTATION-zh_CN.md` §5.
 
+## [0.2.1-alpha] - 2026-08-22
+
+### Changed
+
+- Removed the two deprecated syntax forms (spec v2.3): the `|>` pipeline operator is now a parse error `E0010` (use class methods/direct calls instead), and newline-separated statements are now a parse error `E0011` (`;` is the sole statement separator; a statement not followed by `;` before end-of-input or a block-closing `}` is rejected). The `W0001`/`W0002` warning codes and the parser's `pending_newline` machinery were deleted; the `ExprKind::Pipeline`/`BinOp::Pipeline` AST variants and the evaluator's pipeline lowering were removed.
+- Completed the English translation of the language docs: `docs/SPECIFICATIONS-en_US.md` and `docs/IMPLEMENTATION-en_US.md` no longer contain untranslated Chinese (code comments, diagrams, and labels are now in English; the bilingual Glossary table is retained).
+
 ## [0.2.0-alpha] - 2026-08-21
 
 ### Added

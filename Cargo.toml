@@ -1,6 +1,6 @@
 [package]
 name = "prima-language"
-version = "0.2.0-alpha"
+version = "0.2.1-alpha"
 edition = "2024"
 authors = ["TickPoints <tickpoints@outlook.com>"]
 repository = "https://github.com/TickPoints/prima-language"
@@ -16,7 +16,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.2.0-alpha"
+version = "0.2.1-alpha"
 edition = "2024"
 authors = ["TickPoints <tickpoints@outlook.com>"]
 repository = "https://github.com/TickPoints/prima-language"
@@ -47,10 +47,10 @@ cranelift-module = "0.135"
 target-lexicon = "0.13"
 
 [dependencies]
-prima-syntax = { path = "crates/prima-syntax", version = "0.2.0-alpha" }
-prima-core = { path = "crates/prima-core", version = "0.2.0-alpha" }
-prima-runtime = { path = "crates/prima-runtime", version = "0.2.0-alpha" }
-prima-stdlib = { path = "crates/prima-stdlib", version = "0.2.0-alpha" }
+prima-syntax = { path = "crates/prima-syntax", version = "0.2.1-alpha" }
+prima-core = { path = "crates/prima-core", version = "0.2.1-alpha" }
+prima-runtime = { path = "crates/prima-runtime", version = "0.2.1-alpha" }
+prima-stdlib = { path = "crates/prima-stdlib", version = "0.2.1-alpha" }
 clap = { workspace = true }
 codespan-reporting = { workspace = true }
 rustyline = { workspace = true }
@@ -63,7 +63,7 @@ proptest = { workspace = true }
 num-bigint = { workspace = true }
 num-rational = { workspace = true }
 criterion = { workspace = true }
-prima-jit = { path = "crates/prima-jit", version = "0.2.0-alpha" }
+prima-jit = { path = "crates/prima-jit", version = "0.2.1-alpha" }
 
 [[bench]]
 name = "bench_jit"
