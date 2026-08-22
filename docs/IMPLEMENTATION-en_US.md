@@ -1,11 +1,12 @@
-# Prima Language — Implementation Plan v2.2
+# Prima Language — Implementation Plan v2.3
 
-> **Translation note**: this is the English counterpart of the authoritative Chinese implementation plan [`IMPLEMENTATION-zh_CN.md`](./IMPLEMENTATION-zh_CN.md) (v2.2); the Chinese original is the final authority.
-> **Position**: this document records the implementation decisions that implement [`SPECIFICATIONS-zh_CN.md`](./SPECIFICATIONS-zh_CN.md) v2.2.
+> **Translation note**: this is the English counterpart of the authoritative Chinese implementation plan [`IMPLEMENTATION-zh_CN.md`](./IMPLEMENTATION-zh_CN.md) (v2.3); the Chinese original is the final authority.
+> **Position**: this document records the implementation decisions that implement [`SPECIFICATIONS-zh_CN.md`](./SPECIFICATIONS-zh_CN.md) v2.3.
 > Where the spec does not cover something, this document takes precedence; several **initial suggestions** in spec §19.1 (logos/chumsky/latex crates) were evaluated and **rejected**, with the reasons given in §2 and §7.
 > Intended audience: implementers (including AI agents). All subsequent development work proceeds according to the division of labor and ordering in this document.
 > **v2.1 increments**: base-type usability enhancements (variable-length `Array`, `Dict`/`Set`, convenience functions, `print`/`println` distinction, `input`, comprehensions) enter the language spec, with implementation scheduling in §5; Phase 3 (`@parallel` broadcast parallelism + `parfor` + symbolic differentiation `derivative`/`partial`/`grad`/`limit`) is implemented in this v2.1 document.
 > **v2.2 increments**: f-strings replace `format`, doc-comment stabilization, `@builtin(ON)` layered optimization, `opt_level` optimization levels, the builtin method system (`String` and others), stdlib expansion (`math`/`physics`/`sys`/`plot`/`render`/`mem`), and host-layer GC. Chunked scheduling in §5 (Phase 6–12); **this v2.2 document only revises the spec and implementation docs, with no code landing**.
+> **v2.3 increments**: the two deprecated features `|>` pipeline and newline-separated statements are removed and become hard errors — `|>` no longer participates in parsing and is a parse error `E0010` (removed-syntax hint, same style as `try/catch`), with class method chaining / direct calls as the replacement; statement separation converges on `;` as the sole separator, and newline separation reports `E0011 expected_separator`; the `W0001`/`W0002` warning codes and the parser's `pending_newline` machinery are deleted.
 
 ---
 
@@ -54,12 +55,12 @@ Prima's token set is roughly 40 kinds in v2.0, but with unusual shapes:
 - **v2.2 string family**: ordinary `"..."`/`'...'` (equivalent escapes), raw `r"..."`/`r'...'` (no escaping), **f-strings** `f"..."`/`f'...'` (with `{}` interpolation, `{:spec}`, `{{`/`}}` escapes), `rf"..."` combinations — the lexer must dispatch by the `f`/`r`/`rf` prefix + delimiter, and f-string interpolation bodies are sub-scanned as expressions (balanced `}`) when splitting;
 - `///`/`//!` **doc comments** (v2.2) must preserve the raw text and span (feeding the AST/`prima doc`/diagnostic notes), collected separately from ordinary comments;
 - `@` (matrix multiplication), `@.` (broadcast operator, §11.4), `@parallel`/`@builtin`/`@builtin(O1)`/`@c_api::extern` annotations (`@`-prefixed, `::` participates in paths, `@builtin` may take a parenthesized optimization-level argument);
-- `..` (ranges and slices), `..=` (inclusive ranges, used in patterns), `^`/`**` aliases, `?` (try operator), `|>` (deprecated pipeline);
+- `..` (ranges and slices), `..=` (inclusive ranges, used in patterns), `^`/`**` aliases, `?` (try operator), `|>` (kept as of v2.3 only to report the removed-syntax error `E0010`);
 - reserved keywords (async/yield/macro/trait) must be kept as tokens for future use; `impl` takes effect in `ops` modules.
 
 A handwritten lexer of roughly 400–500 lines can give **precise token-level errors and spans** for every item above (e.g. locating unterminated string/TeX literals), and naturally produces a `Token { kind, span }` stream. logos's derive macro offers weaker control over custom literals and error recovery, and the benefit (speed) is meaningless at the current scale.
 
-**v2.0 new tokens**: `;` (statement separator, spec), `?` (try), `..=` (inclusive range), keywords `class`/`self`/`Self`/`impl`/`match`, annotation prefix `@`. Newline is no longer a **syntax-required** separator; it is only handled as a **deprecated separator** when `;` is missing (spec §4.2, emits `W0001` warning).
+**v2.0 new tokens**: `;` (statement separator, spec), `?` (try), `..=` (inclusive range), keywords `class`/`self`/`Self`/`impl`/`match`, annotation prefix `@`. **As of v2.3**: the newline token is kept only to detect the removed newline-separated statement form and report `E0011` (`expected_separator`); `;` is the sole legal statement separator (spec §4.2).
 
 ### 2.2 Grammar: handwritten recursive descent + Pratt precedence climbing
 
@@ -80,15 +81,16 @@ A handwritten lexer of roughly 400–500 lines can give **precise token-level er
 
 | Level | Operator | Associativity | Notes |
 |------|------|--------|------|
-| 1 | `\|>` pipeline | left | deprecated (W0002), lowered to a call |
-| 2 | `\|\|` | left | |
-| 3 | `&&` | left | |
-| 4 | `==` `!=` `<` `<=` `>` `>=` | left | |
-| 5 | `+` `-` | left | |
-| 6 | `*` `/` `%` `@` `@.` | left | `@`=matrix multiplication, `@.`=broadcast (§11.4) |
-| 7 | unary `-` `!` `+` | right | |
-| 8 | `^` `**` | right | power binds tighter than unary minus (mathematical convention: `-x^2 = -(x^2)`, same as Julia) |
-| 9 | postfix: call `()`, index `[]` (incl. slices `..`), path `::`, method `.name()`, field `.name`, `?` | — | `?` binds at level 9, taking priority over binary operators |
+| 1 | `\|\|` | left | |
+| 2 | `&&` | left | |
+| 3 | `==` `!=` `<` `<=` `>` `>=` | left | |
+| 4 | `+` `-` | left | |
+| 5 | `*` `/` `%` `@` `@.` | left | `@`=matrix multiplication, `@.`=broadcast (§11.4) |
+| 6 | unary `-` `!` `+` | right | |
+| 7 | `^` `**` | right | power binds tighter than unary minus (mathematical convention: `-x^2 = -(x^2)`, same as Julia) |
+| 8 | postfix: call `()`, index `[]` (incl. slices `..`), path `::`, method `.name()`, field `.name`, `?` | — | `?` binds at level 8, taking priority over binary operators |
+
+The `|>` pipeline (§9.7) is removed in v2.3 and no longer participates in precedence (its occurrence is a parse error `E0010`).
 
 `^` and `**` are normalized to the same BinOp node at the parsing layer (aliases, §three).
 
@@ -96,9 +98,9 @@ A handwritten lexer of roughly 400–500 lines can give **precise token-level er
 
 **Statement separation strategy** (§4.2):
 
-- During parsing, `;` terminates a statement.
-- When a newline (`\n`) is read without a `;`: if the next token can legally start a new statement → record one `W0001` warning and continue parsing under the legacy newline separation (compat mode); otherwise report `E0011` expecting `;`.
-- A trailing `;` after block-level statements (the `{}` following `if`/`while`/`for`/`fn`/`class`/`match`/`with config`) may be omitted without triggering a warning.
+- During parsing, `;` terminates a statement and is the sole legal statement separator.
+- A non-block statement not terminated by `;` (and not at end of input / before `}`) is now always the error `E0011` (`expected_separator`). Since v2.3 removed newline separation, the parser no longer has a `pending_newline` newline-compatibility warning mechanism.
+- A trailing `;` after block-level statements (the `{}` following `if`/`while`/`for`/`fn`/`class`/`match`/`with config`) may be omitted without triggering an error.
 
 ### 2.3 Rendering: handwritten, not the `latex` crate
 
@@ -149,7 +151,7 @@ pub struct SourceLocation { pub file: Arc<PathBuf>, pub line: usize, pub column:
 
 §16.4's `error[E00xx]: ...` / `warning[W00xx]: ...` format is rendered by `codespan-reporting`; error codes (§16.4/appendix C) prefix the diagnostic titles (`E`/`R`/`W` + four-digit number). The `Error` enum (§16.1) is derived with `thiserror`, and its `location` field is filled automatically from the current execution frame when the interpreter raises an error.
 
-**Warning collection**: `DiagnosticCollector` collects both errors and warnings; warnings do not block compilation, and `prima check --deny W0001` can escalate a given warning to an error (tooling layer).
+**Warning collection**: `DiagnosticCollector` collects both errors and warnings; warnings do not block compilation, and `prima check --deny W0005` can escalate a given warning to an error (tooling layer). The `W0001` (newline separation) and `W0002` (`|>` pipeline) codes were removed in v2.3 along with the corresponding deprecated features.
 
 ### 4.2 AST (prima-syntax)
 
@@ -172,43 +174,43 @@ pub enum Stmt {
     FnDef { name: Ident, params: Vec<Param>, ret: Option<Type>, annotation: Option<Annotation>, body: Block, docs: Option<DocComment> },
     MathDef { name: Ident, params: Vec<Param>, ret: Option<Type>, annotation: Option<Annotation>, body: Expr, docs: Option<DocComment> },
     ClassDef { name: Ident, vis: Visibility, members: Vec<ClassMember>, docs: Option<DocComment> },
-    Impl { op: ImplOp, target: Ident, members: Vec<FnDef> },            // ops::Add for T（§18.5）
+    Impl { op: ImplOp, target: Ident, members: Vec<FnDef> },            // ops::Add for T (§18.5)
     Expr(Expr),
     For { var: Ident, range: (Expr, Expr), step: Option<Expr>, body: Block },
-    ParFor { /* 同 For */ },
+    ParFor { /* same as For */ },
     While { cond: Expr, body: Block },
     If { cond: Expr, then: Block, elifs: Vec<(Expr, Block)>, else_: Option<Block> },
-    IfLet { pat: Pattern, value: Expr, then: Block, else_: Option<Block> },   // if let（§4.4）
-    WhileLet { pat: Pattern, value: Expr, body: Block },                      // while let（§4.4）
-    Match { scrutinee: Expr, arms: Vec<MatchArm> },                           // match（表达式；语句形态同）
+    IfLet { pat: Pattern, value: Expr, then: Block, else_: Option<Block> },   // if let (§4.4)
+    WhileLet { pat: Pattern, value: Expr, body: Block },                      // while let (§4.4)
+    Match { scrutinee: Expr, arms: Vec<MatchArm> },                           // match (expression; statement form is the same)
     Return(Option<Expr>),
     WithConfig { entries: Vec<ConfigEntry>, body: Block },
     Pub(Box<Stmt>),
 }
 
-pub enum Visibility { Private, Module, Public }   // 无 / pub(mod) / pub（§15.2）
+pub enum Visibility { Private, Module, Public }   // none / pub(mod) / pub (§15.2)
 
 pub struct ClassMember {                          // §4.5
     pub vis: Visibility,
     pub kind: ClassMemberKind,
 }
 pub enum ClassMemberKind {
-    Field { name: Ident, ty: Type, docs: Option<DocComment> },  // 字段
-    Method { name: Ident, params: Vec<Param>, ret: Option<Type>, body: Block, docs: Option<DocComment> }, // 方法
-    // 关联函数与普通方法同构；首个参数为 self 即方法
+    Field { name: Ident, ty: Type, docs: Option<DocComment> },  // field
+    Method { name: Ident, params: Vec<Param>, ret: Option<Type>, body: Block, docs: Option<DocComment> }, // method
+    // Associated functions and ordinary methods share one form; a leading self parameter makes it a method
 }
 
 pub enum Param {
     Normal { name: Ident, ty: Option<Type> },
-    Self_ { ty: Option<Type> },                   // self 参数（方法）
-    MutSelf { ty: Option<Type> },                 // mut self（保留扩展）
+    Self_ { ty: Option<Type> },                   // self parameter (method)
+    MutSelf { ty: Option<Type> },                 // mut self (reserved extension)
 }
 
-pub enum Pattern {                                // §4.4 全模式
+pub enum Pattern {                                // §4.4 all patterns
     Wildcard,                                     // _
     Binding { name: Ident },                      // x
     Literal(Literal),                             // 0 / "s" / true / \pi
-    Tuple(Vec<Pattern>, bool /* .. 尾 */),        // (a, b, ..)
+    Tuple(Vec<Pattern>, bool /* .. tail */),        // (a, b, ..)
     Array(Vec<Pattern>, bool /* .. */),           // [x, ..]
     Struct { name: Ident, fields: Vec<FieldPattern>, rest: bool }, // Point { x, y: 0, .. }
     Variant { name: Ident, inner: Option<Box<Pattern>> },          // Some(x) / Ok(v) / None
@@ -223,44 +225,44 @@ pub struct MatchArm { pub pat: Pattern, pub guard: Option<Expr>, pub body: Expr 
 // v2.2: @builtin may take an optimization-level argument; @builtin(O0) == @builtin
 pub enum Annotation {
     Parallel, Jit, Gpu,
-    Builtin { opt_level: u8 },                    // O0..=O3，§10.2/18.4
+    Builtin { opt_level: u8 },                    // O0..=O3, §10.2/18.4
     CApiExtern,
 }
 
 pub enum Expr {
     Literal(Literal),            // Integer/Float/Hex/Bin/String/Char/Bool/TexString
-    // v2.2: f-string `f"..."`（§18.1）——template literal segments and interpolation expressions alternate
+    // v2.2: f-string `f"..."` (§18.1) — template literal segments and interpolation expressions alternate
     FString { parts: Vec<FStringPart> },
-    Symbol(Ident),               // 含 \pi 形式的 TeX 名
-    Self_,                       // self
-    SelfType,                    // Self（类型位置出现于方法返回/字段）
-    Path(Vec<Ident>),            // a::b::c（模块路径 / 限定访问）
+    Symbol(Ident),               // TeX names in \pi form
+    Self_,
+    SelfType,                    // Self (in type position: method returns / fields)
+    Path(Vec<Ident>),            // a::b::c (module path / qualified access)
     Call { f: Box<Expr>, args: Vec<Expr> },
-    MethodCall { receiver: Box<Expr>, name: Ident, args: Vec<Expr> }, // obj.method(...)（§4.5）
+    MethodCall { receiver: Box<Expr>, name: Ident, args: Vec<Expr> }, // obj.method(...) (§4.5)
     Index { base: Box<Expr>, index: Index },          // Index::Elem / Index::Slice(RangeExpr)
-    Field { base: Box<Expr>, name: Ident },           // obj.field（类字段访问）
+    Field { base: Box<Expr>, name: Ident },           // obj.field (class field access)
     StructLiteral { name: Ident, fields: Vec<FieldValue>, base: Option<Box<Expr>> }, // T { a, b } / T { ..base }
-    Binary { op: BinOp, lhs: Box<Expr>, rhs: Box<Expr> },  // op 携带优先级、幂右结合
+    Binary { op: BinOp, lhs: Box<Expr>, rhs: Box<Expr> },  // op carries precedence, power is right-associative
     Unary { op: UnOp, e: Box<Expr> },
-    Try(Box<Expr>),              // expr?（§16.3）
-    Array(Vec<Expr>),            // 可变长数组字面量（v2.1 元素任意值，§11.3）
-    Dict(Vec<(Expr, Expr)>),     // v2.1 Dict 字面量 { k: v, ... }（§4.6）
-    Set(Vec<Expr>),              // v2.1 Set 字面量 { a, b, ... }（§4.6）
-    Comprehension {              // v2.1 推导式（§11.7）:
-        frame: CompFrame,        //   Array/Dict/Set/Tuple 外框
-        clauses: Vec<CompClause>,//   for x in iterable [if cond] 链
-        body: Expr,              //   元素表达式（Dict 推导式元素为 (k, v) 对）
+    Try(Box<Expr>),              // expr? (§16.3)
+    Array(Vec<Expr>),            // variable-length array literal (v2.1: any element values, §11.3)
+    Dict(Vec<(Expr, Expr)>),     // v2.1 Dict literal { k: v, ... } (§4.6)
+    Set(Vec<Expr>),              // v2.1 Set literal { a, b, ... } (§4.6)
+    Comprehension {              // v2.1 comprehension (§11.7):
+        frame: CompFrame,        //   Array/Dict/Set/Tuple outer frame
+        clauses: Vec<CompClause>,//   for x in iterable [if cond] chain
+        body: Expr,              //   element expression (for Dict comprehensions the element is a (k, v) pair)
     },
     Tuple(Vec<Expr>),
     Lambda { params: Vec<Param>, body: Box<Expr> },   // |x| expr
-    Match { scrutinee: Box<Expr>, arms: Vec<MatchArm> },  // match 表达式
-    Pipeline { lhs: Box<Expr>, rhs: Box<Expr> },      // a |> f —— 弃用（W0002），降级时改写为 Call
+    Match { scrutinee: Box<Expr>, arms: Vec<MatchArm> },  // match expression
+    // v2.3: the `Pipeline` variant is removed — `|>` no longer enters the AST (parse error `E0010`); `BinOp` likewise no longer contains `Pipeline`
 }
 // v2.2: FStringPart = Literal(String) | Interp { expr: Box<Expr>, spec: Option<String> } | EscapedBrace
 // v2.2: Literal::String gains `Single`/`Raw` markers (delimiter and whether it escapes); nested f-string literals are compile-time errors
 pub struct FieldValue { pub name: Ident, pub value: Option<Expr> }
-// CompFrame: 产出容器（Array | Dict | Set | Tuple）；CompClause: For{var, iter} | If{cond}（§4.6/11.7）
-// 每个节点携带 Span；Block = Vec<Stmt>
+// CompFrame: output container (Array | Dict | Set | Tuple); CompClause: For{var, iter} | If{cond} (§4.6/11.7)
+// Every node carries a Span; Block = Vec<Stmt>
 ```
 
 **Key design: mathematical expressions and host expressions share the same AST** (spec §4.3: `math_expr := expr`). The distinction between the "symbolic world / numeric world" is **not** at the parsing layer but at the **lowering layer**: the same AST subtree follows one of two paths depending on context (§4.8) — this is the landing seam of the "three-world architecture", where the diagram in spec §two is placed.
@@ -269,36 +271,36 @@ pub struct FieldValue { pub name: Ident, pub value: Option<Expr> }
 
 ```rust
 pub enum Number {
-    Integer(BigInt),             // §6.1 精确；溢出升级由 num_to_big 策略决定
-    Rational(BigRational),       // 自动约分、分母为正（§6.4 规则 3）
-    Real(Real),                  // F32(f32) | F64(f64)；NaN/Inf 仅存在于此（§6.2）
-    Complex(Box<Complex<Number>>), // 递归；re/im 归一到 Rational 或 Real
+    Integer(BigInt),             // §6.1 exact; overflow escalation decided by the num_to_big policy
+    Rational(BigRational),       // auto-reduced, positive denominator (§6.4 rule 3)
+    Real(Real),                  // F32(f32) | F64(f64); NaN/Inf exist only here (§6.2)
+    Complex(Box<Complex<Number>>), // recursive; re/im normalized to Rational or Real
 }
 
-// v2.0：定宽坍缩数值类型（§6.1）——实现策略：折叠进 Number::Real 的 F32/F64 变体 + 新增定宽整型变体
-pub enum Number {                // v2.0 定稿
-    Integer(BigInt),             // 符号/精确层
+// v2.0: fixed-width collapsed numeric types (§6.1) — implementation strategy: folded into the F32/F64 variants of Number::Real + new fixed-width integer variants
+pub enum Number {                // v2.0 finalized
+    Integer(BigInt),             // symbolic/exact layer
     Rational(BigRational),
     Real(Real),                  // F32 | F64
     Complex(Box<Complex<Number>>),
-    // —— 坍缩层（§6.1 与 Rust 一一对应）——
+    // — collapse layer (one-to-one correspondence with Rust, §6.1) —
     I8(i8), I16(i16), I32(i32), I64(i64), I128(i128),
     U8(u8), U16(u16), U32(u32), U64(u64), U128(u128),
     Isize(isize), Usize(usize),
     BigFloat(BigFloat),
 }
 
-pub struct Complex<T> { pub re: T, pub im: T }   // 不直接依赖 num-complex 的类型，
-                                                 // 但复用其 trait 实现（T: Num）辅助泛型运算
-pub enum Value {  // §5 逐字落地
+pub struct Complex<T> { pub re: T, pub im: T }   // a type that does not depend directly on num-complex,
+                                                 // but reuses its trait implementations (T: Num) to assist generic arithmetic
+pub enum Value {  // §5 landed verbatim
     Number(Number), Bool(bool), Char(char), String(String),
-    Array(Array),            // v2.1：可变长序列，`Vec<Value>`（§11.3，见下方 v2.1 注）
-    Dict(Dict),              // v2.1：`HashMap<ValueKey, Value>`（§11.6）
-    Set(Set),                // v2.1：`HashSet<ValueKey>`（§11.6）
+    Array(Array),            // v2.1: variable-length sequence, `Vec<Value>` (§11.3, see the v2.1 note below)
+    Dict(Dict),              // v2.1: `HashMap<ValueKey, Value>` (§11.6)
+    Set(Set),                // v2.1: `HashSet<ValueKey>` (§11.6)
     Matrix(Matrix), Function(Function),
-    Class(ClassId),            // §5 类实例句柄（§4.7）
+    Class(ClassId),            // §5 class instance handle (§4.7)
     Expr(ExprId), Symbol(SymbolId),
-    Option(Option<Box<Value>>), // §5 Option<T>：Some(T)/None
+    Option(Option<Box<Value>>), // §5 Option<T>: Some(T)/None
     Indeterminate(IndeterminateForm), Undefined, Error(Error), Nil,
     Tuple(Vec<Value>), Result(Result<Box<Value>, Error>),
 }
@@ -331,10 +333,10 @@ pub enum ExprData {
 }
 
 pub struct ExprPool {
-    global: DashMap<u64, ExprId>,           // 内容哈希 → 已存在节点
-    store: RwLock<Vec<ExprData>>,           // 中心存储（追加式，无删除：符号层无环常驻）
+    global: DashMap<u64, ExprId>,           // content hash → existing node
+    store: RwLock<Vec<ExprData>>,           // central store (append-only, no deletion: the symbolic layer is acyclic and resident)
 }
-thread_local! { static LOCAL_CACHE: RefCell<HashMap<u64, ExprId>> }   // §8.1 线程本地缓存
+thread_local! { static LOCAL_CACHE: RefCell<HashMap<u64, ExprId>> }   // §8.1 thread-local cache
 ```
 
 **Intern flow**: compute the node's content hash `h = hash(ExprData)` → check `LOCAL_CACHE` → on a miss check `global` → if still a miss, allocate a new `ExprId`, append to `store`, and write back to both cache levels. Equality is `ExprId ==` (O(1), §8.2).
@@ -352,7 +354,7 @@ thread_local! { static LOCAL_CACHE: RefCell<HashMap<u64, ExprId>> }   // §8.1 �
 
 ```rust
 pub struct SymbolId(u32);
-enum SymbolKey { TeX(&'static str), Ident(String), Physics(&'static str) }  // 登记表 + 全局表
+enum SymbolKey { TeX(&'static str), Ident(String), Physics(&'static str) }  // registry + global table
 ```
 
 - **Built-in symbols** (§7): mathematical constants (`\e` `\pi` `\i` `\tau` `\infty` `\gamma` `\phi`), operators (`\log` `\ln` `\exp` `\sqrt` `\sin` `\cos` `\tan` `\sigma` `\prod` `\int` `\partial`), physical constants (§7.3 CODATA 2022, stored at high precision, not collapsed by default). Physical-constant values are stored as `BigRational` or `num-bigfloat`, requiring explicit collapse such as `to_f64(...)`.
@@ -367,11 +369,11 @@ pub struct Config {
     pub fraction: bool,                       // true
     pub broadcast: bool,                      // true
     pub loop_optimization: bool,              // true
-    pub opt_level: OptLevel,                  // v2.2: O0..=O3，默认 O2（§10.2）
-    pub simplify_level: u8,                   // 0..=3，默认 2（符号层，独立于 opt_level）
+    pub opt_level: OptLevel,                  // v2.2: O0..=O3, default O2 (§10.2)
+    pub simplify_level: u8,                   // 0..=3, default 2 (symbolic layer, independent of opt_level)
     pub num_to_big: bool,                     // true
     pub print_format: PrintFormat,            // latex | unicode | ascii
-    pub overload_policy: OverloadPolicy,      // warn | allow | deny（v2.0 新增，§13.2/18.5）
+    pub overload_policy: OverloadPolicy,      // warn | allow | deny (added in v2.0, §13.2/18.5)
 }
 
 // v2.2: O0 < O1 < O2 < O3, with ordering comparison (`@builtin(ON)` decides by >=)
@@ -397,8 +399,8 @@ The unified AST's **dual lowering** (the landing point of §4.2):
 
 ```text
 expr_ast
- ├─ Symbolic 上下文（MFn 体、let 右值默认为符号）→ lower_to_expr() → ExprDAG → 化简 → Value::Expr(ExprId)
- └─ Host 上下文（fn 体、控制流条件/循环变量）      → eval() → Value（数值栈值 / 宿主对象）
+ ├─ Symbolic context (MFn bodies, let RHS defaults to symbolic) → lower_to_expr() → ExprDAG → simplify → Value::Expr(ExprId)
+ └─ Host context (fn bodies, control-flow conditions/loop variables)      → eval() → Value (numeric stack value / host object)
 ```
 
 - **MFn** (`let f(x) = body`): the closure holds the body AST; on call, `substitute(params → actual ExprId)` yields the instantiated DAG → simplify → return `Expr`. When actuals are numeric, collapse on demand (§10 example: `f(3.0) → 15.0`).
@@ -413,7 +415,7 @@ expr_ast
 - **`@builtin(ON)` dispatch** (v2.2, §18.4): `bind_builtin` dispatches on `Annotation::Builtin{ opt_level }` — `O0`: must be registered (`E0055`), a function body is forbidden (`E0056`), binds the Rust implementation directly; `O1..O3`: must **have** a `.pra` function body (fallback implementation), the Rust implementation is optional; at call sites `config.opt_level >= opt_level && registered` decides between the Rust implementation and evaluating the `.pra` body; an invalid level argument → `E0057`.
 - **Method-call diagnostic note** (v2.2, §16.4): when method resolution fails or a method-internal error is raised, `eval_method_call`/`check` fetches the method's (or its containing class's) `DocComment` and signature from the class registry/module table and appends them to the diagnostic note.
 - **`?` operator** (§16.3): `expr?` inside a function returning `Result`: `Err(e)` → early return `Err(e)`; inside a function returning `Option`: `None` → early return `None`; context mismatch → compile-time `E0054`.
-- **`|>` pipeline** (§9.7): deprecated (W0002), lowered by rewriting into nested calls.
+- **`|>` pipeline** (§9.7, removed in v2.3): `|>` no longer participates in parsing; its occurrence is a parse error `E0010` (removed-syntax hint, same style as `try/catch`); the replacement is class method chaining / direct calls.
 - **Loop optimization** (§10): with `loop_optimization := true` **and `opt_level >= O1`**, a `for i in a..b { acc += i }` shape is recognized as a closed-form formula (implemented in Phase 2, starting with the `0..n` and `1..n` arithmetic-progression patterns).
 - **parfor** (§17.2, landed in v2.1): `rayon::par_iter`; the loop body undergoes **side-effect static checking** — only assignment to index slots `A[i]`/`A[i] +=` and pure-function calls are allowed, violations report `E0082`; each slot is evaluated independently (each thread chunk gets an independent Evaluator sharing the process-level `ExprPool`/`SymbolTable`), and the whole array is written back to the binding at the end.
 - **@parallel broadcast parallelism** (§17.1/17.4, landed in v2.1): `Function::User` gains `parallel: bool` (true when a `MathDef` carries `Annotation::Parallel`); in the broadcast path, when array length ≥ the threshold (default 1024), work is chunked by the `rayon` thread count, each chunk with an **independent Evaluator** (snapshotting the current Config, dropping the output sink), evaluating the `@parallel` MFn's formal-parameter environment within the chunk (the function body is required to be **self-contained**, not referencing free variables); small arrays take the sequential path.
@@ -426,7 +428,7 @@ expr_ast
 
 ```rust
 trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut String); }
-// 实现：LatexRenderer / UnicodeRenderer / AsciiRenderer，由 print_format 策略选择
+// Implementations: LatexRenderer / UnicodeRenderer / AsciiRenderer, chosen by the print_format policy
 ```
 
 - LaTeX is an MVP gate (§19.1 milestone 1): output at the `\sqrt{2} + \pi` level; `tex"..."` literals are parsed into a render tree (a small embedded TeX parser, supporting the MVP subset in Phase 1 first, expanding incrementally).
@@ -477,7 +479,7 @@ Each Phase ends with runnable acceptance commands. Phases 0–2 have been delive
 
 - Tokens: `;`, `?`, `..=`, `class`/`self`/`Self`/`impl`/`match`, annotations `@builtin`/`@c_api::extern`.
 - Pattern parser (all §4.4 patterns) + `match`/`if let`/`while let`/`let` destructuring.
-- Statement separation: `;` as the norm + newline compatibility (`W0001` warning, §2.2).
+- Statement separation: `;` as the norm + newline compatibility (`W0001` warning, §2.2). (As of v2.3 newline separation is removed and reports `E0011`; `W0001` is gone.)
 - Class syntax (fields/methods/`Self`/visibility) + `impl ops::X for T`.
 - Full string escapes (including `\u{XXXX}`) + `format` function signature (evaluation in core/runtime).
 
@@ -489,8 +491,8 @@ Each Phase ends with runnable acceptance commands. Phases 0–2 have been delive
 - **Acceptance**:
 
   ```text
-  prima run 里程碑样例：f(v) 广播 → [1, 4, 9]；
-  tex"\sqrt{2}+\pi" 打印出 LaTeX；
+  prima run milestone samples: f(v) broadcast → [1, 4, 9];
+  tex"\sqrt{2}+\pi" prints LaTeX;
   simplify(tex"\e^{i\pi}+1") → 0
   ```
 
@@ -499,7 +501,7 @@ Each Phase ends with runnable acceptance commands. Phases 0–2 have been delive
 > - `ExprData` gained a `Real(Real)` variant (not listed in spec v1.0 §8.1, added so floats can enter the symbolic DAG); `ExprData::Symbol(SymbolId)` uses the new `core::symbol::SymbolId` type.
 > - Simplification rules live in `core::simplify::simplify(pool, builtins, id)` (no level parameter; the MVP applies all levels): the intern layer (`ExprPool::add2/mul2/pow2/sub2/div2` + `add_n/mul_n` flattening/constant folding) handles levels 0/1; `simplify` handles levels 2/3.
 > - The TeX literal parser lives in `prima-syntax::tex` (MVP subset) and produces the same AST as normal syntax.
-> - The interpreter lives in `prima-runtime::eval`; broadcasting applies pure functions elementwise at the call site, rejecting empty/nested arrays; the `a |> f` pipeline is rewritten as a call.
+> - The interpreter lives in `prima-runtime::eval`; broadcasting applies pure functions elementwise at the call site, rejecting empty/nested arrays; the `a |> f` pipeline is rewritten as a call (that pipeline lowering was removed in v2.3, which reports `E0010` instead).
 > - Back then both `print`/`println` emitted a newline; **as of v2.1 they are distinguished**: `print` does not newline, `println` does (§4.8 console); LaTeX output is the default.
 
 ### Phase 2: Config, numeric layer, and error handling (milestones 4, 5, 7)
@@ -522,7 +524,7 @@ Each Phase ends with runnable acceptance commands. Phases 0–2 have been delive
 **v2.0 increments**:
 
 - **Remove `try/catch`**: the parser drops the `try` statement production; `examples/try_catch.pra` is rewritten as a `Result` + `match` version; `E0010` gives a "use Result instead" hint for the `try` keyword.
-- **Statement separation**: all repo examples/tests switch to `;`; a new `W0001` warning channel is added.
+- **Statement separation**: all repo examples/tests switch to `;`; a new `W0001` warning channel is added. (As of v2.3 `W0001` is removed together with newline separation, which now reports `E0011`.)
 - **`?` operator**: `eval_try` implemented in the evaluator (§4.8).
 - **`Result`/`Option` first-class treatment**: `match`/`if let`/`unwrap` family, `Some/None/Ok/Err` constructor patterns.
 - **Collapse family expansion**: full `to_*`/`try_*`/`checked_*`/`clamped_*` for `i8…u128/isize/usize` (§9 in full).
@@ -717,7 +719,7 @@ Each Phase ends with runnable acceptance commands. Phases 0–2 have been delive
 |------|------|
 | Hand-written parser coverage gaps | Appendix A BNF is the acceptance checklist; insta snapshots + proptest keep filling blind spots |
 | Pattern-parsing ambiguity (constructor vs. call) | A dedicated `parse_pattern` parser function for pattern contexts, isolated from expression parsing; snapshots cover `Some(x)`/`Ok(v)`/nesting |
-| Newline-compatible parsing misjudgments | `W0001` triggers when the token after a newline can legally start a new statement; proptest asserts no false `E0011` reports |
+| Newline-compatible parsing misjudgments | This risk disappears with the v2.3 removal of newline separation — a non-block statement not terminated by `;` (and not at end of input / before `}`) is always `E0011` (`expected_separator`); proptest asserts stable error reporting |
 | Simplification rule-base bloat (level 3) | Table-driven rules (`Vec<(Pattern, Rewrite)>`), not written into control flow; level 3 deferred to Phase 3+ |
 | Class-instance ownership (shallow/deep copy) semantics complexity | GC handles + field-value copy dispatched by primitive value / class instance (§12.3); dedicated integration tests for the copy semantics of method arguments/returns (Phase 12 regression) |
 | f-string interpolation parsing ambiguity/nesting | Interpolation bodies get an independent sub-scan (balanced `}`), and v2.2 explicitly forbids nested f-strings; proptest asserts no misjudgments or panics |
@@ -793,8 +795,15 @@ Each Phase ends with runnable acceptance commands. Phases 0–2 have been delive
 | §12.3/12.4 (v2.1) | Class instances use `Rc<RefCell>` reference counting | **Host-layer mark-sweep GC; `mem::Arc` provides explicit reference counting** | Cyclic references collectable, zero counting overhead for shallow copies, and a deterministic path remains (`mem::Arc`); GC semantics are transparent to programs (§4.12) |
 | §18 (v2.1) | stdlib module set fixed | **`render`/`mem` added; `math`/`physics`/`sys`/`plot` expanded** | Scientific plotting/formula rendering/memory control are high-frequency needs in scientific computing; physics formulas implemented in Rust for easy optimization (Phase 11) |
 
+**v2.3 ADR additions**:
+
+| Spec clause | Spec suggestion | This plan | Rationale |
+|---------|---------|--------|------|
+| §9.7 (v2.0) | `\|>` pipeline deprecated (W0002), to be gradually removed | **`\|>` removed, reporting the parse error `E0010` (removed-syntax hint, same as `try/catch`); `W0002` deleted** | Finalized in spec §9.7 (v2.3): class method chaining has fully replaced the pipeline; the syntax layer no longer accepts the form |
+| §4.2 (v2.0) | Newline separation deprecated (W0001), to be gradually removed | **Newline separation removed; `;` is the sole statement separator, reporting `E0011` (`expected_separator`); `W0001` and the `pending_newline` machinery deleted** | Finalized in spec §4.2 (v2.3): `;` separates uniformly, removing cross-line ambiguity; no transition-period warning |
+
 All remaining design (three-world architecture, Number tower, ExprPool, the three-level Config policy, module system, error model, parallelism philosophy, class ownership) is fully consistent with the spec.
 
 ---
 
-*Implementation Plan Prima v2.2 · companion to SPECIFICATIONS-zh_CN.md v2.2 · the sole basis for implementation work*
+*Implementation Plan Prima v2.3 · companion to SPECIFICATIONS-zh_CN.md v2.3 · the sole basis for implementation work*

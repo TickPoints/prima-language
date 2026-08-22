@@ -1,10 +1,11 @@
-# **Prima** — Language Specification v2.2
+# **Prima** — Language Specification v2.3
 
-> **Translation note**: this is the English counterpart of the authoritative Chinese specification [`SPECIFICATIONS-zh_CN.md`](./SPECIFICATIONS-zh_CN.md) (v2.2). The Chinese original is the final authority; this translation may lag or differ on the margins.
-> **Notice**: This specification is the official language specification v2.2 of the **Prima language** and is the final authority for unified design and implementation.
+> **Translation note**: this is the English counterpart of the authoritative Chinese specification [`SPECIFICATIONS-zh_CN.md`](./SPECIFICATIONS-zh_CN.md) (v2.3). The Chinese original is the final authority; this translation may lag or differ on the margins.
+> **Notice**: This specification is the official language specification v2.3 of the **Prima language** and is the final authority for unified design and implementation.
 > **v2.0 change summary**: ① error handling switched to Rust-style `Result`/`?`/`match` (`try/catch` removed); ② statements uniformly separated by `;` (newline separation enters the deprecation process, to be removed gradually); ③ Rust-style patterns and destructuring introduced (`if let`/`while let`/`match` full patterns); ④ Class and ownership semantics introduced; ⑤ numbered error/warning code table established (English, Appendix C); ⑥ full string support and `format`; ⑦ post-collapse numeric types correspond one-to-one with Rust basic numeric types; ⑧ interop (`@c_api::extern` exporting C ABI, `@builtin` Rust implementations); ⑨ standard library extended with `sys`/`time`/`num`/`ops`.
 > **v2.1 change summary (base-type usability enhancements, Python-flavored)**: ⑩`Array` changed to **variable-length** sequence, supporting `push`/`pop`/`append`/`insert`/`remove`/`extend`/slice assignment/concatenation/membership testing (`in`)/negative indices/nestable (as data); ⑪new **mapping type `Dict`** and **set type `Set`** (literals, indexing, methods, iteration); ⑫common collection convenience functions: `len`/`enumerate`/`sorted`/`reversed`/`sum`/`prod`/`min`/`max`/`all`/`any`/`join`/`count`, etc.; ⑬`print` and `println` **distinguished** (the former does not add a newline, the latter does); ⑭console input `input`/`read_line`; ⑮list/dict/set **comprehensions** (`[x^2 for x in v if x > 0]`); ⑯symbolic differentiation primitives `derivative`/`partial`/`grad`/`limit` added to core (§19).
 > **v2.2 change summary**: ⑰**`format` removed, replaced by Python-style f-strings** `f"a={a}"`; strings also support the `"..."`/`'...'` delimiters and raw strings `r"..."` (§18.1); ⑱**doc comments stabilized**: `///`/`//!` become normative comments and are incorporated into the AST, `prima doc` covers the built-in standard library, and when a method call fails the diagnostic note carries the method definition and documentation (§4.1/16.4); ⑲**`@builtin(O1)` layered optimization**: switching between a Rust implementation and the `.pra` original implementation according to the optimization level (§18.4); ⑳**optimization-level system**: a new `opt_level` policy (`O0`–`O3`), each level corresponding to a set of optimization passes (§10.2/13.2); ㉑**built-in method system**: the method sets of common classes such as `String` reference the stable Python methods, with the list and documentation uniformly maintained in the doc comments of the embedded `.pra` modules (§18.1); ㉒**standard library expansion**: `math` numeric tools (factorization, Taylor expansion), `physics` common formulas (Rust implementations), system interaction, and `plot`/`render` plotting and formula rendering (§18); ㉓**host-layer memory switched to GC**, with the standard library providing `mem::Arc` for explicit reference counting (§12.3/12.4).
+> **v2.3 change summary**: ㉔**`|>` pipeline removed**: using `|>` is now a parse error (`E0010 syntax_error`); use class method chains/direct calls instead (§9.7); ㉕**newline-separated statements removed**: statements must be separated by `;` (§4.2); a statement not terminated by `;` (other than before end-of-file or a block-closing `}`) is now the hard error `E0011 expected_separator` (§16.4); the deprecation warnings `W0001`/`W0002` are deleted (§16.5).
 
 ## Identification
 
@@ -63,16 +64,16 @@
 ## 2. Overall Architecture and Execution Model
 
 ```text
-源码(.pra)
+Source (.pra)
  ↓ Lexer → Parser
-文件（模块主体：策略区 + import 区 + 代码区）
+File (module body: policy section + import section + code section)
  ↓
 AST
- ├─ 数学表达式子树（符号世界）→ ExprDAG → 化简 → LaTeX渲染 / 惰性求值
- │                                             ↕ 显式坍缩函数族(§九)
- │                                             数值求值 → 基本数值/矩阵/复数
- ├─ 宿主代码子树（功能世界）→ 类型检查 → 执行 → Result 传播 / 兜底 panic
- └─ 诊断通道（错误/警告，编号化 §十六）
+ ├─ Math expression subtree (Symbol World) → ExprDAG → simplification → LaTeX rendering / lazy evaluation
+ │                                             ↕ explicit collapse function family (§9)
+ │                                             numeric evaluation → basic numerics/matrices/complex
+ ├─ Host code subtree (Functional World) → type check → execution → Result propagation / fallback panic
+ └─ Diagnostic channel (errors/warnings, numbered §16)
 ```
 
 ### The three "worlds"
@@ -102,7 +103,7 @@ AST
 - **Reserved keywords** (for future extension): `async`, `yield`, `macro`, `trait`.
 - **Active keywords**: `let`, `const`, `fn`, `class`, `pub`, `self`, `Self`, `if`, `else`, `while`, `for`, `in`, `step`, `parfor`, `return`, `match`, `impl`, `with`, `config`, `import`, `from`, `as`, `true`, `false`.
 - **Annotations**: `@parallel`, `@jit`, `@gpu`, `@builtin` (may take an optimization-level argument `@builtin(O1)`, §18.4), `@c_api::extern`.
-- **Statement separator**: `;` (normative, §4.2); newline separation is a **deprecated form** (§16.5 W0001).
+- **Statement separator**: `;` (normative, §4.2); newline separation was **removed in v2.3**, and a statement not terminated by `;` reports `E0011` (§16.4).
 - **Collection literals**: `{ ... }` is disambiguated by context into `Dict`/`Set` literals (§4.6) and code blocks; comprehensions reuse the `[ ... ]`/`{ ... }`/`( ... )` brackets (§11.7).
 
 ---
@@ -114,16 +115,16 @@ AST
 A Prima source file (`.pra`) consists of three sections in order:
 
 ```prima
-config {                      // ① 策略区（可选，须在文件顶部；污染性须在项目入口）
+config {                      // ① Policy section (optional; must be at the top of the file; polluting policies must be at the project entry)
     fraction := true
     broadcast := true
     loop_optimization := true
 }
 
-import linalg as la           // ② import 区（可选；core 已预导入，无需重复）
+import linalg as la           // ② Import section (optional; core is already pre-imported, no need to repeat)
 from stats import mean, std;
 
-                              // ③ 代码区
+                              // ③ Code section
 let f(x) = x^2 + 6;
 print(f(3));
 ```
@@ -147,15 +148,15 @@ print(f(3));
 
 - **Normative form**: every statement ends with `;` (`;` is the only normative statement separator).
 - **Block-level statements** (`if`/`while`/`for`/`parfor`/`fn`/`class`/`match`/`with config` followed by `{}`) may omit the trailing `;`, consistent with Rust.
-- **Deprecated form**: separating statements by newline (the newline immediately following a statement serves as the separator) is still accepted, but produces warning `W0001` (§16.5) and will be **removed** in a later version. New code must use `;`.
+- **Removed (v2.3)**: separating statements by newline (the newline immediately following a statement serves as the separator) was **removed in v2.3**. A statement not terminated by `;` (other than before end-of-file or a block-closing `}`) is now the hard error `E0011 expected_separator` (§16.4). New code must always use `;`.
 - **Empty statements**: a standalone `;` is legal (no-op).
 
 ```prima
-let a = 1;                 // ✓ 规范：以 ; 分隔
-let b = 2                  // ⚠ W0001：换行分隔（弃用）
-let c = 3;                 // 上一条语句在 b = 2 的换行处结束
+let a = 1;                 // ✓ normative: separated by ;
+let b = 2                  // ✗ E0011: expected `;` (newline separation removed in v2.3)
+let c = 3;                 // ✓ terminated by ;
 
-if a > 0 {                 // ✓ 块级语句省略末尾 ;
+if a > 0 {                 // ✓ block-level statements may omit the trailing ;
     print(a);
 }
 ```
@@ -177,7 +178,7 @@ expr_stmt    := expr
 control_stmt := for_stmt | while_stmt | if_stmt | if_let_stmt
               | while_let_stmt | match_stmt | return_stmt | parfor_stmt
               | with_config_stmt
-math_expr    := expr               // 纯数学函数体，默认符号世界
+math_expr    := expr               // pure math function body, Symbol World by default
 type_ann     := ":" type
 annotation   := "@parallel" | "@jit" | "@gpu"
               | "@builtin" ("(" opt_level ")")?    // defaults to @builtin(O0) (§18.4)
@@ -185,7 +186,7 @@ annotation   := "@parallel" | "@jit" | "@gpu"
 opt_level    := "O0" | "O1" | "O2" | "O3"           // §10.2
 ```
 
-> Statement separation: `;` is normative; newline is deprecated (§4.2). `pub` can modify `let`/`const`/`fn`/`math_def`/`class_def`.
+> Statement separation: `;` is the only normative separator; newline separation was removed in v2.3 (otherwise `E0011`, §4.2). `pub` can modify `let`/`const`/`fn`/`math_def`/`class_def`.
 
 ### 4.4 Patterns and Destructuring (Rust-style)
 
@@ -193,18 +194,18 @@ Patterns are used in `let` destructuring, `if let`, `while let`, and `match` arm
 
 ```text
 pattern        := pattern_alt
-pattern_alt    := pattern_simple ("|" pattern_simple)*      // 或模式
+pattern_alt    := pattern_simple ("|" pattern_simple)*      // or-pattern
 pattern_simple := "_" | ident | literal | "-"? literal
                 | tuple_pattern | array_pattern | class_pattern
                 | variant_pattern | range_pattern | grouped_pattern
 tuple_pattern  := "(" pattern ("," pattern)* ("," "..")? ")"
 array_pattern  := "[" pattern ("," pattern)* ("..")? "]"
 class_pattern  := ident "{" field_pattern ("," field_pattern)* ("..")? "}"
-field_pattern  := ident (":" pattern)?                      // 字段简写：name 等价 name: name
-variant_pattern:= ident pattern_simple?                     // 构造器模式：Some(x)、Ok(v)、None
+field_pattern  := ident (":" pattern)?                      // field shorthand: name is equivalent to name: name
+variant_pattern:= ident pattern_simple?                     // constructor pattern: Some(x), Ok(v), None
 range_pattern  := literal ".." literal | literal "..=" literal
 grouped_pattern:= "(" pattern ")"
-guard          := pattern_alt "if" expr                     // match 守卫
+guard          := pattern_alt "if" expr                     // match guard
 ```
 
 **Rules**:
@@ -221,18 +222,18 @@ guard          := pattern_alt "if" expr                     // match 守卫
 
 ```prima
 let v = [1, 2, 3];
-let (first, ..) = v;                 // 元组/数组解构
+let (first, ..) = v;                 // tuple/array destructuring
 
 match v {
     [x, ..] if x > 0 => print("positive head"),
     [..]             => print("empty or other")
 }
 
-if let Some(x) = v.get(0) {          // 安全索引返回 Option
+if let Some(x) = v.get(0) {          // safe indexing returns Option
     print(x);
 }
 
-while let Some(x) = iter.next() {    // 迭代
+while let Some(x) = iter.next() {    // iteration
     print(x);
 }
 
@@ -247,21 +248,21 @@ match try_f64("3.14") {
 **A Class is an aggregate type of fields + methods** (semantically close to a combination of Rust `struct` + `impl`). Syntax:
 
 ```prima
-pub class Test {                      // pub：跨模块可见；省略则默认私有（§15.2）
-    a: Expr,                          // 字段（默认类内私有）
+pub class Test {                      // pub: visible across modules; omitted → private by default (§15.2)
+    a: Expr,                          // field (private to the class by default)
     b: Expr,
 
-    pub fn new(a: Expr, b: Expr) -> Self {   // 关联函数；Self = 本类类型
-        Test { a, b }                 // 结构字面量（字段简写）
+    pub fn new(a: Expr, b: Expr) -> Self {   // associated function; Self = this class's type
+        Test { a, b }                 // struct literal (field shorthand)
     }
 
-    pub(mod) fn get_a(self) -> Expr { // pub(mod)：当前模块可见（§15.2）
-        self.a                        // 返回基本值 → 深拷贝（§12.3）
+    pub(mod) fn get_a(self) -> Expr { // pub(mod): visible in the current module (§15.2)
+        self.a                        // returns a basic value → deep copy (§12.3)
     }
 }
 
-let test1 = Test::new(1, 2);          // 关联函数调用
-print(test1.get_a());                 // 方法调用
+let test1 = Test::new(1, 2);          // associated function call
+print(test1.get_a());                 // method call
 ```
 
 **Rules**:
@@ -276,21 +277,19 @@ print(test1.get_a());                 // 方法调用
 5. **Ownership** (§12.3): `self` is a shallow copy (reference-counted sharing); when a method **returns a basic value** (`Number`/`Expr`/`String`, etc.), a deep copy is made before handing it out; returning an instance of this class keeps sharing.
 6. **`Self`**: a type alias inside the class body referring to the current class.
 7. Class does not support inheritance. Composition and trait-like interfaces implement operator semantics via the `ops` module (§18.5).
-8. **Pipe deprecation**: the `|>` pipe (§9.7) is deprecated syntax (`W0002`); its role is gradually replaced by "class methods + method chaining".
+8. **Pipe removal (v2.3)**: the `|>` pipe (§9.7) was **removed in v2.3**; using it is now a `E0010` syntax error. Its role is replaced by "class methods + method chaining"/direct calls.
 
 **Example (method chaining replaces the pipe)**:
 
 ```prima
-// 弃用：a |> to_f64 |> rounded_f64(3)
-// 规范：通过类方法组合
-let result = Float(a) |> to_f64;      // ⚠ W0002 弃用
-
+// removed: a |> to_f64 |> rounded_f64(3) (E0010 syntax error as of v2.3)
+// normative: compose via class methods
 class Float {
     pub fn new(x) -> Self { Float { v: x } }
     pub fn to_f64(self) -> F64 { to_f64(self.v) }
     pub fn rounded(self, digits) -> F64 { rounded_f64(self.v, digits) }
 }
-let r = Float::new(sqrt(2) + \pi).to_f64().rounded(3);   // 方法链
+let r = Float::new(sqrt(2) + \pi).to_f64().rounded(3);   // method chaining
 ```
 
 ### 4.6 Collection Literals and Comprehensions (v2.1)
@@ -298,22 +297,22 @@ let r = Float::new(sqrt(2) + \pi).to_f64().rounded(3);   // 方法链
 `Dict` and `Set` use curly-brace literals; comprehensions reuse the `[ ]`/`{ }`/`( )` brackets, distinguished by the `for` clause:
 
 ```prima
-// Dict 字面量：{ key: value, ... }（键可为数字/字符串/布尔/符号等不可变值）
+// Dict literal: { key: value, ... } (keys may be immutable values such as numbers/strings/booleans/symbols)
 let d = { "a": 1, "b": 2, "c": 3 };
-let d2 = Dict::new();                 // 空字典（类型可变长）
+let d2 = Dict::new();                 // empty dictionary (variable-length type)
 
-// Set 字面量：{ value, ... }（元素必须可哈希，默认数字/字符串/布尔）
-let s = {1, 2, 3, 2};                 // 重复元素去重 → {1, 2, 3}
-let s2 = Set::new();                  // 空集合
+// Set literal: { value, ... } (elements must be hashable; numbers/strings/booleans by default)
+let s = {1, 2, 3, 2};                 // duplicate elements are deduplicated → {1, 2, 3}
+let s2 = Set::new();                  // empty set
 
-// 空花括号 {} 默认是空 Dict（与 Rust 字面量习惯一致）
+// empty braces {} are an empty Dict by default (consistent with Rust literal conventions)
 let e = {};
 
-// 推导式（§11.7）：外框决定产出类型
+// comprehensions (§11.7): the outer frame decides the resulting type
 let squares = [x^2 for x in range(0, 10) if x % 2 == 0];   // Array
 let lookup  = {x: x^2 for x in range(0, 5)};               // Dict
 let odds    = {x for x in range(0, 10) if x % 2 == 1};     // Set
-let pairs   = ((x, x+1) for x in range(0, 3));             // Tuple（惰性生成器）
+let pairs   = ((x, x+1) for x in range(0, 3));             // Tuple (lazy generator)
 ```
 
 **Rules**:
@@ -332,21 +331,21 @@ let pairs   = ((x, x+1) for x in range(0, 3));             // Tuple（惰性生�
 enum Value {
     Number(Number),
     Bool(bool), Char(char), String(String),
-    Array(Array),           // 可变长序列（v2.1：元素可为任意值，§11.3）
-    Dict(Dict),             // v2.1：映射类型，键不可变可哈希，§11.6
-    Set(Set),               // v2.1：集合类型，元素不可变可哈希，§11.6
+    Array(Array),           // variable-length sequence (v2.1: elements may be any value, §11.3)
+    Dict(Dict),             // v2.1: mapping type, immutable hashable keys, §11.6
+    Set(Set),               // v2.1: set type, immutable hashable elements, §11.6
     Matrix(Matrix),
     Function(Function),
-    Expr(ExprId),           // hash-consed 表达式句柄
-    Symbol(SymbolId),       // 内置/用户符号
-    Class(ClassId),         // 类实例（§4.5/十二）
-    Option(Option<Box<Value>>),  // Option<T>：Some(T) / None
-    Indeterminate(IndeterminateForm),  // 不定式（0/0 等），仅符号层
-    Undefined,              // 未定义（数值层错误状态）
+    Expr(ExprId),           // hash-consed expression handle
+    Symbol(SymbolId),       // built-in/user symbol
+    Class(ClassId),         // class instance (§4.5/12)
+    Option(Option<Box<Value>>),  // Option<T>: Some(T) / None
+    Indeterminate(IndeterminateForm),  // indeterminate (0/0 etc.), symbol layer only
+    Undefined,              // undefined (numeric-layer error state)
     Error(Error),
-    Nil,                    // 单元/无返回值
-    Tuple(Vec<Value>),      // 坍缩函数可返回多值
-    Result(Result<Box<Value>, Error>), // 安全坍缩/可失败运算的 Result 包装
+    Nil,                    // unit / no return value
+    Tuple(Vec<Value>),      // collapse functions may return multiple values
+    Result(Result<Box<Value>, Error>), // Result wrapper for safe collapse / fallible operations
 }
 ```
 
@@ -360,24 +359,24 @@ enum Value {
 
 ```text
 Number
- ├── 表达式形式（默认，精确）
+ ├── Expression form (default, exact)
  │    ├── Expr(ExprId)
- │    └── Symbol(SymbolId)          // \e, \pi, \i 等（§七）
- ├── 精确数值
- │    ├── Integer(BigInt)           // 溢出行为由策略 num_to_big 决定（§十三）
- │    ├── Rational(BigRat)          // 精确分数，默认偏好
- │    └── Complex{re, im}           // 精确复数（§6.4）
- ├── 坍缩后数值（§九，与 Rust 基本数值一一对应）
+ │    └── Symbol(SymbolId)          // \e, \pi, \i etc. (§7)
+ ├── Exact numerics
+ │    ├── Integer(BigInt)           // overflow behavior decided by the num_to_big policy (§13)
+ │    ├── Rational(BigRat)          // exact fractions, the default preference
+ │    └── Complex{re, im}           // exact complex numbers (§6.4)
+ ├── Post-collapse numerics (§9, one-to-one with Rust basic numerics)
  │    ├── I8(i8)  I16(i16)  I32(i32)  I64(i64)  I128(i128)
  │    ├── U8(u8)  U16(u16)  U32(u32)  U64(u64)  U128(u128)
  │    ├── Isize(isize)  Usize(usize)
  │    ├── F32(f32)  F64(f64)
- │    └── BigFloat                // 任意精度浮点
- └── 特殊值
-      ├── Indeterminate(form)       // 不定式（0/0, ∞-∞），仅符号层
-      ├── Undefined                 // 未定义，数值层错误状态
+ │    └── BigFloat                // arbitrary-precision float
+ └── Special values
+      ├── Indeterminate(form)       // indeterminate (0/0, ∞-∞), symbol layer only
+      ├── Undefined                 // undefined, numeric-layer error state
       ├── PlusInf / MinusInf        // ±∞
-      └── NaN                       // 仅坍缩后存在
+      └── NaN                       // exists only after collapse
 ```
 
 **Post-collapse numeric types correspond one-to-one with Rust basic numeric types**: `i8/i16/i32/i64/i128/u8/u16/u32/u64/u128/isize/usize/f32/f64`. The type names are the uppercase forms (`I8`, `U32`, `F64`, `Isize`, `Usize`…).
@@ -393,9 +392,9 @@ Number
   - Example:
 
     ```prima
-    let expr = (sin(x) - x) / x^3;   // 在 x=0 处形成 0/0，保留为 Indeterminate
-    limit(expr, x, 0);               // → -1/6（通过泰勒展开或洛必达）
-    simplify(expr);                  // 尝试化简不定式
+    let expr = (sin(x) - x) / x^3;   // forms 0/0 at x=0, preserved as Indeterminate
+    limit(expr, x, 0);               // → -1/6 (via Taylor expansion or l'Hôpital's rule)
+    simplify(expr);                  // attempts to simplify the indeterminate
     ```
 
 #### Numeric layer: `Undefined`
@@ -409,8 +408,8 @@ Number
   - Example:
 
     ```prima
-    let a = 0/0;                     // 符号层 → Indeterminate
-    let b = to_f64(a);               // 坍缩失败 → panic（to_* 家族）
+    let a = 0/0;                     // symbol layer → Indeterminate
+    let b = to_f64(a);               // collapse fails → panic (to_* family)
     let c = try_f64(a);              // → Err(Error::UndefinedError)
     ```
 
@@ -425,24 +424,24 @@ Number
 
 ```text
 type :=
-    // 基础数值类型
+    // basic numeric types
     | "Number" | "Integer" | "Rational" | "F64" | "F32"
     | "I8" | "I16" | "I32" | "I64" | "I128"
     | "U8" | "U16" | "U32" | "U64" | "U128" | "Isize" | "Usize"
     | "Complex" | "Expr" | "Symbol"
-    // 复合类型
+    // composite types
     | "Array" "<" type ">"
     | "Matrix" "<" type ">"
     | "Tuple" "<" type_list ">"
     | "Option" "<" type ">"
-    // 函数类型
+    // function types
     | "Fn" "(" type_list ")" "->" type
-    | "MFn" "(" type_list ")" "->" type   // 纯数学函数
+    | "MFn" "(" type_list ")" "->" type   // pure math function
     | "Result" "<" type "," type ">"
-    // 其他
+    // other
     | "Bool" | "String" | "Char"
-    | ident                               // 用户自定义类型（含类）
-    | "Self"                              // 类体内自指（§4.5）
+    | ident                               // user-defined type (including classes)
+    | "Self"                              // self-reference inside a class body (§4.5)
 ```
 
 #### Type Inference Rules (modeled after Rust)
@@ -450,9 +449,9 @@ type :=
 **Literal inference**:
 
 ```prima
-let x = 1;          // → Integer（整数字面量）
-let y = 1.0;        // → F64（浮点字面量，有小数点或科学记数法）
-let z = 0x1F;       // → Integer（十六进制）
+let x = 1;          // → Integer (integer literal)
+let y = 1.0;        // → F64 (float literal, with a decimal point or scientific notation)
+let z = 0x1F;       // → Integer (hexadecimal)
 let s = "hello";    // → String
 let b = true;       // → Bool
 ```
@@ -460,19 +459,19 @@ let b = true;       // → Bool
 **Expression inference**:
 
 ```prima
-let a = sqrt(2);           // → Expr（符号函数，未坍缩）
-let b = 1 + 2;             // → Integer（精确整数运算）
-let c = 1/3;               // → Rational（fraction := true 默认）
-let d = 1.0 + 2;           // → F64（不精确传染）
+let a = sqrt(2);           // → Expr (symbolic function, not collapsed)
+let b = 1 + 2;             // → Integer (exact integer arithmetic)
+let c = 1/3;               // → Rational (fraction := true default)
+let d = 1.0 + 2;           // → F64 (inexactness contagion)
 let e = [1, 2, 3];         // → Array<Integer>
-let f = [[1, 2], [3, 4]];  // 错误：拒绝嵌套数组
+let f = [[1, 2], [3, 4]];  // error: nested arrays rejected
 ```
 
 **Function inference**:
 
 ```prima
-let f(x) = x^2;           // → MFn(Expr) -> Expr（纯数学函数）
-fn g(x: F64) -> F64 {     // → Fn(F64) -> F64（功能函数）
+let f(x) = x^2;           // → MFn(Expr) -> Expr (pure math function)
+fn g(x: F64) -> F64 {     // → Fn(F64) -> F64 (imperative function)
     return x * 2.0;
 }
 ```
@@ -480,9 +479,9 @@ fn g(x: F64) -> F64 {     // → Fn(F64) -> F64（功能函数）
 **Explicit type annotations**:
 
 ```prima
-let x: F64 = sqrt(2);     // 类型错误：sqrt(2) 是 Expr，需显式坍缩
-let y: F64 = to_f64(sqrt(2));  // 正确
-let z: Integer = 3.14;    // 类型错误
+let x: F64 = sqrt(2);     // type error: sqrt(2) is an Expr, needs explicit collapse
+let y: F64 = to_f64(sqrt(2));  // correct
+let z: Integer = 3.14;    // type error
 ```
 
 **Type compatibility**:
@@ -509,7 +508,7 @@ Integer < Rational < Complex<Rational> < F64 < Complex<F64>
    ```prima
    1 + 2                  // → Integer(3)
    1/3 + 2/5              // → Rational(11/15)
-   Complex(1, 2) + 3      // → Complex(4, 2)（提升 3 → Complex(3, 0)）
+   Complex(1, 2) + 3      // → Complex(4, 2) (promotes 3 → Complex(3, 0))
    ```
 
 2. **Inexactness contagion**:
@@ -526,8 +525,8 @@ Integer < Rational < Complex<Rational> < F64 < Complex<F64>
 3. **Automatic reduction and normalization**:
 
    ```prima
-   2/4                    // → Rational(1/2)（自动约分）
-   Rational(6, -9)        // → Rational(-2/3)（分母为正）
+   2/4                    // → Rational(1/2) (automatic reduction)
+   Rational(6, -9)        // → Rational(-2/3) (positive denominator)
    ```
 
 **Complex functions**:
@@ -546,12 +545,12 @@ Integer < Rational < Complex<Rational> < F64 < Complex<F64>
 
 ```rust
 enum Domain {
-    Real,          // 实数域
-    Complex,       // 复数域（默认）
-    Integer,       // 整数域
-    Positive,      // 正实数
-    NonNegative,   // 非负实数
-    NonZero,       // 非零
+    Real,          // real domain
+    Complex,       // complex domain (default)
+    Integer,       // integer domain
+    Positive,      // positive reals
+    NonNegative,   // non-negative reals
+    NonZero,       // non-zero
 }
 ```
 
@@ -562,7 +561,7 @@ enum Domain {
 
   ```prima
   let x: Real = -1;
-  let y = x^(1/2);     // 化简时：最高域 = Complex → y 内部表示为 Complex(\i)
+  let y = x^(1/2);     // during simplification: highest domain = Complex → y is internally represented as Complex(\i)
   ```
 
 **Domain inheritance and propagation**:
@@ -571,29 +570,29 @@ enum Domain {
 
    ```prima
    let x: Real = -1;
-   let y = x;           // y 继承 Real 域标注
-   let z = y^(1/2);     // 错误：Real 域下负数开方非法
+   let y = x;           // y inherits the Real domain annotation
+   let z = y^(1/2);     // error: square root of a negative is illegal under the Real domain
    ```
 
 2. **Explicit domain conversion** (variance capability):
 
    ```prima
    let x: Real = -1;
-   let y = with_domain(x, Complex);  // 显式放宽为 Complex 域
-   let z = y^(1/2);                  // 正确 → \i
+   let y = with_domain(x, Complex);  // explicitly widen to the Complex domain
+   let z = y^(1/2);                  // correct → \i
    ```
 
 3. **Domain inheritance for function parameters**:
 
    ```prima
-   let f(x: Real): Real = x^2;    // 函数内 x 受 Real 约束
-   f(-1);                         // 正确 → 1
+   let f(x: Real): Real = x^2;    // inside the function x is constrained to Real
+   f(-1);                         // correct → 1
 
-   let g(x: Real): Complex = x^(1/2);  // 返回类型放宽
-   g(-1);                         // 错误：输入域为 Real，内部无法开方
+   let g(x: Real): Complex = x^(1/2);  // return type widened
+   g(-1);                         // error: input domain is Real, cannot take a square root internally
 
-   let h(x): Complex = x^(1/2);   // x 无显式域约束，采用默认（Complex）
-   h(-1);                         // 正确 → \i
+   let h(x): Complex = x^(1/2);   // x has no explicit domain constraint, uses the default (Complex)
+   h(-1);                         // correct → \i
    ```
 
 4. **Domain promotion in mixed operations**:
@@ -601,7 +600,7 @@ enum Domain {
    ```prima
    let a: Real = 2;
    let b: Complex = \i;
-   let c = a + b;       // c 的域 = Complex（提升到更宽松的域）
+   let c = a + b;       // c's domain = Complex (promoted to the more permissive domain)
    ```
 
 **Intuitive principles**:
@@ -648,11 +647,11 @@ enum Domain {
 **Usage example**:
 
 ```prima
-import physics;              // 仅导入模块命名空间
+import physics;              // import only the module namespace
 
-let E = physics::\planck_const * physics::\speed_of_light;  // 限定访问
+let E = physics::\planck_const * physics::\speed_of_light;  // qualified access
 
-// 或选择性导入
+// or a selective import
 from physics import \planck_const as h, \speed_of_light as c;
 let E = h * c;
 ```
@@ -849,7 +848,7 @@ let c = try_f64(a).unwrap();          // panics on failure
 let d = try_f64(a).expect("convert pi");  // custom panic message
 ```
 
-**Deprecated pipes**: the `|>` pipe (`a |> f`) is deprecated syntax (§16.5 `W0002`), progressively replaced by method chains (§4.5 examples).
+**Removed pipes**: the `|>` pipe (`a |> f`) was **removed in v2.3**; using it is now a `E0010` syntax error (§16.4). Use class method chains/direct calls instead (§4.5 examples).
 
 **Multiple return values**:
 
@@ -1741,16 +1740,16 @@ error[R0005]: invalid operation in real domain
    = expression: (-1)^{1/2}
 ```
 
-**Warning example** (§16.5):
+**Statement-separator error example** (§4.2, v2.3):
 
 ```text
-warning[W0001]: statements separated by newlines are deprecated
+error[E0011]: expected `;` to separate statements; newline statement separation was removed in v2.3
   --> src/main.pra:8:12
    |
  8 |     let b = 2
-   |              ^ use `;` to terminate statements; newline separation will be removed
+   |              ^
    |
-   = help: replace the trailing newline with `;`
+   = help: terminate the statement with `;`
 ```
 
 **Doc notes on method-call errors (v2.2)**: when a **method call** (`obj.method(...)`) fails — whether the cause is compile-time (unknown method, argument count/type mismatch) or runtime (an error thrown inside the method) — the diagnostic must attach **the relevant definition and doc comments of that method** (§4.1) in a note:
@@ -1779,8 +1778,6 @@ error[E0040]: undefined name `toUpperCase`
 
   Number | Name | Meaning |
 ------|------|------|
-  `W0001` | `newline_statement_separator` | using newlines to separate statements (deprecated; use `;`, §4.2) |
-  `W0002` | `deprecated_pipeline` | using the `\|>` pipeline (deprecated; use class methods, §9.7) |
   `W0003` | `unused_binding` | `let` binding is never used |
   `W0004` | `unreachable_code` | unreachable code |
   `W0005` | `overloaded_operator` | using operator overloading (§18.5; triggered by default with `overload_policy := warn`, released by `allow`) |
@@ -1788,9 +1785,9 @@ error[E0040]: undefined name `toUpperCase`
 
 **Rules**:
 
-- Warnings are emitted on the diagnostic channel and do not affect the exit code; `prima check` may use `--deny W0001` to upgrade a warning to an error (tool level).
+- Warnings are emitted on the diagnostic channel and do not affect the exit code; `prima check` may use `--deny W0005` to upgrade a warning to an error (tool level).
 - Warnings can be released via strategy (e.g., `overload_policy := allow` releases `W0005`); **no per-warning `allow` annotation is provided** (to avoid noise).
-- Deprecation warnings (`W0001`/`W0002`/`W0006`) are removed along with the corresponding syntax in the target version.
+- Deprecation warnings are removed along with the corresponding syntax in the target version: `W0001`/`W0002` were deleted in v2.3 when their syntax was removed; `W0006` remains as a transitional warning (`format` → f-strings) until `format` is fully removed.
 
 ## 17. Parallelism and Multithreading
 
@@ -1799,10 +1796,10 @@ error[E0040]: undefined name `toUpperCase`
 ### 17.1 Syntax: the `@parallel` annotation
 
 ```prima
-let f(x): MFn @parallel = x^2;          // 纯函数并行（安全）
+let f(x): MFn @parallel = x^2;          // parallel pure function (safe)
 
-// 实验性特性（暂不转正）
-// fn process(x) @parallel { ... }     // 功能函数并行（需手动保证线程安全）
+// experimental feature (not yet stabilized)
+// fn process(x) @parallel { ... }     // parallel imperative function (thread safety must be ensured manually)
 ```
 
 **Rules** (finalized in v2.1):
@@ -1816,10 +1813,10 @@ let f(x): MFn @parallel = x^2;          // 纯函数并行（安全）
 
 ```prima
 parfor i in 0..n {
-    A[i] = compute(i);              // 迭代体必须无副作用
+    A[i] = compute(i);              // the iteration body must be side-effect free
 }
 
-// 带步长
+// with step
 parfor i in 0..n step 2 {
     B[i] = heavy_computation(i);
 }
@@ -1845,7 +1842,7 @@ parfor i in 0..n step 2 {
 ```prima
 let f(x) @parallel = x^2 + sin(x);
 let v = range(0, 1000000);
-let w = f(v);                       // 自动并行广播（broadcast + @parallel）
+let w = f(v);                       // automatic parallel broadcast (broadcast + @parallel)
 ```
 
 #### Parallel matrix operations
@@ -1929,10 +1926,10 @@ pub class String {
 **Semantic distinction** between `print` and `println` (finalized in v2.1):
 
 ```prima
-print("hello");             // 输出 "hello"，不追加换行
-println("hello");           // 输出 "hello" 并换行
-print("a", "b");            // 多参数以空格分隔：a b（不换行）
-println("x =", x);          // 同上但末尾换行
+print("hello");             // outputs "hello", without appending a newline
+println("hello");           // outputs "hello" and appends a newline
+print("a", "b");            // multiple arguments separated by spaces: a b (no newline)
+println("x =", x);          // same as above but with a trailing newline
 ```
 
 **Rules**:
@@ -1944,9 +1941,9 @@ println("x =", x);          // 同上但末尾换行
 **Input (v2.1)**:
 
 ```prima
-let name = input("Name: ");        // 打印提示（可选）并读取一行，返回 String（去掉末尾换行）
-let n = read_line();               // 无提示读取一行
-let v = input("n = ").try_f64();   // 读取并坍缩（配合 try_* 家族，§九）
+let name = input("Name: ");        // optionally prints a prompt and reads one line, returning String (trailing newline stripped)
+let n = read_line();               // read one line without a prompt
+let v = input("n = ").try_f64();   // read and collapse (with the try_* family, §9)
 ```
 
 **Rules**:
@@ -1961,7 +1958,7 @@ let v = input("n = ").try_f64();   // 读取并坍缩（配合 try_* 家族，§
 
 ```prima
 import sys::path;
-let p = path::join("a", "b");           // "a/b"（Linux/macOS）或 "a\\b"（Windows）
+let p = path::join("a", "b");           // "a/b" (Linux/macOS) or "a\\b" (Windows)
 let n = path::file_name(p);             // Option<String>
 let ext = path::extension(p);           // Option<String>
 let parent = path::parent(p);           // Option<String>
@@ -1974,7 +1971,7 @@ let abs = path::is_absolute(p);         // Bool
 import sys::env;
 let home = env::home_dir();             // Option<String>
 let path_var = env::get("PATH");        // Option<String>
-let args = env::args();                 // Array<String>（命令行参数）
+let args = env::args();                 // Array<String> (command-line arguments)
 let cwd = env::current_dir();           // String
 ```
 
@@ -1984,18 +1981,18 @@ let cwd = env::current_dir();           // String
 import sys::os;
 let name = os::name();                  // "linux" / "macos" / "windows" / ...
 let arch = os::arch();                  // "x86_64" / "aarch64" / ...
-os::exit(0);                            // 立即退出进程
+os::exit(0);                            // immediately exits the process
 ```
 
 ### 18.3 The `time` Module (time system)
 
 ```prima
 import time;
-let now = time::now();                  // 当前时间戳
+let now = time::now();                  // current timestamp
 let d = time::Duration::from_secs(5);
 time::sleep(d);
 let ts = time::unix_timestamp(now);     // I64
-let s = time::format(now, "%Y-%m-%d");  // 格式化
+let s = time::format(now, "%Y-%m-%d");  // formatting
 let parsed = time::parse("2024-01-01", "%Y-%m-%d");  // Result
 ```
 
@@ -2085,7 +2082,7 @@ impl ops::Add for Vec2 {
 
 let a = Vec2::new(1.0, 2.0);
 let b = Vec2::new(3.0, 4.0);
-let c = a + b;            // ⚠ W0005：运算符重载使用（默认警告）
+let c = a + b;            // ⚠ W0005: operator overloading in use (default warning)
 ```
 
 **Overloadable operators** (provided by `ops`): `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Neg`, `Eq`, `Cmp`, `Index`.
@@ -2093,11 +2090,11 @@ let c = a + b;            // ⚠ W0005：运算符重载使用（默认警告）
 **Policy control** (§13.2):
 
 ```prima
-with config { overload_policy := allow } {   // 解除 W0005 警告
+with config { overload_policy := allow } {   // releases the W0005 warning
     let c = a + b;
 }
-with config { overload_policy := deny } {    // 使用即报错
-    let c = a + b;            // 错误
+with config { overload_policy := deny } {    // using it is an error
+    let c = a + b;            // error
 }
 ```
 
@@ -2163,7 +2160,7 @@ with config { overload_policy := deny } {    // 使用即报错
    ```prima
    import core;
    let a = tex"\sqrt{2}+\pi";
-   print(a);                    // LaTeX 输出：\sqrt{2} + \pi
+   print(a);                    // LaTeX output: \sqrt{2} + \pi
    ```
 
 2. **Simplification and evaluation**:
@@ -2194,7 +2191,7 @@ with config { overload_policy := deny } {    // 使用即报错
 
    ```prima
    let s = 0;
-   for i in 1..100 { s += i; }  // 编译器优化为 s = 100*101/2
+   for i in 1..100 { s += i; }  // the compiler optimizes this to s = 100*101/2
    print(s);                    // 5050
    ```
 
@@ -2203,7 +2200,7 @@ with config { overload_policy := deny } {    // 使用即报错
    ```prima
    let f(x) @parallel = x^2;
    let v = range(0, 1000000);
-   let w = f(v);                // 自动并行广播
+   let w = f(v);                // automatic parallel broadcast
    ```
 
 7. **Error handling (Result + ?)**:
@@ -2260,22 +2257,22 @@ with config { overload_policy := deny } {    // 使用即报错
 ```prima
 let f(x) = x^2 + sin(x);
 
-// 前 100 次调用：解释执行
+// the first 100 calls: interpreted execution
 for i in 1..100 {
     let _ = f(to_f64(i));
 }
 
-// 第 101 次：触发 JIT 编译
-// ExprDAG → LLVM IR → 原生码
-let result = f(to_f64(101));  // 原生速度
+// the 101st call: triggers JIT compilation
+// ExprDAG → LLVM IR → native code
+let result = f(to_f64(101));  // native speed
 ```
 
 **Composable optimization**:
 
 ```prima
 let f(x) = x^2 + 1;
-let g = jit(grad(f));         // 组合：自动微分 + JIT 编译
-print(g(3.0));                // 原生速度的梯度计算
+let g = jit(grad(f));         // composition: automatic differentiation + JIT compilation
+print(g(3.0));                // native-speed gradient computation
 ```
 
 ### 19.3 Phase Three: AOT Compilation
@@ -2301,9 +2298,9 @@ print(g(3.0));                // 原生速度的梯度计算
 **Commands**:
 
 ```bash
-prima compile src/main.pra -o outputs/build/myapp       # 本机可执行文件
+prima compile src/main.pra -o outputs/build/myapp       # native executable
 prima compile src/main.pra --target wasm32 -o app.wasm  # WebAssembly
-prima compile src/main.pra --emit-c-abi -o libhello     # C ABI 动态库 + 头文件
+prima compile src/main.pra --emit-c-abi -o libhello     # C ABI dynamic library + header
 ```
 
 ### 19.4 Automatic Differentiation (a differentiator; implement it early)
@@ -2318,17 +2315,17 @@ prima compile src/main.pra --emit-c-abi -o libhello     # C ABI 动态库 + 头�
 
   ```prima
   let f(x) = x^2 + sin(x);
-  let df = derivative(f, x);    // → 2*x + cos(x)（返回 Expr）
+  let df = derivative(f, x);    // → 2*x + cos(x) (returns an Expr)
   print(df);                    // LaTeX: 2x + \cos(x)
 
-  let d2f = derivative(df, x);  // → 2 - sin(x)（高阶导数）
+  let d2f = derivative(df, x);  // → 2 - sin(x) (higher-order derivative)
 
   let g(x, y) = x^2*y + y^3;
   let gx = partial(g, x);       // → 2*x*y
   let gy = partial(g, y);       // → x^2 + 3*y^2
 
-  let gradv = grad(x^2 + y^2);  // → [2x, 2y]（对自由变量逐偏导）
-  let lim = limit(sin(x)/x, x, 0);  // → 1（洛必达）
+  let gradv = grad(x^2 + y^2);  // → [2x, 2y] (partial derivatives w.r.t. each free variable)
+  let lim = limit(sin(x)/x, x, 0);  // → 1 (l'Hôpital's rule)
   ```
 
 #### Phase two: forward-mode AD (numeric)
@@ -2346,7 +2343,7 @@ prima compile src/main.pra --emit-c-abi -o libhello     # C ABI 动态库 + 头�
 
   ```prima
   fn eval_dual(f: MFn, x: Dual) -> Dual {
-      // 自动传播梯度
+      // automatically propagates gradients
   }
   ```
 
@@ -2360,8 +2357,8 @@ prima compile src/main.pra --emit-c-abi -o libhello     # C ABI 动态库 + 头�
 
   ```prima
   let loss(w) = sum((y - predict(X, w))^2);
-  let grad_loss = grad(loss);   // 反向模式自动微分
-  let jit_grad = jit(grad_loss);  // JIT 编译梯度函数
+  let grad_loss = grad(loss);   // reverse-mode automatic differentiation
+  let jit_grad = jit(grad_loss);  // JIT-compile the gradient function
   ```
 
 **Reference implementations**:
@@ -2377,25 +2374,25 @@ prima compile src/main.pra --emit-c-abi -o libhello     # C ABI 动态库 + 头�
 **Design rule**: **all code (entry point / import section / modules) goes in `src/`**; **configuration and the README stay in the project root**; run artifacts go into `outputs/`.
 
 ```text
-prima_project/                      # 项目根
+prima_project/                      # project root
 │
-├── src/                            # ★ 所有 Prima 源码（.pra）
-│   ├── main.pra                    # 项目入口 = 根模块（污染性策略必须在此顶部）
-│   │                              #   含 config{} + import 区 + 代码
-│   ├── modules/                    # 业务模块（可选，一 .pra 文件 = 一模块）
+├── src/                            # ★ all Prima source (.pra)
+│   ├── main.pra                    # project entry = root module (polluting policies must be at the top here)
+│   │                              #   contains config{} + import section + code
+│   ├── modules/                    # business modules (optional; one .pra file = one module)
 │   │   ├── physics.pra
 │   │   └── finance.pra
-│   └── linalg/                     # 子模块（目录映射）
-│       ├── main.pra                #   目录模块入口（仿 Rust mod.rs）
+│   └── linalg/                     # submodule (directory mapping)
+│       ├── main.pra                #   directory module entry (modeled on Rust mod.rs)
 │       └── fft.pra
 │
-├── config.toml                     # 项目级配置（编译目标、默认优化项、工具参数）
+├── config.toml                     # project-level configuration (compile targets, default optimization, tool parameters)
 ├── README.md
-├── prima.toml                      # 项目元数据（包名、版本、依赖 Prima 标准库版本）
+├── prima.toml                      # project metadata (package name, version, required Prima standard library version)
 │
-└── outputs/                        # 运行产物（不提交版本库，通常 .gitignore）
-    ├── build/                      # AOT 二进制 / 中间产物（如有）
-    └── figures/                    # 生成的 SVG/PNG 图表
+└── outputs/                        # run artifacts (not committed, usually .gitignore)
+    ├── build/                      # AOT binaries / intermediate artifacts (if any)
+    └── figures/                    # generated SVG/PNG figures
 ```
 
 ### Rules
@@ -2412,22 +2409,22 @@ prima_project/                      # 项目根
 Provided by the `prima` CLI:
 
 ```bash
-# 解释执行
+# interpreted execution
 prima run src/main.pra
 
-# AOT 编译
+# AOT compilation
 prima compile src/main.pra -o outputs/build/myapp
 
-# REPL 交互
+# interactive REPL
 prima repl
 
-# 格式化代码
+# format code
 prima fmt src/
 
-# 类型检查（不执行）
+# type checking (without executing)
 prima check src/main.pra
 
-# 测试
+# testing
 prima test
 
 # Documentation generation (v2.2: parses the `///`/`//!` doc comments, covering the project and the built-in standard library)
@@ -2473,10 +2470,10 @@ prima doc --stdlib               # outputs only the built-in standard library (i
  28 | Indexing syntax | Rust-style: `v[i]`, `M[i, j]`, `v[1..3]`, `M[.., j]` (§11.3) |
  29 | Automatic differentiation | MVP symbolic differentiation → forward AD (dual numbers) → reverse AD (tape) (§19.4) |
  30 | Implementation choices | `num-*` (pure Rust) as the base; `rug` (GMP) as optional acceleration (§19.1) |
- 31 | Statement separation | **`;` per the spec; newline separation deprecated (W0001) and being gradually removed** (§4.2) |
+ 31 | Statement separation (v2.3) | **`;` per the spec; newline separation removed in v2.3 (`E0011`)** (§4.2) |
  32 | Patterns/destructuring | **Rust-style full patterns: `if let`/`while let`/`match` + tuple/array/class/constructor/range patterns** (§4.4) |
  33 | Class | **Aggregate type of fields + methods, `Self`/`new`/`self`; shallow-copy sharing + deep copy for primitive values** (§4.5/12.3) |
- 34 | Pipeline | **`\|>` deprecated (W0002), replaced by class method chains** (§9.7) |
+ 34 | Pipeline (v2.3) | **`\|>` removed in v2.3 (`E0010`); use class method chains/direct calls** (§9.7) |
  35 | Warning system | **Numbered `W####`, English code list in Appendix C; removable via policy** (§16.5) |
  36 | Strings (v2.2) | **`format` removed, replaced by f-strings `f"..."`; the `"..."`/`'...'` double delimiters + raw strings `r"..."`; the `String` class method set references Python `str`, with the list in the `.pra` doc comments** (§18.1) |
  37 | Collapse types | **One-to-one correspondence with Rust primitive numerics: i8…u128/isize/usize/f32/f64** (§6.1/9) |
@@ -2619,14 +2616,14 @@ expr             ::= literal | ident | self_expr | call_expr | index_expr
                    | binary_expr | unary_expr | paren_expr | array_expr
                    | tuple_expr | dict_expr | set_expr | comprehension
                    | lambda_expr | match_expr | try_expr
-                   | pipeline_expr | method_call | struct_literal
+                   | method_call | struct_literal
 self_expr        ::= "self" | "Self"
 method_call      ::= expr "." ident "(" args ")"
 struct_literal   ::= ident "{" field_value ("," field_value)* "}"
-field_value      ::= ident (":" expr)? | "..expr"         // ".." 从既有实例拷贝剩余字段
+field_value      ::= ident (":" expr)? | "..expr"         // ".." copies the remaining fields from an existing instance
 try_expr         ::= expr "?"
 
-// v2.1 集合字面量与推导式（§4.6）
+// v2.1 collection literals and comprehensions (§4.6)
 dict_expr        ::= "{" (entry ("," entry)*)? "}"
 entry            ::= expr ":" expr
 set_expr         ::= "{" expr ("," expr)+ "}"
@@ -2665,14 +2662,14 @@ args             ::= (expr ("," expr)*)?
 index_expr       ::= expr "[" index "]"
 index            ::= expr | slice
 slice            ::= expr? ".." expr? | ".."
-// v2.1：负索引（-1 取末元素）与切片赋值（index_expr 作赋值左值，§11.3）
+// v2.1: negative indices (-1 takes the last element) and slice assignment (index_expr as an assignment lvalue, §11.3)
 
 binary_expr      ::= expr binary_op expr
 binary_op        ::= "+" | "-" | "*" | "/" | "^" | "**" | "@" | "%"
                    | "==" | "!=" | "<" | "<=" | ">" | ">="
                    | "&&" | "||"
-// v2.1：`in`（成员测试，§11.3/11.6）与 `∪`/`∩`/`\`（Set 代数，§11.6）
-//       追加到 binary_op 的等价优先级组（成员测试与比较同级）
+// v2.1: `in` (membership test, §11.3/11.6) and `∪`/`∩`/`\` (set algebra, §11.6)
+//       appended to the equivalent precedence group of binary_op (membership test at the same level as comparison)
 
 unary_expr       ::= unary_op expr
 unary_op         ::= "-" | "!" | "+"
@@ -2686,8 +2683,6 @@ tuple_expr       ::= "(" expr "," (expr ("," expr)*)? ")"
 lambda_expr      ::= "|" params "|" expr
 
 match_expr       ::= "match" expr "{" match_arm+ "}"
-
-pipeline_expr    ::= expr "|>" expr        // 弃用（W0002）
 
 block            ::= "{" statement* "}"
 
@@ -2705,73 +2700,73 @@ ident            ::= [a-zA-Z_] [a-zA-Z0-9_]* | "\\" [a-zA-Z_]+
 ##### Collapse functions
 
 ```prima
-// 基础坍缩（panic on failure）
+// basic collapse (panics on failure)
 to_i8(x), to_i16(x), to_i32(x), to_i64(x), to_i128(x)
 to_u8(x), to_u16(x), to_u32(x), to_u64(x), to_u128(x)
 to_isize(x), to_usize(x)
 to_f32(x), to_f64(x), to_bigint(x), to_rational(x), to_bigfloat(x), to_complex(x)
 
-// 安全坍缩（返回 Result<T, Error>）
+// safe collapse (returns Result<T, Error>)
 try_i8(x), try_i16(x), try_i32(x), try_i64(x), try_i128(x)
 try_u8(x), try_u16(x), try_u32(x), try_u64(x), try_u128(x)
 try_isize(x), try_usize(x)
 try_f32(x), try_f64(x), try_bigint(x), try_rational(x), try_complex(x)
 
-// 检查坍缩（检查溢出/范围）
+// checked collapse (checks overflow/range)
 checked_i8(x), checked_i16(x), checked_i32(x), checked_i64(x), checked_i128(x)
 checked_u8(x), checked_u16(x), checked_u32(x), checked_u64(x), checked_u128(x)
 checked_add(a, b), checked_mul(a, b)
 
-// 钳制坍缩
+// clamped collapse
 clamped_i8(x, min, max), clamped_i16(x, min, max), clamped_i32(x, min, max)
 clamped_i64(x, min, max), clamped_u8(x, min, max), clamped_u16(x, min, max)
 clamped_u32(x, min, max), clamped_u64(x, min, max)
 clamped_f32(x, min, max), clamped_f64(x, min, max)
 
-// 舍入坍缩
+// rounded collapse
 rounded_f64(x, digits), rounded_f32(x, digits), rounded_i32(x), truncated_i32(x)
 ```
 
 ##### Mathematical functions
 
 ```prima
-// 基础算术
+// basic arithmetic
 sqrt(x), exp(x), log(x), ln(x), log10(x), log2(x)
 abs(x), sign(x), floor(x), ceil(x), round(x)
 
-// 三角函数
+// trigonometric functions
 sin(x), cos(x), tan(x), asin(x), acos(x), atan(x), atan2(y, x)
 sinh(x), cosh(x), tanh(x), asinh(x), acosh(x), atanh(x)
 
-// 复数函数
+// complex functions
 real(z), imag(z), conj(z), abs(z), abs2(z), angle(z)
 polar_form(z), complex_to_parts(z)
 
-// 幂与根
+// powers and roots
 pow(base, exp), cbrt(x), nth_root(x, n)
 ```
 
 ##### Simplification and symbolic operations
 
 ```prima
-simplify(expr, level = 2)      // 化简表达式
-expand(expr)                   // 展开
-factor(expr)                   // 因式分解
-collect(expr, var)             // 合并同类项
-substitute(expr, var, value)   // 替换
-limit(expr, var, value)        // 极限（v2.1 实现：直接代入 + 洛必达）
-derivative(expr, var)          // 导数（v2.1 实现，接受表达式或 MFn 名，§19.4）
-partial(expr, var)             // 偏导数（同 derivative）
-grad(expr)                     // 梯度（对自由变量逐偏导，返回 Array）
-integral(f, var)               // 不定积分
-definite_integral(f, var, a, b)  // 定积分
+simplify(expr, level = 2)      // simplify an expression
+expand(expr)                   // expand
+factor(expr)                   // factor
+collect(expr, var)             // combine like terms
+substitute(expr, var, value)   // substitute
+limit(expr, var, value)        // limit (v2.1 implementation: direct substitution + l'Hôpital's rule)
+derivative(expr, var)          // derivative (v2.1 implementation, accepts an expression or an MFn name, §19.4)
+partial(expr, var)             // partial derivative (same as derivative)
+grad(expr)                     // gradient (partial derivatives w.r.t. each free variable, returns Array)
+integral(f, var)               // indefinite integral
+definite_integral(f, var, a, b)  // definite integral
 ```
 
 ##### Strings and formatting
 
 ```prima
-format(fmt, args...)           // 格式化生成 String（§18.1）
-to_string(x)                   // 任意值转 String
+format(fmt, args...)           // format to produce a String (§18.1)
+to_string(x)                   // convert any value to a String
 String::new(), String::from(v)
 s.push(t), s.insert(i, t), s.len(), s.is_empty()
 s.char_at(i), s.substring(a, b), s.contains(p), s.starts_with(p), s.ends_with(p)
@@ -2782,46 +2777,46 @@ s.find(p), s.to_upper(), s.to_lower(), s.repeat(n)
 ##### Console (v2.1, §18.1b)
 
 ```prima
-print(args...)                 // 格式化输出，参数空格分隔，不追加换行（v2.1）
-println(args...)               // 同 print，末尾追加换行
-input(prompt?)                 // 打印提示（可选）并读取一行 → String
-read_line()                    // 无提示读取一行 → String
+print(args...)                 // formatted output, arguments separated by spaces, no trailing newline (v2.1)
+println(args...)               // same as print, appends a trailing newline
+input(prompt?)                 // optionally prints a prompt and reads one line → String
+read_line()                    // read one line without a prompt → String
 ```
 
 ##### Collection convenience functions (v2.1, core-preimported)
 
 ```prima
-// 多态长度与构造
-len(x)                         // Array/Dict/Set/String/Tuple 的元素数
-enumerate(arr)                 // → [(0, a0), (1, a1), ...]（Tuple 数组）
-zip(a, b)                      // → [(a0, b0), (a1, b1), ...]（短端截断）
-range(start, end, step = 1)    // 生成范围（数组或惰性迭代）
-linspace(start, end, n)        // 线性等分
+// polymorphic length and construction
+len(x)                         // number of elements of Array/Dict/Set/String/Tuple
+enumerate(arr)                 // → [(0, a0), (1, a1), ...] (array of Tuples)
+zip(a, b)                      // → [(a0, b0), (a1, b1), ...] (truncated at the shorter end)
+range(start, end, step = 1)    // generate a range (array or lazy iteration)
+linspace(start, end, n)        // linear spacing
 
-// 数组便捷
-sorted(arr)                    // 排序 → 新 Array
-reversed(arr)                  // 反转 → 新 Array
-sum(arr)                       // 求和（数值）
-prod(arr)                      // 求积（数值）
-min(arr), max(arr)             // 最值
-all(arr)                       // 全真
-any(arr)                       // 任一真
-arr.contains(x)                // 成员测试（等价 `x in arr`）
-arr.index(x)                   // 元素下标（找不到 R0013）
-arr.count(x)                   // 出现次数
-arr.first(), arr.last()        // 首/末元素（Option）
-arr.sort(), arr.reverse()      // 原地排序/反转
+// array conveniences
+sorted(arr)                    // sort → new Array
+reversed(arr)                  // reverse → new Array
+sum(arr)                       // sum (numeric)
+prod(arr)                      // product (numeric)
+min(arr), max(arr)             // extrema
+all(arr)                       // all true
+any(arr)                       // any true
+arr.contains(x)                // membership test (equivalent to `x in arr`)
+arr.index(x)                   // element index (R0013 if not found)
+arr.count(x)                   // number of occurrences
+arr.first(), arr.last()        // first/last element (Option)
+arr.sort(), arr.reverse()      // in-place sort/reverse
 
-// Array 可变方法（§11.3）
+// Array mutating methods (§11.3)
 v.push(x), v.pop() -> Option, v.append(x), v.extend(iterable)
 v.insert(i, x), v.remove(i) -> Value, v.clear()
 
-// Dict 方法（§11.6）
+// Dict methods (§11.6)
 d.keys() -> Array, d.values() -> Array, d.items() -> Array<Tuple>
 d.get(k) -> Option, d.insert(k, v), d.remove(k) -> Option, d.clear()
 d.update(other), d.len()
 
-// Set 方法（§11.6）
+// Set methods (§11.6)
 s.add(x), s.remove(x), s.discard(x), s.contains(x), s.len()
 s.union(other) / s ∪ other, s.intersection(other) / s ∩ other
 s.difference(other) / s \ other
@@ -2830,24 +2825,24 @@ s.difference(other) / s \ other
 ##### Utility functions
 
 ```prima
-map(f, array)                  // 映射
-filter(pred, array)            // 过滤
-reduce(f, array, init)         // 归约
+map(f, array)                  // map
+filter(pred, array)            // filter
+reduce(f, array, init)         // reduce
 ```
 
 ##### Built-in variant constructors (core-preimported)
 
 ```prima
-Some(x)     // Option 的 Some
-None        // Option 的 None
-Ok(x)       // Result 的 Ok
-Err(e)      // Result 的 Err
+Some(x)     // the Some of Option
+None        // the None of Option
+Ok(x)       // the Ok of Result
+Err(e)      // the Err of Result
 ```
 
 #### B.2 Linalg (explicitly imported)
 
 ```prima
-// 矩阵构造
+// matrix construction
 Matrix::zeros(rows, cols)
 Matrix::ones(rows, cols)
 Matrix::identity(n)
@@ -2855,32 +2850,32 @@ Matrix::from_rows(data)
 Matrix::from_cols(data)
 Matrix::diagonal(values)
 
-// 矩阵运算
+// matrix operations
 transpose(M), inverse(M), determinant(M), trace(M)
 rank(M), norm(M, p = 2), cond(M)
 dot(v1, v2), cross(v1, v2)
 
-// 矩阵分解
+// matrix decomposition
 lu(M), qr(M), svd(M), eigen(M), cholesky(M)
 
-// 线性求解
-solve(A, b)                    // 解 Ax = b
-lstsq(A, b)                    // 最小二乘
+// linear solving
+solve(A, b)                    // solve Ax = b
+lstsq(A, b)                    // least squares
 ```
 
 #### B.3 Stats (explicitly imported)
 
 ```prima
-// 描述统计
+// descriptive statistics
 mean(data), median(data), mode(data)
 variance(data), std(data)
 quantile(data, q), percentile(data, p)
 min(data), max(data), range(data)
 
-// 相关性
+// correlation
 cov(x, y), corr(x, y), spearman(x, y)
 
-// 分布
+// distributions
 Normal(mu, sigma), Uniform(a, b), Exponential(lambda)
 Binomial(n, p), Poisson(lambda)
 pdf(dist, x), cdf(dist, x), quantile(dist, p)
@@ -2890,19 +2885,19 @@ sample(dist, n)
 #### B.4 Plot (explicitly imported)
 
 ```prima
-// 基础绘图
+// basic plotting
 plot(x, y, label = "", color = "blue")
 scatter(x, y, label = "", marker = "o")
 line(x, y, label = "", linestyle = "-")
 bar(x, y, label = "")
 
-// 配置
+// configuration
 xlabel(text), ylabel(text), title(text)
 legend(location = "best")
 xlim(min, max), ylim(min, max)
 grid(visible = true)
 
-// 保存
+// saving
 savefig(filename, format = "svg", dpi = 300)
 show()
 ```
@@ -2910,30 +2905,30 @@ show()
 #### B.5 Sys / Time / Num / Ops (explicitly imported)
 
 ```prima
-// sys::path —— 跨平台路径
+// sys::path — cross-platform paths
 path::join(a, b), path::file_name(p), path::extension(p)
 path::parent(p), path::is_absolute(p), path::canonicalize(p) -> Result
 
-// sys::env —— 跨平台环境
+// sys::env — cross-platform environment
 env::home_dir() -> Option<String>
 env::get(name) -> Option<String>
 env::args() -> Array<String>
 env::current_dir() -> String
 
-// sys::os —— 平台特定
+// sys::os — platform-specific
 os::name() -> String, os::arch() -> String, os::exit(code)
 
-// time —— 时间系统
+// time — time system
 time::now(), time::sleep(d), time::unix_timestamp(t) -> I64
 time::format(t, fmt) -> String, time::parse(s, fmt) -> Result
 Duration::from_secs(n), Duration::from_millis(n)
 
-// num —— 额外数字类型与运算
+// num — additional numeric types and operations
 num::gcd(a, b), num::lcm(a, b), num::is_prime(n)
 num::next_prime(n), num::random_integer(a, b)
 num::to_base(n, radix) -> String, num::from_base(s, radix) -> Result
 
-// ops —— 运算符重载（§18.5）
+// ops — operator overloading (§18.5)
 impl ops::Add for Vec2 { fn add(self, rhs: Vec2) -> Vec2 { ... } }
 impl ops::Index for Vec2 { fn index(self, i: Integer) -> F64 { ... } }
 ```
@@ -2949,8 +2944,8 @@ c_api::float        // C float → F32
 c_api::double       // C double → F64
 c_api::bool         // C bool → Bool
 c_api::char         // C char → Char
-c_api::cstring      // C char* → String（跨界转换）
-c_api::ptr          // C void* → 不透明指针
+c_api::cstring      // C char* → String (cross-boundary conversion)
+c_api::ptr          // C void* → opaque pointer
 c_api::unit         // C void
 ```
 
@@ -2965,8 +2960,8 @@ c_api::unit         // C void
  Code | Name | Meaning |
 ----|------|------|
  `E0001` | `lex_error` | Lexical error (illegal character/unclosed literal) |
- `E0010` | `syntax_error` | Syntax error (including hints about removed syntax, such as `try/catch`) |
- `E0011` | `expected_separator` | Expected a `;` statement separator |
+ `E0010` | `syntax_error` | Syntax error (including hints about removed syntax, such as `try/catch` and the `\|>` pipeline, removed since v2.3) |
+ `E0011` | `expected_separator` | Expected a `;` statement separator (active since v2.3: newline separation is removed, statements must end with `;`, §4.2) |
  `E0020` | `config_position` | `config {}` is not at the top of the file |
  `E0021` | `polluting_config` | Polluting policy declared in a non-entry file |
  `E0022` | `unknown_config` | Unknown policy key |
@@ -3017,12 +3012,11 @@ c_api::unit         // C void
 
  Code | Name | Meaning |
 ----|------|------|
- `W0001` | `newline_statement_separator` | Newline-separated statements (deprecated; use `;`) |
- `W0002` | `deprecated_pipeline` | The `\|>` pipeline is deprecated; use class methods |
  `W0003` | `unused_binding` | Binding is unused |
  `W0004` | `unreachable_code` | Unreachable code |
  `W0005` | `overloaded_operator` | Operator overloading in use (removed via `overload_policy := allow`) |
+ `W0006` | `deprecated_format` | Calling the removed `format` function (use f-strings instead, §18.1; transitional warning) |
 
 ---
 
-*Prima language specification v2.2 · the authoritative basis for the design and implementation of Prima*
+*Prima language specification v2.3 · the authoritative basis for the design and implementation of Prima*

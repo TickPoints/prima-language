@@ -1,9 +1,10 @@
-# **Prima** —— 语言规范 v2.2
+# **Prima** —— 语言规范 v2.3
 
-> **声明**：本规范为 **Prima 语言** 的正式语言规范 v2.2，是设计与实现统一的最终依据。
+> **声明**：本规范为 **Prima 语言** 的正式语言规范 v2.3，是设计与实现统一的最终依据。
 > **v2.0 变更摘要**：①错误处理改为 Rust 式 `Result`/`?`/`match`（移除 `try/catch`）；②语句统一以 `;` 划分（换行分隔进入弃用流程，逐步移除）；③引入 Rust 式模式与解构（`if let`/`while let`/`match` 全模式）；④引入 Class（类）与所有权语义；⑤建立编号错误/警告码表（英文，附录 C）；⑥完整字符串支持与 `format`；⑦坍缩后数值类型与 Rust 基本数值类型一一对应；⑧互操作（`@c_api::extern` 导出 C ABI、`@builtin` Rust 实现）；⑨标准库扩充 `sys`/`time`/`num`/`ops`。
 > **v2.1 变更摘要（基础类型可用性增强，偏向 Python 风格）**：⑩`Array` 改为**可变长度**序列，支持 `push`/`pop`/`append`/`insert`/`remove`/`extend`/切片赋值/拼接/成员测试（`in`）/负索引/可嵌套（作为数据）；⑪新增**映射类型 `Dict`** 与**集合类型 `Set`**（字面量、索引、方法、迭代）；⑫常用集合便捷函数：`len`/`enumerate`/`sorted`/`reversed`/`sum`/`prod`/`min`/`max`/`all`/`any`/`join`/`count` 等；⑬`print` 与 `println` **区分**（前者不换行，后者换行）；⑭控制台输入 `input`/`read_line`；⑮列表/字典/集合**推导式**（`[x^2 for x in v if x > 0]`）；⑯符号微分原语 `derivative`/`partial`/`grad`/`limit` 纳入 core（§十九）。
 > **v2.2 变更摘要**：⑰**`format` 移除，改用 Python 式 f-string** `f"a={a}"`；字符串同时支持 `"..."` / `'...'` 定界与原始字符串 `r"..."`（§18.1）；⑱**文档注释稳定化**：`///`/`//!` 成为规范注释并纳入 AST，`prima doc` 覆盖内置标准库，方法调用出错时在诊断 note 中附带方法定义与文档（§4.1/16.4）；⑲**`@builtin(O1)` 分层优化**：按优化等级在 Rust 实现与 `.pra` 原实现之间切换（§18.4）；⑳**优化等级体系**：新增 `opt_level` 策略（`O0`–`O3`），各等级对应优化通道（§10.2/13.2）；㉑**内置方法体系**：`String` 等常用类方法集以 Python 稳定方法为参照，清单与文档统一维护于内嵌 `.pra` 模块的文档注释（§18.1）；㉒**标准库扩充**：`math` 数值工具（因式分解、泰勒展开）、`physics` 常用公式（Rust 实现）、系统交互、`plot`/`render` 绘图与公式渲染（§十八）；㉓**宿主层内存改为 GC**，标准库提供 `mem::Arc` 显式引用计数（§12.3/12.4）。
+> **v2.3 变更摘要**：㉔**`|>` 管道移除**：使用 `|>` 即解析错误（`E0010 syntax_error`），改用类方法链/直接调用（§9.7）；㉕**换行分隔语句移除**：语句必须以 `;` 分隔（§4.2），未以 `;` 结尾的语句（块级语句后/文件末尾除外）为硬错误 `E0011 expected_separator`（§16.4）；同步删除弃用警告 `W0001`/`W0002`（§16.5）。
 
 ## 标识
 
@@ -101,7 +102,7 @@ AST
 - **保留关键字**（未来扩展）：`async`、`yield`、`macro`、`trait`。
 - **生效关键字**：`let`、`const`、`fn`、`class`、`pub`、`self`、`Self`、`if`、`else`、`while`、`for`、`in`、`step`、`parfor`、`return`、`match`、`impl`、`with`、`config`、`import`、`from`、`as`、`true`、`false`。
 - **注解**：`@parallel`、`@jit`、`@gpu`、`@builtin`（可带优化等级参数 `@builtin(O1)`，§18.4）、`@c_api::extern`。
-- **语句分隔符**：`;`（规范、§4.2）；换行分隔为**弃用形式**（§16.5 W0001）。
+- **语句分隔符**：`;`（规范、§4.2）；换行分隔语句已随 v2.3 **移除**，语句必须以 `;` 结尾（否则 `E0011`，§16.4）。
 - **集合字面量**：`{ ... }` 按上下文区分为 `Dict`/`Set` 字面量（§4.6）与代码块；推导式复用 `[ ... ]`/`{ ... }`/`( ... )` 外框（§11.7）。
 
 ---
@@ -146,13 +147,13 @@ print(f(3));
 
 - **规范形式**：每条语句以 `;` 结尾（`;` 是唯一规范语句分隔符）。
 - **块级语句**（`if`/`while`/`for`/`parfor`/`fn`/`class`/`match`/`with config` 后跟 `{}` 的语句）末尾 `;` 可省略，与 Rust 一致。
-- **弃用形式**：以换行分隔语句（紧跟语句末尾的换行充当分隔）仍被接受，但产生警告 `W0001`（§16.5），并将在后续版本中**移除**。新代码必须使用 `;`。
+- **移除（v2.3）**：以换行分隔语句（紧跟语句末尾的换行充当分隔）已随 v2.3 **移除**。语句不以 `;` 结尾（块级语句后 / 文件末尾除外）即报硬错误 `E0011 expected_separator`（§16.4）。新代码一律使用 `;`。
 - **空语句**：单独的 `;` 合法（no-op）。
 
 ```prima
 let a = 1;                 // ✓ 规范：以 ; 分隔
-let b = 2                  // ⚠ W0001：换行分隔（弃用）
-let c = 3;                 // 上一条语句在 b = 2 的换行处结束
+let b = 2                  // ✗ E0011：期望 `;`（换行分隔已于 v2.3 移除）
+let c = 3;                 // ✓ 以 ; 结尾
 
 if a > 0 {                 // ✓ 块级语句省略末尾 ;
     print(a);
@@ -184,7 +185,7 @@ annotation   := "@parallel" | "@jit" | "@gpu"
 opt_level    := "O0" | "O1" | "O2" | "O3"           // §10.2
 ```
 
-> 语句分隔：`;` 规范；换行弃用（§4.2）。`pub` 可修饰 `let`/`const`/`fn`/`math_def`/`class_def`。
+> 语句分隔：`;` 唯一规范分隔符；换行分隔已移除（§4.2，否则 `E0011`）。`pub` 可修饰 `let`/`const`/`fn`/`math_def`/`class_def`。
 
 ### 4.4 模式与解构（Rust 式）
 
@@ -275,15 +276,13 @@ print(test1.get_a());                 // 方法调用
 5. **所有权**（§12.3）：`self` 浅拷贝（引用计数共享）；方法**返回基本值**（`Number`/`Expr`/`String` 等）时深拷贝后传出，返回本类实例时保持共享。
 6. **`Self`**：类体内的类型别名，指代当前类。
 7. Class 不设继承。组合与 trait 式接口经 `ops` 模块（§18.5）实现运算符语义。
-8. **管道弃用**：`|>` 管道（§9.7）为弃用语法（`W0002`），其职责逐步由「类方法 + 方法链」取代。
+8. **管道移除（v2.3）**：`|>` 管道（§9.7）已随 v2.3 **移除**，使用即报 `E0010` 语法错误；其职责由「类方法 + 方法链」/直接调用取代。
 
 **示例（方法链取代管道）**：
 
 ```prima
-// 弃用：a |> to_f64 |> rounded_f64(3)
+// 已移除：a |> to_f64 |> rounded_f64(3)（v2.3 起为 E0010 语法错误）
 // 规范：通过类方法组合
-let result = Float(a) |> to_f64;      // ⚠ W0002 弃用
-
 class Float {
     pub fn new(x) -> Self { Float { v: x } }
     pub fn to_f64(self) -> F64 { to_f64(self.v) }
@@ -848,7 +847,7 @@ let c = try_f64(a).unwrap();          // 失败则 panic
 let d = try_f64(a).expect("convert pi");  // 自定义 panic 消息
 ```
 
-**弃用管道**：`|>` 管道（`a |> f`）为弃用语法（§16.5 `W0002`），逐步被方法链取代（§4.5 示例）。
+**已移除管道**：`|>` 管道（`a |> f`）已随 v2.3 **移除**，使用即报 `E0010` 语法错误（§16.4）；改用类方法链 / 直接调用（§4.5 示例）。
 
 **多值返回**：
 
@@ -1740,16 +1739,16 @@ error[R0005]: invalid operation in real domain
    = expression: (-1)^{1/2}
 ```
 
-**警告示例**（§16.5）：
+**语句分隔错误示例**（§4.2，v2.3）：
 
 ```text
-warning[W0001]: statements separated by newlines are deprecated
+error[E0011]: expected `;` to separate statements; newline statement separation was removed in v2.3
   --> src/main.pra:8:12
    |
  8 |     let b = 2
-   |              ^ use `;` to terminate statements; newline separation will be removed
+   |              ^
    |
-   = help: replace the trailing newline with `;`
+   = help: terminate the statement with `;`
 ```
 
 **方法调用错误的文档 note（v2.2）**：当**方法调用**（`obj.method(...)`）失败时——无论失败原因是编译期（未知方法、参数个数/类型不符）还是运行时（方法内抛错）——诊断必须在 note 中附带**该方法的相关定义与文档注释**（§4.1）：
@@ -1778,8 +1777,6 @@ error[E0040]: undefined name `toUpperCase`
 
  编号 | 名称 | 含义 |
 ------|------|------|
- `W0001` | `newline_statement_separator` | 使用换行分隔语句（弃用，改用 `;`，§4.2） |
- `W0002` | `deprecated_pipeline` | 使用 `\|>` 管道（弃用，改用类方法，§9.7） |
  `W0003` | `unused_binding` | `let` 绑定未被使用 |
  `W0004` | `unreachable_code` | 不可达代码 |
  `W0005` | `overloaded_operator` | 使用运算符重载（§18.5；`overload_policy := warn` 默认触发，`allow` 解除） |
@@ -1787,9 +1784,9 @@ error[E0040]: undefined name `toUpperCase`
 
 **规则**：
 
-- 警告在诊断通道输出，不影响退出码；`prima check` 可选择 `--deny W0001` 将警告升级为错误（工具层）。
+- 警告在诊断通道输出，不影响退出码；`prima check` 可选择 `--deny W0005` 将警告升级为错误（工具层）。
 - 警告可通过策略解除（如 `overload_policy := allow` 解除 `W0005`），**不提供逐条 `allow` 注解**（避免噪音）。
-- 弃用型警告（`W0001`/`W0002`/`W0006`）在目标版本移除对应语法后随之删除。
+- 弃用型警告随目标版本移除对应语法后删除：`W0001`/`W0002` 已在 v2.3 语法移除时删除；`W0006` 仍为过渡期警告（`format` → f-string），待 `format` 完全移除后删除。
 
 ## 十七、并行与多线程
 
@@ -2472,10 +2469,10 @@ prima doc --stdlib               # 只输出内置标准库（含 core/string.pr
  28 | 索引语法 | Rust 风格：`v[i]`、`M[i, j]`、`v[1..3]`、`M[.., j]`（§11.3） |
  29 | 自动微分 | MVP 符号微分 → 前向 AD（双数）→ 反向 AD（Tape）（§19.4） |
  30 | 实现选型 | `num-*`（纯 Rust）为基础，`rug`（GMP）可选加速（§19.1） |
- 31 | 语句分隔 | **规范 `;`；换行分隔弃用（W0001）并逐步移除**（§4.2） |
+ 31 | 语句分隔（v2.3） | **规范 `;`；换行分隔于 v2.3 移除（`E0011`）**（§4.2） |
  32 | 模式/解构 | **Rust 式全模式：`if let`/`while let`/`match` + 元组/数组/类/构造器/范围模式**（§4.4） |
  33 | Class | **字段 + 方法聚合类型，`Self`/`new`/`self`，浅拷贝共享 + 基本值深拷贝**（§4.5/12.3） |
- 34 | 管道 | **`\|>` 弃用（W0002），由类方法链取代**（§9.7） |
+ 34 | 管道（v2.3） | **`\|>` 已于 v2.3 移除（`E0010`），用类方法链/直接调用**（§9.7） |
  35 | 警告系统 | **编号 `W####`，英文码表记录于附录 C；策略可解除**（§16.5） |
  36 | 字符串（v2.2） | **`format` 移除，改用 f-string `f"..."`；`"..."`/`'...'` 双定界 + 原始字符串 `r"..."`；`String` 类方法集以 Python `str` 为参照，清单见 `.pra` 文档注释**（§18.1） |
  37 | 坍缩类型 | **与 Rust 基本数值一一对应：i8…u128/isize/usize/f32/f64**（§6.1/九） |
@@ -2618,7 +2615,7 @@ expr             ::= literal | ident | self_expr | call_expr | index_expr
                    | binary_expr | unary_expr | paren_expr | array_expr
                    | tuple_expr | dict_expr | set_expr | comprehension
                    | lambda_expr | match_expr | try_expr
-                   | pipeline_expr | method_call | struct_literal
+                   | method_call | struct_literal
 self_expr        ::= "self" | "Self"
 method_call      ::= expr "." ident "(" args ")"
 struct_literal   ::= ident "{" field_value ("," field_value)* "}"
@@ -2685,8 +2682,6 @@ tuple_expr       ::= "(" expr "," (expr ("," expr)*)? ")"
 lambda_expr      ::= "|" params "|" expr
 
 match_expr       ::= "match" expr "{" match_arm+ "}"
-
-pipeline_expr    ::= expr "|>" expr        // 弃用（W0002）
 
 block            ::= "{" statement* "}"
 
@@ -2993,8 +2988,8 @@ mem::collect()                              // 手动触发 GC
  码 | 名称 | 含义 |
 ----|------|------|
  `E0001` | `lex_error` | 词法错误（非法字符/未闭合字面量） |
- `E0010` | `syntax_error` | 语法错误（含已移除语法的提示，如 `try/catch`） |
- `E0011` | `expected_separator` | 期望 `;` 语句分隔符 |
+ `E0010` | `syntax_error` | 语法错误（含已移除语法的提示，如 `try/catch`、v2.3 起已移除的 `\|>` 管道） |
+ `E0011` | `expected_separator` | 期望 `;` 语句分隔符（自 v2.3 起生效：换行分隔已移除，语句必须以 `;` 结尾，§4.2） |
  `E0020` | `config_position` | `config {}` 未位于文件顶部 |
  `E0021` | `polluting_config` | 污染性策略声明在非入口文件 |
  `E0022` | `unknown_config` | 未知策略键 |
@@ -3045,8 +3040,6 @@ mem::collect()                              // 手动触发 GC
 
  码 | 名称 | 含义 |
 ----|------|------|
- `W0001` | `newline_statement_separator` | 换行分隔语句（弃用，用 `;`） |
- `W0002` | `deprecated_pipeline` | `\|>` 管道弃用，用类方法 |
  `W0003` | `unused_binding` | 绑定未使用 |
  `W0004` | `unreachable_code` | 不可达代码 |
  `W0005` | `overloaded_operator` | 运算符重载使用（`overload_policy := allow` 解除） |
@@ -3054,4 +3047,4 @@ mem::collect()                              // 手动触发 GC
 
 ---
 
-*语言规范 Prima v2.2 · 作为 Prima 语言设计与实现的最终依据*
+*语言规范 Prima v2.3 · 作为 Prima 语言设计与实现的最终依据*

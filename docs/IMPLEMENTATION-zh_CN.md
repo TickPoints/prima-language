@@ -1,10 +1,11 @@
-# Prima 语言 —— 实现方案（Implementation Plan）v2.2
+# Prima 语言 —— 实现方案（Implementation Plan）v2.3
 
-> **定位**：本文档是 [`SPECIFICATIONS-zh_CN.md`](./SPECIFICATIONS-zh_CN.md) v2.2 的实现落地决策。
+> **定位**：本文档是 [`SPECIFICATIONS-zh_CN.md`](./SPECIFICATIONS-zh_CN.md) v2.3 的实现落地决策。
 > 规范未覆盖处，以本文档为准；规范 §19.1 的若干**初步建议**（logos/chumsky/latex crate）经评估后**不采纳**，理由见 §2 与 §7。
 > 本文档的读者：实现者（含 AI 代理）。后续所有开发工作按本文档的分工与顺序推进。
 > **v2.1 增量**：基础类型可用性增强（可变长 `Array`、`Dict`/`Set`、便捷函数、`print`/`println` 区分、`input`、推导式）进入语言规范，落地排期见 §5；Phase 3（`@parallel` 广播并行 + `parfor` + 符号微分 `derivative`/`partial`/`grad`/`limit`）在本文档 v2.1 中落地。
 > **v2.2 增量**：f-string 取代 `format`、文档注释稳定化、`@builtin(ON)` 分层优化、`opt_level` 优化等级、内置方法体系（`String` 等）、标准库扩充（`math`/`physics`/`sys`/`plot`/`render`/`mem`）、宿主层 GC。分块排期见 §5（Phase 6–12），**本 v2.2 文档只改规范与实现文档，不包含代码落地**。
+> **v2.3 增量**：移除 `|>` 管道与换行分隔两个弃用特性——`|>` 不再参与解析，出现即报 `E0010`（removed-syntax 提示，与 `try/catch` 同风格），替代写法为类方法链 / 直接调用；语句分隔收敛为 `;` 唯一，换行分隔报 `E0011 expected_separator`；`W0001`/`W0002` 警告码与解析器 `pending_newline` 机制随之删除。
 
 ---
 
@@ -53,12 +54,12 @@ Prima 的 token 集在 v2.0 中约 40 类，但形状特殊：
 - **v2.2 字符串族**：普通 `"..."`/`'...'`（转义等价）、原始 `r"..."`/`r'...'`（不转义）、**f-string** `f"..."`/`f'...'`（含 `{}` 插值、`{:spec}`、`{{`/`}}` 转义）、`rf"..."` 组合——词法需按前缀 `f`/`r`/`rf` + 定界符分派，f-string 内插值体按表达式子扫描（`}` 平衡）切分；
 - `///`/`//!` **文档注释**（v2.2）需保留原文与 span（供给 AST/`prima doc`/诊断 note），与普通注释分开收集；
 - `@`（矩阵乘法）、`@.`（广播算子，§11.4）、`@parallel`/`@builtin`/`@builtin(O1)`/`@c_api::extern` 注解（`@` 起始、`::` 参与路径、`@builtin` 可带括号优化等级参数）；
-- `..`（区间与切片）、`..=`（含端区间，模式用）、`^`/`**` 别名、`?`（try 运算符）、`|>`（弃用管道）；
+- `..`（区间与切片）、`..=`（含端区间，模式用）、`^`/`**` 别名、`?`（try 运算符）、`|>`（v2.3 起仅保留 token 用于报告已移除语法的 `E0010`）；
 - 保留关键字（async/yield/macro/trait）需保留为 token 供未来使用；`impl` 在 `ops` 模块中生效。
 
 手写 lexer 约 400–500 行，能对上述每一项给出**精确的 token 级错误与 span**（如未闭合字符串/TeX 字面量定位），并天然产出 `Token { kind, span }` 流。logos 的派生宏对自定义字面量与错误恢复控制较弱，收益（速度）在当前规模下无意义。
 
-**v2.0 新增 token**：`;`（语句分隔，规范）、`?`（try）、`..=`（含端区间）、关键字 `class`/`self`/`Self`/`impl`/`match`、注解起始 `@`。换行不再作为**语法要求**的分隔符，仅在 `;` 缺失时作为**弃用分隔**处理（规范 §4.2，产出 `W0001` 警告）。
+**v2.0 新增 token**：`;`（语句分隔，规范）、`?`（try）、`..=`（含端区间）、关键字 `class`/`self`/`Self`/`impl`/`match`、注解起始 `@`。**v2.3 起**：换行 token 仅用于检测已被移除的换行分隔语句形式并报告 `E0011`（`expected_separator`）；`;` 是唯一合法的语句分隔符（规范 §4.2）。
 
 ### 2.2 语法：手写递归下降 + Pratt 优先级爬升
 
@@ -79,15 +80,16 @@ Prima 的 token 集在 v2.0 中约 40 类，但形状特殊：
 
 | 级别 | 算子 | 结合性 | 备注 |
 |------|------|--------|------|
-| 1 | `\|>` 管道 | 左 | 弃用（W0002），降级为调用 |
-| 2 | `\|\|` | 左 | |
-| 3 | `&&` | 左 | |
-| 4 | `==` `!=` `<` `<=` `>` `>=` | 左 | |
-| 5 | `+` `-` | 左 | |
-| 6 | `*` `/` `%` `@` `@.` | 左 | `@`=矩阵乘、`@.`=广播（§11.4） |
-| 7 | 一元 `-` `!` `+` | 右 | |
-| 8 | `^` `**` | 右 | 幂高于一元负号（数学惯例：`-x^2 = -(x^2)`，同 Julia） |
-| 9 | 后缀：调用 `()`、索引 `[]`（含切片 `..`）、路径 `::`、方法 `.name()`、字段 `.name`、`?` | — | `?` 绑定于第 9 级，优先于二元运算 |
+| 1 | `\|\|` | 左 | |
+| 2 | `&&` | 左 | |
+| 3 | `==` `!=` `<` `<=` `>` `>=` | 左 | |
+| 4 | `+` `-` | 左 | |
+| 5 | `*` `/` `%` `@` `@.` | 左 | `@`=矩阵乘、`@.`=广播（§11.4） |
+| 6 | 一元 `-` `!` `+` | 右 | |
+| 7 | `^` `**` | 右 | 幂高于一元负号（数学惯例：`-x^2 = -(x^2)`，同 Julia） |
+| 8 | 后缀：调用 `()`、索引 `[]`（含切片 `..`）、路径 `::`、方法 `.name()`、字段 `.name`、`?` | — | `?` 绑定于第 8 级，优先于二元运算 |
+
+`|>` 管道（§9.7）在 v2.3 已移除，不再参与优先级（解析即报 `E0010`）。
 
 `^` 与 `**` 在解析层归一为同一个 BinOp 节点（别名，§三）。
 
@@ -95,9 +97,9 @@ Prima 的 token 集在 v2.0 中约 40 类，但形状特殊：
 
 **语句分隔策略**（§4.2）：
 
-- 解析时以 `;` 为语句终止符。
-- 当读到换行（`\n`）而未见 `;` 时：若下一 token 能合法开始一条新语句 → 记录一条 `W0001` 警告，按旧式换行分隔继续解析（兼容模式）；否则报 `E0011` 期望 `;`。
-- 块级语句（`if`/`while`/`for`/`fn`/`class`/`match`/`with config` 后的 `{}`）结束后 `;` 可省略，不触发警告。
+- 解析时以 `;` 为语句终止符；`;` 是唯一合法的语句分隔符。
+- 非块级语句若未以 `;` 结束（且不在输入末尾或 `}` 之前）→ 一律报 `E0011`（`expected_separator`）。v2.3 移除换行分隔后，解析器不再有 `pending_newline` 换行兼容警告机制。
+- 块级语句（`if`/`while`/`for`/`fn`/`class`/`match`/`with config` 后的 `{}`）结束后 `;` 可省略，不触发错误。
 
 ### 2.3 渲染：手写，不用 `latex` crate
 
@@ -148,7 +150,7 @@ pub struct SourceLocation { pub file: Arc<PathBuf>, pub line: usize, pub column:
 
 §16.4 的 `error[E00xx]: ...` / `warning[W00xx]: ...` 格式由 `codespan-reporting` 渲染；错误码（§16.4/附录 C）作为诊断标题前缀（`E`/`R`/`W` + 四位编号）。`Error` 枚举（§16.1）用 `thiserror` derive，其中 `location` 字段在解释器抛错时由当前执行帧自动填充。
 
-**警告收集**：`DiagnosticCollector` 同时收集错误与警告；警告不阻止编译，`prima check --deny W0001` 可将指定警告升级为错误（工具层）。
+**警告收集**：`DiagnosticCollector` 同时收集错误与警告；警告不阻止编译，`prima check --deny W0005` 可将指定警告升级为错误（工具层）。`W0001`（换行分隔）与 `W0002`（`|>` 管道）两码随对应弃用特性在 v2.3 移除而删除。
 
 ### 4.2 AST（prima-syntax）
 
@@ -253,7 +255,7 @@ pub enum Expr {
     Tuple(Vec<Expr>),
     Lambda { params: Vec<Param>, body: Box<Expr> },   // |x| expr
     Match { scrutinee: Box<Expr>, arms: Vec<MatchArm> },  // match 表达式
-    Pipeline { lhs: Box<Expr>, rhs: Box<Expr> },      // a |> f —— 弃用（W0002），降级时改写为 Call
+    // v2.3：`Pipeline` 变体已移除 —— `|>` 不再进入 AST（解析即报 `E0010`）；`BinOp` 亦不再含 `Pipeline`
 }
 // v2.2：FStringPart = Literal(String) | Interp { expr: Box<Expr>, spec: Option<String> } | EscapedBrace
 // v2.2：Literal::String 增加 `Single`/`Raw` 标记（定界符与是否转义）；f-string 嵌套字面量编译期报错
@@ -412,7 +414,7 @@ expr_ast
 - **`@builtin(ON)` 分派**（v2.2，§18.4）：`bind_builtin` 对 `Annotation::Builtin{ opt_level }` 分派——`O0`：必须已注册（`E0055`）、禁止函数体（`E0056`），直接绑 Rust 实现；`O1..O3`：必须**有** `.pra` 函数体（回退实现），Rust 实现可选；调用点按 `config.opt_level >= opt_level && 已注册` 决定用 Rust 实现还是求值 `.pra` 体；等级参数非法 → `E0057`。
 - **方法调用诊断 note**（v2.2，§16.4）：`eval_method_call`/`check` 在方法解析失败或方法内抛错时，从类注册表/模块表取该方法（或所属类）的 `DocComment` 与签名，追加到诊断 note。
 - **`?` 运算符**（§16.3）：`expr?` 在返回 `Result` 的函数内：`Err(e)` → 提前返回 `Err(e)`；返回 `Option` 的函数内：`None` → 提前返回 `None`；上下文不匹配 → 编译期 `E0054`。
-- **`|>` 管道**（§9.7）：弃用（W0002），降级改写为嵌套调用。
+- **`|>` 管道**（§9.7，v2.3 移除）：`|>` 不再参与解析，出现即报 `E0010`（removed-syntax 提示，与 `try/catch` 同风格）；替代写法为类方法链 / 直接调用。
 - **循环优化**（§10）：`loop_optimization := true` **且 `opt_level >= O1`** 时，`for i in a..b { acc += i }` 形态识别为闭式公式（Phase 2 实现，先 `0..n` 与 `1..n` 等差模式）。
 - **parfor**（§17.2，v2.1 落地）：`rayon::par_iter`；迭代体**副作用静态检查**——仅允许对索引槽 `A[i]`/`A[i] +=` 赋值与纯函数调用，违规报 `E0082`；各槽位独立求值（每线程块一个独立 Evaluator，共享进程级 `ExprPool`/`SymbolTable`），结束后整数组回写绑定。
 - **@parallel 广播并行**（§17.1/17.4，v2.1 落地）：`Function::User` 增加 `parallel: bool`（`MathDef` 带 `Annotation::Parallel` 时为真）；广播路径中当数组长度 ≥ 阈值（默认 1024）时按 `rayon` 线程数分块，每块一个**独立 Evaluator**（快照当前 Config，输出 sink 丢弃），块内对 `@parallel` MFn 的形参环境求值（要求函数体**自包含**，不引用自由变量）；小数组走顺序路径。
@@ -476,7 +478,7 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 - token：`;`、`?`、`..=`、`class`/`self`/`Self`/`impl`/`match`、注解 `@builtin`/`@c_api::extern`。
 - 模式解析器（§4.4 全模式）+ `match`/`if let`/`while let`/`let` 解构。
-- 语句分隔：`;` 规范 + 换行兼容（`W0001` 警告，§2.2）。
+- 语句分隔：`;` 规范 + 换行兼容（`W0001` 警告，§2.2）。（v2.3 起：换行分隔已移除，报 `E0011`，`W0001` 删除。）
 - Class 语法（字段/方法/`Self`/可见性）+ `impl ops::X for T`。
 - 字符串转义全量（含 `\u{XXXX}`）+ `format` 函数签名（求值在 core/runtime）。
 
@@ -498,7 +500,7 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 > - `ExprData` 增加了 `Real(Real)` 变体（规范 v1.0 §8.1 未列，为使浮点可进入符号 DAG）；`ExprData::Symbol(SymbolId)` 用 `core::symbol::SymbolId` 新类型。
 > - 化简规则实现在 `core::simplify::simplify(pool, builtins, id)`（无 level 参数，MVP 全量应用）：intern 层（`ExprPool::add2/mul2/pow2/sub2/div2` + `add_n/mul_n` 扁平化/常量合并）做 0/1 级；`simplify` 做 2/3 级。
 > - TeX 字面量解析器放在 `prima-syntax::tex`（MVP 子集），产出与普通语法相同的 AST。
-> - 解释器在 `prima-runtime::eval`；广播在调用点对纯函数逐元素，拒空/嵌套数组；`a |> f` 管道改写为调用。
+> - 解释器在 `prima-runtime::eval`；广播在调用点对纯函数逐元素，拒空/嵌套数组；`a |> f` 管道改写为调用（该管道降级在 v2.3 已移除，现报 `E0010`）。
 > - `print`/`println` 当时都换行；**v2.1 起区分**：`print` 不换行、`println` 换行（§4.8 控制台）；默认 LaTeX 输出。
 
 ### Phase 2：策略、数值层与错误处理（对应里程碑 4、5、7）
@@ -521,7 +523,7 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 **v2.0 增量**：
 
 - **移除 `try/catch`**：解析器删除 `try` 语句产生式；`examples/try_catch.pra` 改写为 `Result` + `match` 版本；`E0010` 对 `try` 关键字给出「改用 Result」提示。
-- **语句分隔**：全仓示例/测试改用 `;`；新增 `W0001` 警告通道。
+- **语句分隔**：全仓示例/测试改用 `;`；新增 `W0001` 警告通道。（v2.3 起：`W0001` 随换行分隔移除而删除，换行分隔报 `E0011`。）
 - **`?` 运算符**：求值器 `eval_try` 实现（§4.8）。
 - **`Result`/`Option` 一等待遇**：`match`/`if let`/`unwrap` 家族、`Some/None/Ok/Err` 构造器模式。
 - **坍缩族扩展**：`i8…u128/isize/usize` 全部 `to_*`/`try_*`/`checked_*`/`clamped_*`（§九全量）。
@@ -716,7 +718,7 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 |------|------|
 | 手写 parser 覆盖不全 | 附录 A BNF 是验收清单；insta 快照 + proptest 持续补盲 |
 | 模式解析歧义（构造器 vs 调用） | 模式上下文单独解析器函数 `parse_pattern`，与表达式解析隔离；快照覆盖 `Some(x)`/`Ok(v)`/嵌套 |
-| 换行兼容解析的误判 | `W0001` 触发条件 = 换行后 token 可合法开始新语句；proptest 断言不误报 `E0011` |
+| 换行兼容解析的误判 | 该风险随 v2.3 移除换行分隔而消失——非块语句未以 `;` 结束（且不在输入末尾/`}` 前）一律报 `E0011`（`expected_separator`）；proptest 断言错误报告稳定 |
 | 化简规则库膨胀（等级 3） | 规则表驱动（`Vec<(Pattern, Rewrite)>`），不写进控制流；等级 3 推迟到 Phase 3+ |
 | 类实例所有权（浅/深拷贝）语义复杂 | GC 句柄 + 字段值按基本值/类实例分派拷贝（§12.3）；方法参数/返回的拷贝语义做专门集成测试（Phase 12 回归） |
 | f-string 插值解析歧义/嵌套 | 插值体独立子扫描（`}` 平衡），v2.2 显式禁止嵌套 f-string；proptest 断言不误判、不 panic |
@@ -792,8 +794,15 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 | §12.3/12.4（v2.1） | 类实例 `Rc<RefCell>` 引用计数 | **宿主层标记-清除 GC；`mem::Arc` 提供显式引用计数** | 循环引用可回收、浅拷贝零计数开销、确定性路径仍在（`mem::Arc`）；GC 语义对程序透明（§4.12） |
 | §18（v2.1） | stdlib 模块集固定 | **新增 `render`/`mem`；扩充 `math`/`physics`/`sys`/`plot`** | 科学绘图/公式渲染/内存控制是科学计算高频需求；物理公式 Rust 实现便于优化（Phase 11） |
 
+**v2.3 ADR 新增**：
+
+| 规范条款 | 规范建议 | 本方案 | 理由 |
+|---------|---------|--------|------|
+| §9.7（v2.0） | `\|>` 管道弃用（W0002），逐步移除 | **移除 `\|>`，改报解析错误 `E0010`（removed-syntax 提示，同 `try/catch`）；删除 `W0002`** | 规范 §9.7（v2.3）定稿：类方法链已完全取代管道，语法层不再接受该形式 |
+| §4.2（v2.0） | 换行分隔弃用（W0001），逐步移除 | **移除换行分隔，`;` 为唯一语句分隔符，报 `E0011`（`expected_separator`）；删除 `W0001` 与 `pending_newline` 机制** | 规范 §4.2（v2.3）定稿：`;` 统一分隔，消除跨行歧义；无过渡期警告 |
+
 其余所有设计（三世界架构、Number 塔、ExprPool、策略三级、模块系统、错误模型、并行哲学、类所有权）与规范完全一致。
 
 ---
 
-*实现方案 Prima v2.2 · 与 SPECIFICATIONS-zh_CN.md v2.2 配套 · 实现工作的唯一依据*
+*实现方案 Prima v2.3 · 与 SPECIFICATIONS-zh_CN.md v2.3 配套 · 实现工作的唯一依据*
