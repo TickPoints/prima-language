@@ -16,9 +16,18 @@ pub enum TokenKind {
     Float(String),
     Hex(String),
     Binary(String),
-    Str(String),
+    /// String literal (spec §3/§18.1): the final text plus the source markers `raw`/`single`
+    /// (`r"..."` raw, `'...'` single-quoted). A `'...'` literal whose content is a single
+    /// character is lexed as `Char`, not `Str` (spec appendix A `char` vs `string`).
+    Str { value: String, raw: bool, single: bool },
     Char(char),
     TexStr(String),
+    /// f-string literal (spec §18.1): literal segments plus `{expr}` interpolations whose
+    /// expression bodies are already lexed into a token stream (absolute spans).
+    FStr(Vec<FStringToken>),
+    /// Doc comment (spec §4.1): the text after the `///`/`//!` marker (one optional leading
+    /// space stripped). `module` distinguishes `//!` (module docs, top of file) from `///`.
+    Doc { text: String, module: bool },
 
     KwLet,
     KwMut,
@@ -106,6 +115,17 @@ pub enum TokenKind {
     Eof,
 }
 
+/// One segment of an f-string (spec §18.1), as produced by the lexer. The interpolation
+/// expression is carried as an already-lexed token stream so the parser can recursively parse it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FStringToken {
+    /// Literal text between interpolations; `{{`/`}}` escapes and (for non-raw f-strings)
+    /// backslash escapes are already resolved.
+    Lit(String),
+    /// `{expr}` (optionally `{expr:spec}`): the expression body token stream plus the raw `:spec` text.
+    Interp { expr: Vec<Token>, spec: Option<String> },
+}
+
 pub fn describe(kind: &TokenKind) -> String {
     match kind {
         TokenKind::Ident(s) | TokenKind::Symbol(s) => format!("`{s}`"),
@@ -113,8 +133,14 @@ pub fn describe(kind: &TokenKind) -> String {
         | TokenKind::Float(s)
         | TokenKind::Hex(s)
         | TokenKind::Binary(s)
-        | TokenKind::Str(s)
         | TokenKind::TexStr(s) => format!("`{s}`"),
+        TokenKind::Str { value, raw, single } => {
+            let delim = if *single { '\'' } else { '"' };
+            let prefix = if *raw { "r" } else { "" };
+            format!("`{prefix}{delim}{value}{delim}`")
+        }
+        TokenKind::FStr(_) => "an f-string literal".into(),
+        TokenKind::Doc { text, module } => format!("{}`{text}`", if *module { "//! " } else { "/// " }),
         TokenKind::Char(c) => format!("`'{c}'`"),
         TokenKind::KwLet => "`let`".into(),
         TokenKind::KwMut => "`mut`".into(),

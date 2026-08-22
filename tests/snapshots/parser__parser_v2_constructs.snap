@@ -3,6 +3,7 @@ source: tests/parser.rs
 expression: parse(src).unwrap()
 ---
 Program {
+    module_docs: None,
     config: None,
     imports: [],
     stmts: [
@@ -32,6 +33,7 @@ Program {
                         start: 18,
                         end: 24,
                     },
+                    docs: None,
                 },
                 ClassMember {
                     vis: Private,
@@ -49,6 +51,7 @@ Program {
                         start: 30,
                         end: 36,
                     },
+                    docs: None,
                 },
                 ClassMember {
                     vis: Public,
@@ -143,6 +146,7 @@ Program {
                         start: 42,
                         end: 84,
                     },
+                    docs: None,
                 },
                 ClassMember {
                     vis: Public,
@@ -241,12 +245,14 @@ Program {
                         start: 89,
                         end: 132,
                     },
+                    docs: None,
                 },
             ],
             span: Span {
                 start: 1,
                 end: 134,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -326,6 +332,7 @@ Program {
                 start: 135,
                 end: 171,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -399,6 +406,7 @@ Program {
                 start: 173,
                 end: 200,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -449,6 +457,7 @@ Program {
                 start: 202,
                 end: 217,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -498,6 +507,7 @@ Program {
                 start: 219,
                 end: 232,
             },
+            docs: None,
         },
         Impl {
             op: Add,
@@ -733,6 +743,7 @@ Program {
                         start: 266,
                         end: 338,
                     },
+                    docs: None,
                 },
             ],
             span: Span {
@@ -802,6 +813,7 @@ Program {
                 start: 341,
                 end: 360,
             },
+            docs: None,
         },
         IfLet {
             pat: Variant {
@@ -953,9 +965,11 @@ Program {
                                     args: [
                                         Expr {
                                             kind: Literal(
-                                                Str(
-                                                    "none",
-                                                ),
+                                                String {
+                                                    value: "none",
+                                                    quote: Double,
+                                                    raw: false,
+                                                },
                                             ),
                                             span: Span {
                                                 start: 423,
@@ -1140,9 +1154,11 @@ Program {
                             guard: None,
                             body: Expr {
                                 kind: Literal(
-                                    Str(
-                                        "zero",
-                                    ),
+                                    String {
+                                        value: "zero",
+                                        quote: Double,
+                                        raw: false,
+                                    },
                                 ),
                                 span: Span {
                                     start: 509,
@@ -1168,9 +1184,11 @@ Program {
                             guard: None,
                             body: Expr {
                                 kind: Literal(
-                                    Str(
-                                        "small",
-                                    ),
+                                    String {
+                                        value: "small",
+                                        quote: Double,
+                                        raw: false,
+                                    },
                                 ),
                                 span: Span {
                                     start: 530,
@@ -1191,9 +1209,11 @@ Program {
                             guard: None,
                             body: Expr {
                                 kind: Literal(
-                                    Str(
-                                        "medium",
-                                    ),
+                                    String {
+                                        value: "medium",
+                                        quote: Double,
+                                        raw: false,
+                                    },
                                 ),
                                 span: Span {
                                     start: 552,
@@ -1252,9 +1272,11 @@ Program {
                             ),
                             body: Expr {
                                 kind: Literal(
-                                    Str(
-                                        "large",
-                                    ),
+                                    String {
+                                        value: "large",
+                                        quote: Double,
+                                        raw: false,
+                                    },
                                 ),
                                 span: Span {
                                     start: 582,
@@ -1272,9 +1294,11 @@ Program {
                             guard: None,
                             body: Expr {
                                 kind: Literal(
-                                    Str(
-                                        "other",
-                                    ),
+                                    String {
+                                        value: "other",
+                                        quote: Double,
+                                        raw: false,
+                                    },
                                 ),
                                 span: Span {
                                     start: 600,
@@ -1293,6 +1317,7 @@ Program {
                 start: 482,
                 end: 609,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -1348,6 +1373,7 @@ Program {
                 start: 611,
                 end: 626,
             },
+            docs: None,
         },
         FnDef {
             name: Spanned {
@@ -1457,6 +1483,7 @@ Program {
                             start: 679,
                             end: 698,
                         },
+                        docs: None,
                     },
                     Expr(
                         Expr {
@@ -1514,6 +1541,7 @@ Program {
                 start: 628,
                 end: 711,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -1571,6 +1599,7 @@ Program {
                 start: 712,
                 end: 732,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -1628,6 +1657,7 @@ Program {
                 start: 734,
                 end: 756,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -1683,6 +1713,7 @@ Program {
                 start: 758,
                 end: 773,
             },
+            docs: None,
         },
     ],
 }

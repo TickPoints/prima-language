@@ -184,3 +184,54 @@ let slice = v[-1..];
 "#;
     insta::assert_debug_snapshot!("parser_v21_collections", parse(src).unwrap());
 }
+
+#[test]
+fn doc_comments_attach_to_items() {
+    let src = r#"
+//! The `linalg` module.
+//! Provides matrix operations.
+
+/// Imported helpers.
+import linalg as la;
+
+/// Add two matrices.
+@builtin
+pub fn add(A: Matrix<F64>, B: Matrix<F64>) -> Matrix<F64>;
+
+/// The identity matrix.
+let eye(n) = n;
+
+/// A 2-D point.
+class Point {
+    /// The x coordinate.
+    x: F64,
+    /// The y coordinate.
+    y: F64,
+    /// Build a point from coordinates.
+    pub fn new(x: F64, y: F64) -> Self {
+        Point { x, y }
+    }
+}
+
+/// The default dimension.
+const DIM: Integer = 2;
+"#;
+    let p = parse(src).unwrap();
+    let docs = p.module_docs.as_ref().expect("//! docs must be collected");
+    assert_eq!(docs.text(), "The `linalg` module.\nProvides matrix operations.");
+    assert!(!p.imports.is_empty());
+    assert_eq!(p.imports[0].docs.as_ref().map(|d| d.text()), Some("Imported helpers.".to_string()));
+    insta::assert_debug_snapshot!("parser_doc_comments", p);
+}
+
+#[test]
+fn dangling_doc_comment_warns_w0007() {
+    let (_, errors, warnings) = prima_syntax::parse_checked("/// nothing follows\n");
+    assert!(errors.is_empty());
+    assert!(warnings.iter().any(|w| w.code == "W0007"), "dangling doc comment must warn W0007");
+
+    // `//!` after statements start is a W0007 too.
+    let (_, _, warnings) = prima_syntax::parse_checked("let x = 1;\n//! late module doc\n");
+    assert!(warnings.iter().any(|w| w.code == "W0007"));
+}
+

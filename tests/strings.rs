@@ -1,4 +1,4 @@
-// String tests (spec §18.1): `format`, unicode escapes, and the `String` method family.
+// String tests (spec §18.1): f-strings, raw/single-quoted literals, unicode escapes, and the `String` method family.
 use prima_core::{Number, Value};
 use prima_runtime::Evaluator;
 
@@ -14,14 +14,67 @@ fn eval_str(src: &str) -> String {
 }
 
 #[test]
-fn format_interpolates_args() {
-    assert_eq!(eval_str("format(\"a is {}\", 42)"), "a is 42");
-    assert_eq!(eval_str("let name = \"world\";\nformat(\"hello {}\", name)"), "hello world");
+fn fstring_interpolates_expressions() {
+    assert_eq!(eval_str("let a = 42;\nf\"a is {a}\""), "a is 42");
+    assert_eq!(eval_str("let name = \"world\";\nf\"hello {name}\""), "hello world");
+    assert_eq!(eval_str("let x = 1;\nlet y = 2;\nf\"{x} + {y} = {x + y}\""), "1 + 2 = 3");
 }
 
 #[test]
-fn format_multiple_args() {
-    assert_eq!(eval_str("format(\"{} + {} = {}\", 1, 2, 3)"), "1 + 2 = 3");
+fn fstring_escaped_braces() {
+    assert_eq!(eval_str("f\"{{literal braces}}\""), "{literal braces}");
+    assert_eq!(eval_str("f\"{1} and {{2}}\""), "1 and {2}");
+}
+
+#[test]
+fn fstring_float_precision_spec() {
+    assert_eq!(eval_str(r#"f"{to_f64(pi):0.2}""#), "3.14");
+    assert_eq!(eval_str("f\"{3.14159:.3}\""), "3.142");
+}
+
+#[test]
+fn fstring_width_and_alignment() {
+    assert_eq!(eval_str(r#"f"|{5:>5}|""#), "|    5|");
+    assert_eq!(eval_str(r#"f"|{5:<5}|""#), "|5    |");
+    assert_eq!(eval_str(r#"f"|{5:^5}|""#), "|  5  |");
+    assert_eq!(eval_str(r#"f"|{5:05}|""#), "|00005|");
+    // Numbers right-align by default (Python `format` semantics); strings left-align.
+    assert_eq!(eval_str(r#"f"|{5:5}|""#), "|    5|");
+    assert_eq!(eval_str(r#"f"|{"a":5}|""#), "|a    |");
+}
+
+#[test]
+fn fstring_renders_values() {
+    assert_eq!(eval_str(r#"f"x = {true}""#), "x = true");
+    assert_eq!(eval_str("f\"s = {\"a,b\"}\""), "s = a,b");
+    assert_eq!(eval_str(r#"f"arr = {[1, 2, 3]}""#), "arr = [1, 2, 3]");
+}
+
+#[test]
+fn fstring_interpolation_can_be_any_expression() {
+    assert_eq!(eval_str("f\"{sqrt(9)}\""), "3");
+    assert_eq!(eval_str(r#"f"{ "a".to_upper() }""#), "A");
+}
+
+#[test]
+fn single_quote_strings_are_equivalent() {
+    assert_eq!(eval_str("'hello'"), "hello");
+    assert_eq!(eval("let s = 'ab';\ns.len()"), Value::Number(Number::from(2)));
+    // A single character is a `Char` (spec appendix A `char`).
+    assert_eq!(eval("'a'"), Value::Char('a'));
+}
+
+#[test]
+fn raw_strings_do_not_escape() {
+    assert_eq!(eval_str(r#"r"a\nb""#), "a\\nb");
+    assert_eq!(eval_str(r"r'\t'"), "\\t");
+}
+
+#[test]
+fn raw_fstring_keeps_literals_raw_but_interpolates() {
+    let v = eval(r#"let x = 5;
+rf"a\nb{x}""#);
+    assert_eq!(v, Value::String("a\\nb5".into()));
 }
 
 #[test]
@@ -91,6 +144,13 @@ fn insert_is_result_checked() {
 #[test]
 fn string_associated_new() {
     assert_eq!(eval("String::new()"), Value::String(String::new()));
+}
+
+#[test]
+fn format_call_is_removed() {
+    // `format` was removed in v2.2 (spec §18.1): it is no longer a builtin.
+    let err = Evaluator::new().eval_value("format(\"a is {}\", 42)").unwrap_err();
+    assert!(err.to_string().contains("unknown function `format`"), "error = {err}");
 }
 
 #[test]

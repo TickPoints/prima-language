@@ -3,6 +3,7 @@ source: tests/parser.rs
 expression: parse(src).unwrap()
 ---
 Program {
+    module_docs: None,
     config: None,
     imports: [],
     stmts: [
@@ -66,6 +67,7 @@ Program {
                             start: 58,
                             end: 70,
                         },
+                        docs: None,
                     },
                     For {
                         var: Spanned {
@@ -201,6 +203,7 @@ Program {
                 start: 11,
                 end: 136,
             },
+            docs: None,
         },
         FnDef {
             name: Spanned {
@@ -262,6 +265,7 @@ Program {
                 start: 146,
                 end: 177,
             },
+            docs: None,
         },
         FnDef {
             name: Spanned {
@@ -323,6 +327,7 @@ Program {
                 start: 193,
                 end: 226,
             },
+            docs: None,
         },
         MathDef {
             name: Spanned {
@@ -390,6 +395,7 @@ Program {
                 start: 232,
                 end: 251,
             },
+            docs: None,
         },
         MathDef {
             name: Spanned {
@@ -457,6 +463,7 @@ Program {
                 start: 263,
                 end: 279,
             },
+            docs: None,
         },
     ],
 }

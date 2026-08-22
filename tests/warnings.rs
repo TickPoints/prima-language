@@ -1,12 +1,29 @@
 // Warning tests (spec §16.5): newline-separated statements and the `|>` pipeline were
-// removed in v2.3 and are now hard parse errors (E0011/E0010); `W0005` (operator-overload
-// use) remains configurable via `overload_policy`.
+// removed in v2.3 and are now hard parse errors (E0011/E0010); `W0006` (removed `format`
+// function) and `W0005` (operator-overload use) remain configurable warnings.
 use prima_runtime::Evaluator;
 
 fn warnings_of(src: &str) -> Vec<String> {
     let mut ev = Evaluator::new();
     ev.eval_value(src).expect("eval failed");
     ev.warnings().iter().map(|w| w.code.to_string()).collect()
+}
+
+#[test]
+fn format_call_emits_w0006() {
+    // `format` was removed (spec §18.1): the parser records the W0006 deprecation warning even
+    // though evaluation then fails with an unknown-function error.
+    let mut ev = Evaluator::new();
+    let _ = ev.eval_value(r#"let s = format("a is {}", 42);"#);
+    let ws: Vec<String> = ev.warnings().iter().map(|w| w.code.to_string()).collect();
+    assert!(ws.iter().any(|c| c == "W0006"), "warnings = {ws:?}");
+}
+
+#[test]
+fn fstring_emits_no_w0006() {
+    let ws = warnings_of(r#"let a = 42;
+let s = f"a is {a}";"#);
+    assert!(!ws.iter().any(|c| c == "W0006"), "warnings = {ws:?}");
 }
 
 #[test]

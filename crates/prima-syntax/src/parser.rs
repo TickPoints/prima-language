@@ -17,12 +17,18 @@ pub fn parse(src: &str) -> Result<Program, Vec<SyntaxError>> {
 pub fn parse_checked(src: &str) -> (Program, Vec<SyntaxError>, Vec<SyntaxWarning>) {
     let tokens = match lex(src) {
         Ok(t) => t,
-        Err(errors) => return (Program { config: None, imports: Vec::new(), stmts: Vec::new() }, errors, Vec::new()),
+        Err(errors) => {
+            return (Program { module_docs: None, config: None, imports: Vec::new(), stmts: Vec::new() }, errors, Vec::new())
+        }
     };
     let mut parser = Parser::new(tokens);
     match parser.parse_program_inner() {
         Ok(program) => (program, Vec::new(), parser.warnings),
-        Err(e) => (Program { config: None, imports: Vec::new(), stmts: Vec::new() }, vec![e], parser.warnings),
+        Err(e) => (
+            Program { module_docs: None, config: None, imports: Vec::new(), stmts: Vec::new() },
+            vec![e],
+            parser.warnings,
+        ),
     }
 }
 
@@ -92,6 +98,74 @@ impl Parser {
         SyntaxError { span, message }
     }
 
+    /// Record a non-fatal warning (spec §16.5), e.g. the `W0006` `format` deprecation hint.
+    fn push_warning(&mut self, code: &'static str, span: Span, message: String) {
+        self.warnings.push(SyntaxWarning { span, code, message });
+    }
+
+    /// Consume a run of consecutive doc-comment tokens (`///` or `//!`, per `module`), merging
+    /// their lines into a `DocComment`. Blank lines between doc lines do not break the run (spec
+    /// §4.1: consecutive lines merge for the following item). Returns `None` at the first non-doc token.
+    fn take_docs(&mut self, module: bool) -> Option<DocComment> {
+        let mut lines = Vec::new();
+        let mut start = None;
+        let mut end = None;
+        loop {
+            match self.peek() {
+                TokenKind::Doc { module: m, .. } if *m == module => {}
+                TokenKind::Newline => {
+                    self.bump();
+                    continue;
+                }
+                _ => break,
+            }
+            let TokenKind::Doc { text, .. } = self.peek().clone() else { unreachable!() };
+            let span = self.span();
+            lines.push((text, span));
+            if start.is_none() {
+                start = Some(span);
+            }
+            end = Some(span);
+            self.bump();
+        }
+        if lines.is_empty() {
+            None
+        } else {
+            Some(DocComment { lines, span: Span::merge(start.unwrap(), end.unwrap()) })
+        }
+    }
+
+    /// Attach `docs` to a definition statement; a doc comment in front of any other statement
+    /// kind is a dangling comment and warns `W0007` (spec §4.1, spec §16.5).
+    fn attach_docs(&mut self, stmt: Stmt, docs: Option<DocComment>) -> Result<Stmt, SyntaxError> {
+        let Some(docs) = docs else { return Ok(stmt) };
+        match stmt {
+            Stmt::Let { pat, mut_, type_ann, value, span, .. } => {
+                Ok(Stmt::Let { pat, mut_, type_ann, value, span, docs: Some(docs) })
+            }
+            Stmt::Const { name, type_ann, value, span, .. } => {
+                Ok(Stmt::Const { name, type_ann, value, span, docs: Some(docs) })
+            }
+            Stmt::FnDef { name, params, ret, annotations, body, span, .. } => {
+                Ok(Stmt::FnDef { name, params, ret, annotations, body, span, docs: Some(docs) })
+            }
+            Stmt::MathDef { name, params, ret, annotations, body, span, .. } => {
+                Ok(Stmt::MathDef { name, params, ret, annotations, body, span, docs: Some(docs) })
+            }
+            Stmt::ClassDef { name, annotations, members, span, .. } => {
+                Ok(Stmt::ClassDef { name, annotations, members, span, docs: Some(docs) })
+            }
+            other => {
+                self.push_warning(
+                    "W0007",
+                    docs.span,
+                    "doc comment has no following definition (W0007); `///` must precede an item (spec §4.1)".into(),
+                );
+                Ok(other)
+            }
+        }
+    }
+
     /// First token kind at or after `self.pos`, skipping any `Newline` tokens (spec §4.2).
     fn peek_non_newline(&self) -> &TokenKind {
         let mut i = self.pos;
@@ -148,6 +222,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_program_inner(&mut self) -> Result<Program, SyntaxError> {
+        let mut module_docs = None;
         let mut config = None;
         let mut imports = Vec::new();
         let mut stmts = Vec::new();
@@ -155,6 +230,43 @@ impl Parser {
             self.skip_newlines();
             match self.peek().clone() {
                 TokenKind::Eof => break,
+                TokenKind::Doc { module, .. } => {
+                    let docs = self.take_docs(module);
+                    if module {
+                        // `//!` is a module doc (spec §4.1) and is only valid at the very top of the file.
+                        if module_docs.is_none() && config.is_none() && imports.is_empty() && stmts.is_empty() {
+                            module_docs = docs;
+                        } else if let Some(d) = docs {
+                            self.push_warning(
+                                "W0007",
+                                d.span,
+                                "module doc comment `//!` must appear at the top of the file, before `config`/`import` (W0007); spec §4.1".into(),
+                            );
+                        }
+                    } else {
+                        // `///` documents the following item; anything before `config`/`import`/a statement is a target.
+                        match self.peek().clone() {
+                            TokenKind::Eof | TokenKind::KwConfig => {
+                                if let Some(d) = docs {
+                                    self.push_warning(
+                                        "W0007",
+                                        d.span,
+                                        "doc comment has no following definition (W0007); `///` must precede an item (spec §4.1)".into(),
+                                    );
+                                }
+                            }
+                            TokenKind::KwImport | TokenKind::KwFrom => {
+                                if !stmts.is_empty() {
+                                    return Err(self.err(self.span(), "`import` must appear before statements".into()));
+                                }
+                                let mut imp = self.parse_import()?;
+                                imp.docs = docs;
+                                imports.push(imp);
+                            }
+                            _ => stmts.push(self.parse_stmt(docs)?),
+                        }
+                    }
+                }
                 TokenKind::KwConfig => {
                     if config.is_some() {
                         return Err(self.err(self.span(), "duplicate `config` block".into()));
@@ -171,11 +283,11 @@ impl Parser {
                     imports.push(self.parse_import()?);
                 }
                 _ => {
-                    stmts.push(self.parse_stmt()?);
+                    stmts.push(self.parse_stmt(None)?);
                 }
             }
         }
-        Ok(Program { config, imports, stmts })
+        Ok(Program { module_docs, config, imports, stmts })
     }
 
     fn parse_config_block(&mut self) -> Result<ConfigBlock, SyntaxError> {
@@ -304,10 +416,10 @@ impl Parser {
         };
         self.end_statement()?;
         let end = self.tokens[self.pos.saturating_sub(1)].span;
-        Ok(Import { kind, span: Span::merge(start, end) })
+        Ok(Import { kind, docs: None, span: Span::merge(start, end) })
     }
 
-    fn parse_stmt(&mut self) -> Result<Stmt, SyntaxError> {
+    fn parse_stmt(&mut self, docs: Option<DocComment>) -> Result<Stmt, SyntaxError> {
         self.skip_newlines();
         // Statement-level annotations (spec §18.4): `@builtin`/`@c_api::extern` before a `pub`/`fn`/`class` item.
         let annotations = self.parse_annotations()?;
@@ -332,7 +444,7 @@ impl Parser {
                 });
             }
             TokenKind::KwWith => self.parse_with_stmt()?,
-            TokenKind::KwPub => self.parse_pub_stmt(&annotations)?,
+            TokenKind::KwPub => self.parse_pub_stmt(&annotations, &docs)?,
             _ => self.parse_expr_or_assign_stmt()?,
         };
         // `@builtin fn` / `@builtin pub fn` fold the statement-level annotations into the `FnDef`
@@ -343,6 +455,12 @@ impl Parser {
             Stmt::FnDef { .. } | Stmt::Pub(_) => stmt,
             _ if !annotations.is_empty() => self.apply_annotations(stmt, &annotations)?,
             _ => stmt,
+        };
+        // Attach the doc comment to definition statements; anything else warns `W0007` (spec §4.1).
+        // `pub`-wrapped items already consumed their docs inside `parse_pub_stmt`.
+        let stmt = match &stmt {
+            Stmt::Pub(_) => stmt,
+            _ => self.attach_docs(stmt, docs)?,
         };
         // Statement terminator (spec §4.2): block-level statements may omit `;`; the rest require `;`.
         // A `pub`-wrapped item already enforced its own terminator via the recursive `parse_stmt`
@@ -381,15 +499,15 @@ impl Parser {
     /// Attach statement-level annotations to the definition they precede (spec §18.4).
     fn apply_annotations(&mut self, stmt: Stmt, anns: &[Annotation]) -> Result<Stmt, SyntaxError> {
         match stmt {
-            Stmt::FnDef { name, params, ret, mut annotations, body, span } => {
+            Stmt::FnDef { name, params, ret, mut annotations, body, span, docs } => {
                 annotations.extend_from_slice(anns);
-                Ok(Stmt::FnDef { name, params, ret, annotations, body, span })
+                Ok(Stmt::FnDef { name, params, ret, annotations, body, span, docs })
             }
-            Stmt::MathDef { name, params, ret, mut annotations, body, span } => {
+            Stmt::MathDef { name, params, ret, mut annotations, body, span, docs } => {
                 annotations.extend_from_slice(anns);
-                Ok(Stmt::MathDef { name, params, ret, annotations, body, span })
+                Ok(Stmt::MathDef { name, params, ret, annotations, body, span, docs })
             }
-            Stmt::ClassDef { name, mut annotations, mut members, span } => {
+            Stmt::ClassDef { name, mut annotations, mut members, span, docs } => {
                 annotations.extend_from_slice(anns);
                 // A `@builtin` class carries the annotation on every method (signature-only bodies are the builtin form, spec §18.4).
                 if anns.contains(&Annotation::Builtin) {
@@ -399,7 +517,7 @@ impl Parser {
                         }
                     }
                 }
-                Ok(Stmt::ClassDef { name, annotations, members, span })
+                Ok(Stmt::ClassDef { name, annotations, members, span, docs })
             }
             Stmt::Pub(inner) => self.apply_annotations(*inner, anns).map(Box::new).map(Stmt::Pub),
             other => {
@@ -439,7 +557,7 @@ impl Parser {
             self.skip_newlines();
             let body = self.parse_expr()?;
             let span = Span::merge(start, body.span);
-            return Ok(Stmt::MathDef { name, params, ret, annotations, body, span });
+            return Ok(Stmt::MathDef { name, params, ret, annotations, body, span, docs: None });
         }
         // Destructuring `let (a, b) = t`, `let Point { x, .. } = p`, or plain `let x = v` (spec §4.4).
         let pat = self.parse_pattern()?;
@@ -453,7 +571,7 @@ impl Parser {
         self.skip_newlines();
         let value = self.parse_expr()?;
         let span = Span::merge(start, value.span);
-        Ok(Stmt::Let { pat, mut_, type_ann, value, span })
+        Ok(Stmt::Let { pat, mut_, type_ann, value, span, docs: None })
     }
 
     fn parse_const_stmt(&mut self) -> Result<Stmt, SyntaxError> {
@@ -468,7 +586,7 @@ impl Parser {
         self.skip_newlines();
         let value = self.parse_expr()?;
         let span = Span::merge(start, value.span);
-        Ok(Stmt::Const { name, type_ann, value, span })
+        Ok(Stmt::Const { name, type_ann, value, span, docs: None })
     }
 
     fn parse_fn_stmt(&mut self, stmt_annotations: &[Annotation]) -> Result<Stmt, SyntaxError> {
@@ -519,7 +637,7 @@ impl Parser {
             self.parse_block()?
         };
         let span = Span::merge(start, body.span);
-        Ok(Stmt::FnDef { name, params, ret, annotations, body, span })
+        Ok(Stmt::FnDef { name, params, ret, annotations, body, span, docs: None })
     }
 
     fn parse_params(&mut self) -> Result<Vec<Param>, SyntaxError> {
@@ -603,6 +721,19 @@ impl Parser {
                 self.bump();
                 break;
             }
+            let member_docs = self.take_docs(false);
+            if self.at(&TokenKind::RBrace) {
+                // A trailing doc comment before `}` has no member to document.
+                if let Some(d) = member_docs {
+                    self.push_warning(
+                        "W0007",
+                        d.span,
+                        "doc comment has no following definition (W0007); `///` must precede a field or method (spec §4.1)".into(),
+                    );
+                }
+                self.bump();
+                break;
+            }
             let member_start = self.span();
             let vis = self.parse_vis()?;
             self.skip_newlines();
@@ -633,6 +764,7 @@ impl Parser {
                     vis,
                     kind: ClassMemberKind::Method { name: mname, params, ret, annotations, body },
                     span,
+                    docs: member_docs,
                 });
             } else {
                 let fname = self.parse_ident("field name")?;
@@ -641,13 +773,13 @@ impl Parser {
                 let ty = self.parse_type()?;
                 let end = self.tokens[self.pos.saturating_sub(1)].span;
                 let span = Span::merge(member_start, end);
-                members.push(ClassMember { vis, kind: ClassMemberKind::Field { name: fname, ty }, span });
+                members.push(ClassMember { vis, kind: ClassMemberKind::Field { name: fname, ty }, span, docs: member_docs });
             }
             self.skip_newlines();
             self.eat(&TokenKind::Comma); // members are comma-separated (spec §4.5)
         }
         let end = self.tokens[self.pos.saturating_sub(1)].span;
-        Ok(Stmt::ClassDef { name, annotations: Vec::new(), members, span: Span::merge(start, end) })
+        Ok(Stmt::ClassDef { name, annotations: Vec::new(), members, span: Span::merge(start, end), docs: None })
     }
 
     /// Visibility modifier (spec §15.2): none / `pub` / `pub(mod)`.
@@ -723,7 +855,7 @@ impl Parser {
             let annotations = self.parse_annotations()?;
             let body = self.parse_block()?;
             let span = Span::merge(name.span, body.span);
-            members.push(Box::new(Stmt::FnDef { name, params, ret, annotations, body, span }));
+            members.push(Box::new(Stmt::FnDef { name, params, ret, annotations, body, span, docs: None }));
         }
         let end = self.tokens[self.pos.saturating_sub(1)].span;
         Ok(Stmt::Impl { op, target, members, span: Span::merge(start, end) })
@@ -845,7 +977,33 @@ impl Parser {
                 let end = self.bump().span;
                 return Ok(Block { stmts, span: Span::merge(start, end) });
             }
-            stmts.push(self.parse_stmt()?);
+            match self.peek().clone() {
+                TokenKind::Doc { module, .. } => {
+                    let docs = self.take_docs(module);
+                    if module {
+                        // `//!` is only valid at the top of a file (spec §4.1).
+                        if let Some(d) = docs {
+                            self.push_warning(
+                                "W0007",
+                                d.span,
+                                "module doc comment `//!` is only allowed at the top of a file (W0007); spec §4.1".into(),
+                            );
+                        }
+                    } else if matches!(self.peek_non_newline(), TokenKind::RBrace | TokenKind::Eof) {
+                        // A trailing doc comment before the block closes has no item to document.
+                        if let Some(d) = docs {
+                            self.push_warning(
+                                "W0007",
+                                d.span,
+                                "doc comment has no following definition (W0007); `///` must precede an item (spec §4.1)".into(),
+                            );
+                        }
+                    } else {
+                        stmts.push(self.parse_stmt(docs)?);
+                    }
+                }
+                _ => stmts.push(self.parse_stmt(None)?),
+            }
         }
     }
 
@@ -998,7 +1156,7 @@ impl Parser {
         Ok(Stmt::WithConfig { entries, body, span })
     }
 
-    fn parse_pub_stmt(&mut self, outer_annotations: &[Annotation]) -> Result<Stmt, SyntaxError> {
+    fn parse_pub_stmt(&mut self, outer_annotations: &[Annotation], docs: &Option<DocComment>) -> Result<Stmt, SyntaxError> {
         let start = self.bump().span;
         self.skip_newlines();
         // `pub(mod)` at statement level (spec §15.2): consumed and ignored for statements (visibility matters for class members).
@@ -1015,14 +1173,18 @@ impl Parser {
         let inner = match self.peek().clone() {
             // `fn` folds in the outer statement-level annotations (e.g. `@builtin pub fn`) during
             // parsing, since the signature-only body and `::`-joined names depend on them (spec §18.4).
-            TokenKind::KwFn => self.parse_fn_stmt(outer_annotations)?,
+            TokenKind::KwFn => {
+                let stmt = self.parse_fn_stmt(outer_annotations)?;
+                self.attach_docs(stmt, docs.clone())?
+            }
             TokenKind::KwLet | TokenKind::KwConst | TokenKind::KwClass => {
-                let stmt = self.parse_stmt()?;
-                if outer_annotations.is_empty() {
+                let stmt = self.parse_stmt(None)?;
+                let stmt = if outer_annotations.is_empty() {
                     stmt
                 } else {
                     self.apply_annotations(stmt, outer_annotations)?
-                }
+                };
+                self.attach_docs(stmt, docs.clone())?
             }
             _ => return Err(self.err(self.span(), "expected `let`, `const`, `fn`, or `class` after `pub`".into())),
         };
@@ -1136,9 +1298,26 @@ impl Parser {
             TokenKind::Float(s) => ExprKind::Literal(Literal::Float(s)),
             TokenKind::Hex(s) => ExprKind::Literal(Literal::Hex(s)),
             TokenKind::Binary(s) => ExprKind::Literal(Literal::Binary(s)),
-            TokenKind::Str(s) => ExprKind::Literal(Literal::Str(s)),
+            TokenKind::Str { value, raw, single } => ExprKind::Literal(Literal::String {
+                value,
+                quote: if single { StringQuote::Single } else { StringQuote::Double },
+                raw,
+            }),
             TokenKind::Char(c) => ExprKind::Literal(Literal::Char(c)),
             TokenKind::TexStr(s) => ExprKind::Literal(Literal::Tex(s)),
+            TokenKind::FStr(parts) => {
+                let mut out = Vec::with_capacity(parts.len());
+                for p in parts {
+                    match p {
+                        crate::token::FStringToken::Lit(s) => out.push(FStringPart::Literal(s)),
+                        crate::token::FStringToken::Interp { expr, spec } => {
+                            let e = self.parse_fstring_interp(&expr, span)?;
+                            out.push(FStringPart::Interp { expr: Box::new(e), spec });
+                        }
+                    }
+                }
+                ExprKind::FString(out)
+            }
             TokenKind::KwTrue => ExprKind::Literal(Literal::Bool(true)),
             TokenKind::KwFalse => ExprKind::Literal(Literal::Bool(false)),
             TokenKind::Ident(s) => {
@@ -1162,6 +1341,19 @@ impl Parser {
         Ok(Expr { kind, span })
     }
 
+    /// Parse the already-lexed body of an f-string interpolation into an `Expr` (spec §18.1).
+    /// The body is a normal Prima expression; a leftover token is a parse error.
+    fn parse_fstring_interp(&mut self, tokens: &[Token], fstring_span: Span) -> Result<Expr, SyntaxError> {
+        let mut sub = Parser::new(tokens.to_vec());
+        let e = sub.parse_expr()?;
+        sub.skip_newlines();
+        if !sub.at(&TokenKind::Eof) {
+            return Err(self.err(fstring_span, "invalid expression in f-string interpolation".into()));
+        }
+        self.warnings.extend(sub.warnings);
+        Ok(e)
+    }
+
     fn parse_postfix(&mut self, mut e: Expr) -> Result<Expr, SyntaxError> {
         loop {
             self.skip_newlines();
@@ -1171,6 +1363,18 @@ impl Parser {
                     let args = self.parse_args()?;
                     let end = self.tokens[self.pos.saturating_sub(1)].span;
                     let span = Span::merge(e.span, end);
+                    // The removed `format` function (spec §18.1): a bare `format(...)` call gets the
+                    // `W0006` deprecation hint. Module functions (`time::format`) are untouched.
+                    if let ExprKind::Path { segments } = &e.kind
+                        && segments.len() == 1
+                        && segments[0].value == "format"
+                    {
+                        self.push_warning(
+                            "W0006",
+                            span,
+                            "`format` was removed in v2.2 (W0006); use an f-string `f\"...{expr}...\"` instead (spec §18.1)".into(),
+                        );
+                    }
                     e = Expr { kind: ExprKind::Call { callee: Box::new(e), args }, span };
                 }
                 TokenKind::LBracket => {
@@ -1597,7 +1801,11 @@ impl Parser {
             TokenKind::Underscore => Ok(Pattern::Wildcard(tok.span)),
             TokenKind::Integer(s) => self.parse_pattern_range(Pattern::Literal(Literal::Integer(s)), tok.span),
             TokenKind::Float(s) => self.parse_pattern_range(Pattern::Literal(Literal::Float(s)), tok.span),
-            TokenKind::Str(s) => Ok(Pattern::Literal(Literal::Str(s))),
+            TokenKind::Str { value, raw, single } => Ok(Pattern::Literal(Literal::String {
+                value,
+                quote: if single { StringQuote::Single } else { StringQuote::Double },
+                raw,
+            })),
             TokenKind::Char(c) => self.parse_pattern_range(Pattern::Literal(Literal::Char(c)), tok.span),
             TokenKind::KwTrue => Ok(Pattern::Literal(Literal::Bool(true))),
             TokenKind::KwFalse => Ok(Pattern::Literal(Literal::Bool(false))),
@@ -1865,8 +2073,8 @@ mod tests {
         match parse_first("{ \"a\": 1, \"b\": 2 }").kind {
             ExprKind::Dict(entries) => {
                 assert_eq!(entries.len(), 2);
-                assert!(matches!(entries[0].0.kind, ExprKind::Literal(Literal::Str(ref s)) if s == "a"));
-                assert!(matches!(entries[1].0.kind, ExprKind::Literal(Literal::Str(ref s)) if s == "b"));
+                assert!(matches!(entries[0].0.kind, ExprKind::Literal(Literal::String { ref value, .. }) if value == "a"));
+                assert!(matches!(entries[1].0.kind, ExprKind::Literal(Literal::String { ref value, .. }) if value == "b"));
                 assert!(matches!(entries[0].1.kind, ExprKind::Literal(Literal::Integer(_))));
             }
             other => panic!("expected Dict, got {other:?}"),
@@ -2078,6 +2286,78 @@ mod tests {
     #[test]
     fn non_builtin_fn_rejects_path_name() {
         assert!(parse_err("fn a::b() {}"), "path names are only allowed on `@builtin` fns");
+    }
+
+    #[test]
+    fn fstring_parses_into_parts() {
+        // `f"a{x} b{ y + 1 :0.2}"` → literal/interp/literal/interp (spec §18.1).
+        let e = parse_first(r#"f"a{x} b{ y + 1 :0.2}""#);
+        match e.kind {
+            ExprKind::FString(parts) => {
+                assert_eq!(parts.len(), 4);
+                assert_eq!(parts[0], FStringPart::Literal("a".into()));
+                match &parts[1] {
+                    FStringPart::Interp { expr, spec } => {
+                        assert_eq!(spec, &None);
+                        assert!(matches!(expr.kind, ExprKind::Path { .. }));
+                    }
+                    other => panic!("expected interpolation, got {other:?}"),
+                }
+                assert_eq!(parts[2], FStringPart::Literal(" b".into()));
+                match &parts[3] {
+                    FStringPart::Interp { expr, spec } => {
+                        assert_eq!(spec.as_deref(), Some("0.2"));
+                        assert!(matches!(expr.kind, ExprKind::Binary { .. }));
+                    }
+                    other => panic!("expected interpolation, got {other:?}"),
+                }
+            }
+            other => panic!("expected FString, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fstring_interpolation_allows_dict_and_strings() {
+        // Nested braces/strings inside the interpolation must not break the `{}` balance.
+        // `r##"..."##` so the f-string's closing quote is part of the content.
+        let e = parse_first(r##"f"d = { {"a": 1}["a"] } s = {"hi"}""##);
+        match e.kind {
+            ExprKind::FString(parts) => {
+                assert_eq!(parts.len(), 4);
+                let FStringPart::Interp { expr, .. } = &parts[1] else { panic!("expected interpolation") };
+                assert!(matches!(expr.kind, ExprKind::Index { .. }));
+            }
+            other => panic!("expected FString, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fstring_empty_interpolation_is_error() {
+        assert!(parse_err(r#"f"a {} b""#), "empty interpolation must be a parse error");
+    }
+
+    #[test]
+    fn format_call_emits_w0006_warning() {
+        let (_, errors, warnings) = crate::parse_checked(r#"print(format("x = {}", 1));"#);
+        assert!(errors.is_empty(), "errors = {errors:?}");
+        assert!(
+            warnings.iter().any(|w| w.code == "W0006" && w.message.contains("f-string")),
+            "warnings = {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn format_module_function_is_not_warned() {
+        // `time::format` is a module function (spec §18.1), not the removed core `format`.
+        let (_, errors, warnings) = crate::parse_checked(r#"time::format(0, "%Y");"#);
+        assert!(errors.is_empty(), "errors = {errors:?}");
+        assert!(!warnings.iter().any(|w| w.code == "W0006"), "warnings = {warnings:?}");
+    }
+
+    #[test]
+    fn fstring_with_nested_literal_is_compile_error() {
+        let errs = crate::parse(r#"f"a { f"b" } c""#).unwrap_err();
+        assert!(errs.iter().any(|e| e.message.contains("nested f-string")));
     }
 
     #[test]

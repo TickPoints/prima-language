@@ -3,6 +3,7 @@ source: tests/parser.rs
 expression: parse(src).unwrap()
 ---
 Program {
+    module_docs: None,
     config: Some(
         ConfigBlock {
             entries: [
@@ -192,6 +193,7 @@ Program {
                     },
                 ),
             },
+            docs: None,
             span: Span {
                 start: 98,
                 end: 118,
@@ -231,6 +233,7 @@ Program {
                     },
                 ],
             },
+            docs: None,
             span: Span {
                 start: 119,
                 end: 147,
@@ -251,6 +254,7 @@ Program {
                     Star,
                 ],
             },
+            docs: None,
             span: Span {
                 start: 148,
                 end: 169,
@@ -342,6 +346,7 @@ Program {
                 start: 171,
                 end: 189,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -372,6 +377,7 @@ Program {
                 start: 191,
                 end: 217,
             },
+            docs: None,
         },
         Const {
             name: Spanned {
@@ -397,6 +403,7 @@ Program {
                 start: 219,
                 end: 237,
             },
+            docs: None,
         },
         Pub(
             FnDef {
@@ -481,6 +488,7 @@ Program {
                                 start: 275,
                                 end: 290,
                             },
+                            docs: None,
                         },
                         If {
                             cond: Expr {
@@ -598,6 +606,7 @@ Program {
                     start: 243,
                     end: 365,
                 },
+                docs: None,
             },
         ),
         For {
@@ -903,6 +912,7 @@ Program {
                 start: 447,
                 end: 464,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -977,6 +987,7 @@ Program {
                 start: 466,
                 end: 481,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -1040,6 +1051,7 @@ Program {
                 start: 483,
                 end: 499,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -1132,6 +1144,7 @@ Program {
                 start: 501,
                 end: 521,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -1187,6 +1200,7 @@ Program {
                 start: 523,
                 end: 544,
             },
+            docs: None,
         },
         Match {
             scrutinee: Expr {
@@ -1255,9 +1269,11 @@ Program {
                             args: [
                                 Expr {
                                     kind: Literal(
-                                        Str(
-                                            "ok: {}",
-                                        ),
+                                        String {
+                                            value: "ok: {}",
+                                            quote: Double,
+                                            raw: false,
+                                        },
                                     ),
                                     span: Span {
                                         start: 575,
@@ -1337,9 +1353,11 @@ Program {
                             args: [
                                 Expr {
                                     kind: Literal(
-                                        Str(
-                                            "err: {}",
-                                        ),
+                                        String {
+                                            value: "err: {}",
+                                            quote: Double,
+                                            raw: false,
+                                        },
                                     ),
                                     span: Span {
                                         start: 609,
@@ -1521,6 +1539,7 @@ Program {
                 start: 657,
                 end: 670,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -1584,6 +1603,7 @@ Program {
                 start: 672,
                 end: 686,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -1644,6 +1664,7 @@ Program {
                 start: 688,
                 end: 702,
             },
+            docs: None,
         },
         Let {
             pat: Binding(
@@ -1704,6 +1725,7 @@ Program {
                 start: 704,
                 end: 719,
             },
+            docs: None,
         },
     ],
 }

@@ -1,0 +1,477 @@
+---
+source: tests/parser.rs
+expression: p
+---
+Program {
+    module_docs: Some(
+        DocComment {
+            lines: [
+                (
+                    "The `linalg` module.",
+                    Span {
+                        start: 1,
+                        end: 25,
+                    },
+                ),
+                (
+                    "Provides matrix operations.",
+                    Span {
+                        start: 26,
+                        end: 57,
+                    },
+                ),
+            ],
+            span: Span {
+                start: 1,
+                end: 57,
+            },
+        },
+    ),
+    config: None,
+    imports: [
+        Import {
+            kind: Namespace {
+                path: [
+                    Spanned {
+                        value: "linalg",
+                        span: Span {
+                            start: 88,
+                            end: 94,
+                        },
+                    },
+                ],
+                alias: Some(
+                    Spanned {
+                        value: "la",
+                        span: Span {
+                            start: 98,
+                            end: 100,
+                        },
+                    },
+                ),
+            },
+            docs: Some(
+                DocComment {
+                    lines: [
+                        (
+                            "Imported helpers.",
+                            Span {
+                                start: 59,
+                                end: 80,
+                            },
+                        ),
+                    ],
+                    span: Span {
+                        start: 59,
+                        end: 80,
+                    },
+                },
+            ),
+            span: Span {
+                start: 81,
+                end: 101,
+            },
+        },
+    ],
+    stmts: [
+        Pub(
+            FnDef {
+                name: Spanned {
+                    value: "add",
+                    span: Span {
+                        start: 141,
+                        end: 144,
+                    },
+                },
+                params: [
+                    Param {
+                        name: Spanned {
+                            value: "A",
+                            span: Span {
+                                start: 145,
+                                end: 146,
+                            },
+                        },
+                        type_ann: Some(
+                            Matrix(
+                                F64,
+                            ),
+                        ),
+                        is_self: false,
+                    },
+                    Param {
+                        name: Spanned {
+                            value: "B",
+                            span: Span {
+                                start: 161,
+                                end: 162,
+                            },
+                        },
+                        type_ann: Some(
+                            Matrix(
+                                F64,
+                            ),
+                        ),
+                        is_self: false,
+                    },
+                ],
+                ret: Some(
+                    Matrix(
+                        F64,
+                    ),
+                ),
+                annotations: [
+                    Builtin,
+                ],
+                body: Block {
+                    stmts: [],
+                    span: Span {
+                        start: 138,
+                        end: 140,
+                    },
+                },
+                span: Span {
+                    start: 138,
+                    end: 140,
+                },
+                docs: Some(
+                    DocComment {
+                        lines: [
+                            (
+                                "Add two matrices.",
+                                Span {
+                                    start: 103,
+                                    end: 124,
+                                },
+                            ),
+                        ],
+                        span: Span {
+                            start: 103,
+                            end: 124,
+                        },
+                    },
+                ),
+            },
+        ),
+        MathDef {
+            name: Spanned {
+                value: "eye",
+                span: Span {
+                    start: 223,
+                    end: 226,
+                },
+            },
+            params: [
+                Param {
+                    name: Spanned {
+                        value: "n",
+                        span: Span {
+                            start: 227,
+                            end: 228,
+                        },
+                    },
+                    type_ann: None,
+                    is_self: false,
+                },
+            ],
+            ret: None,
+            annotations: [],
+            body: Expr {
+                kind: Path {
+                    segments: [
+                        Spanned {
+                            value: "n",
+                            span: Span {
+                                start: 232,
+                                end: 233,
+                            },
+                        },
+                    ],
+                },
+                span: Span {
+                    start: 232,
+                    end: 233,
+                },
+            },
+            span: Span {
+                start: 219,
+                end: 233,
+            },
+            docs: Some(
+                DocComment {
+                    lines: [
+                        (
+                            "The identity matrix.",
+                            Span {
+                                start: 194,
+                                end: 218,
+                            },
+                        ),
+                    ],
+                    span: Span {
+                        start: 194,
+                        end: 218,
+                    },
+                },
+            ),
+        },
+        ClassDef {
+            name: Spanned {
+                value: "Point",
+                span: Span {
+                    start: 259,
+                    end: 264,
+                },
+            },
+            annotations: [],
+            members: [
+                ClassMember {
+                    vis: Private,
+                    kind: Field {
+                        name: Spanned {
+                            value: "x",
+                            span: Span {
+                                start: 297,
+                                end: 298,
+                            },
+                        },
+                        ty: F64,
+                    },
+                    span: Span {
+                        start: 297,
+                        end: 303,
+                    },
+                    docs: Some(
+                        DocComment {
+                            lines: [
+                                (
+                                    "The x coordinate.",
+                                    Span {
+                                        start: 271,
+                                        end: 292,
+                                    },
+                                ),
+                            ],
+                            span: Span {
+                                start: 271,
+                                end: 292,
+                            },
+                        },
+                    ),
+                },
+                ClassMember {
+                    vis: Private,
+                    kind: Field {
+                        name: Spanned {
+                            value: "y",
+                            span: Span {
+                                start: 335,
+                                end: 336,
+                            },
+                        },
+                        ty: F64,
+                    },
+                    span: Span {
+                        start: 335,
+                        end: 341,
+                    },
+                    docs: Some(
+                        DocComment {
+                            lines: [
+                                (
+                                    "The y coordinate.",
+                                    Span {
+                                        start: 309,
+                                        end: 330,
+                                    },
+                                ),
+                            ],
+                            span: Span {
+                                start: 309,
+                                end: 330,
+                            },
+                        },
+                    ),
+                },
+                ClassMember {
+                    vis: Public,
+                    kind: Method {
+                        name: Spanned {
+                            value: "new",
+                            span: Span {
+                                start: 394,
+                                end: 397,
+                            },
+                        },
+                        params: [
+                            Param {
+                                name: Spanned {
+                                    value: "x",
+                                    span: Span {
+                                        start: 398,
+                                        end: 399,
+                                    },
+                                },
+                                type_ann: Some(
+                                    F64,
+                                ),
+                                is_self: false,
+                            },
+                            Param {
+                                name: Spanned {
+                                    value: "y",
+                                    span: Span {
+                                        start: 406,
+                                        end: 407,
+                                    },
+                                },
+                                type_ann: Some(
+                                    F64,
+                                ),
+                                is_self: false,
+                            },
+                        ],
+                        ret: Some(
+                            SelfType,
+                        ),
+                        annotations: [],
+                        body: Some(
+                            Block {
+                                stmts: [
+                                    Expr(
+                                        Expr {
+                                            kind: StructLiteral {
+                                                name: Spanned {
+                                                    value: "Point",
+                                                    span: Span {
+                                                        start: 432,
+                                                        end: 437,
+                                                    },
+                                                },
+                                                fields: [
+                                                    FieldValue {
+                                                        name: Spanned {
+                                                            value: "x",
+                                                            span: Span {
+                                                                start: 440,
+                                                                end: 441,
+                                                            },
+                                                        },
+                                                        value: None,
+                                                    },
+                                                    FieldValue {
+                                                        name: Spanned {
+                                                            value: "y",
+                                                            span: Span {
+                                                                start: 443,
+                                                                end: 444,
+                                                            },
+                                                        },
+                                                        value: None,
+                                                    },
+                                                ],
+                                                base: None,
+                                            },
+                                            span: Span {
+                                                start: 432,
+                                                end: 446,
+                                            },
+                                        },
+                                    ),
+                                ],
+                                span: Span {
+                                    start: 422,
+                                    end: 452,
+                                },
+                            },
+                        ),
+                    },
+                    span: Span {
+                        start: 387,
+                        end: 452,
+                    },
+                    docs: Some(
+                        DocComment {
+                            lines: [
+                                (
+                                    "Build a point from coordinates.",
+                                    Span {
+                                        start: 347,
+                                        end: 382,
+                                    },
+                                ),
+                            ],
+                            span: Span {
+                                start: 347,
+                                end: 382,
+                            },
+                        },
+                    ),
+                },
+            ],
+            span: Span {
+                start: 253,
+                end: 454,
+            },
+            docs: Some(
+                DocComment {
+                    lines: [
+                        (
+                            "A 2-D point.",
+                            Span {
+                                start: 236,
+                                end: 252,
+                            },
+                        ),
+                    ],
+                    span: Span {
+                        start: 236,
+                        end: 252,
+                    },
+                },
+            ),
+        },
+        Const {
+            name: Spanned {
+                value: "DIM",
+                span: Span {
+                    start: 489,
+                    end: 492,
+                },
+            },
+            type_ann: Integer,
+            value: Expr {
+                kind: Literal(
+                    Integer(
+                        "2",
+                    ),
+                ),
+                span: Span {
+                    start: 504,
+                    end: 505,
+                },
+            },
+            span: Span {
+                start: 483,
+                end: 505,
+            },
+            docs: Some(
+                DocComment {
+                    lines: [
+                        (
+                            "The default dimension.",
+                            Span {
+                                start: 456,
+                                end: 482,
+                            },
+                        ),
+                    ],
+                    span: Span {
+                        start: 456,
+                        end: 482,
+                    },
+                },
+            ),
+        },
+    ],
+}

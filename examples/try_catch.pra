@@ -5,8 +5,8 @@ fn parse_and_double(s: String) -> Result<F64, Error> {
 }
 
 match parse_and_double("3.14") {
-    Ok(x)  => println(format("parsed {}", x)),
-    Err(e) => println(format("failed: {}", e))
+    Ok(x)  => println(f"parsed {x}"),
+    Err(e) => println(f"failed: {e}")
 }
 println(parse_and_double("2.5").unwrap_or(0.0));
 println(parse_and_double("6.0").unwrap());

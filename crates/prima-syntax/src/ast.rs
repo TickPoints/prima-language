@@ -6,10 +6,31 @@ pub struct Spanned<T> {
     pub span: Span,
 }
 
+/// Doc comment (spec §4.1): `///`/`//!` lines collected verbatim with per-line spans so the
+/// original source text survives into the AST. `prima doc` (spec §20) and diagnostic notes
+/// (spec §16.4) read it; consecutive lines merge into one comment for the following item.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocComment {
+    /// One entry per `///`/`//!` line: the text after the marker (one optional leading space
+    /// stripped) plus the line's source span.
+    pub lines: Vec<(String, Span)>,
+    /// The merged span covering all lines.
+    pub span: Span,
+}
+
+impl DocComment {
+    /// The concatenated doc text, one line per `///` line (spec §4.1).
+    pub fn text(&self) -> String {
+        self.lines.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join("\n")
+    }
+}
+
 /// A single AST covers the entire grammar (spec §4). The three-section order `config → import → statement`
 /// is validated at parse time (spec §4.1, appendix A BNF `program` production).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
+    /// `//!` module doc comment at the top of the file (spec §4.1).
+    pub module_docs: Option<DocComment>,
     pub config: Option<ConfigBlock>,
     pub imports: Vec<Import>,
     pub stmts: Vec<Stmt>,
@@ -32,6 +53,8 @@ pub struct ConfigEntry {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Import {
     pub kind: ImportKind,
+    /// `///` doc comment preceding the import binding (spec §4.1).
+    pub docs: Option<DocComment>,
     pub span: Span,
 }
 
@@ -63,12 +86,15 @@ pub enum Stmt {
         type_ann: Option<Type>,
         value: Expr,
         span: Span,
+        /// `///` doc comment (spec §4.1), set when the statement is a top-level/block item.
+        docs: Option<DocComment>,
     },
     Const {
         name: Spanned<String>,
         type_ann: Type,
         value: Expr,
         span: Span,
+        docs: Option<DocComment>,
     },
     FnDef {
         name: Spanned<String>,
@@ -77,6 +103,7 @@ pub enum Stmt {
         annotations: Vec<Annotation>,
         body: Block,
         span: Span,
+        docs: Option<DocComment>,
     },
     MathDef {
         name: Spanned<String>,
@@ -85,6 +112,7 @@ pub enum Stmt {
         annotations: Vec<Annotation>,
         body: Expr,
         span: Span,
+        docs: Option<DocComment>,
     },
     /// Class definition (spec §4.5): fields + methods. Statement-level annotations (`@builtin`,
     /// spec §18.4) are recorded so the checker can reject unregistered builtin classes.
@@ -93,6 +121,7 @@ pub enum Stmt {
         annotations: Vec<Annotation>,
         members: Vec<ClassMember>,
         span: Span,
+        docs: Option<DocComment>,
     },
     /// Operator overload via `impl ops::Add for T` (spec §18.5).
     Impl {
@@ -173,6 +202,8 @@ pub struct ClassMember {
     pub vis: Visibility,
     pub kind: ClassMemberKind,
     pub span: Span,
+    /// `///` doc comment preceding the field/method (spec §4.1).
+    pub docs: Option<DocComment>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -316,6 +347,10 @@ pub struct Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
     Literal(Literal),
+    /// f-string `f"..."`/`f'...'`/`rf"..."` (spec §18.1): literal text and `{expr}` interpolation
+    /// parts alternate. `{{`/`}}` escapes and any raw-string escaping are resolved by the lexer,
+    /// so parts only ever carry the final text and a parsed interpolation expression.
+    FString(Vec<FStringPart>),
     Symbol(Spanned<String>),
     Path { segments: Vec<Spanned<String>> },
     /// `self` expression (spec §4.5).
@@ -375,10 +410,28 @@ pub enum Literal {
     Float(String),
     Hex(String),
     Binary(String),
-    Str(String),
+    /// String literal (spec §3/§18.1): the `quote`/`raw` markers record the source form
+    /// (`'...'` vs `"..."`, `r"..."` raw) so the formatter can re-emit it losslessly.
+    String { value: String, quote: StringQuote, raw: bool },
     Char(char),
     Bool(bool),
     Tex(String),
+}
+
+/// Delimiter used to write a string literal (spec §3): `"..."` and `'...'` are equivalent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StringQuote {
+    Double,
+    Single,
+}
+
+/// One segment of an f-string template (spec §18.1): literal text between interpolations, or a
+/// `{expr}` interpolation with an optional `:spec` refinement. `{{`/`}}` are already folded into
+/// the literal text by the lexer.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FStringPart {
+    Literal(String),
+    Interp { expr: Box<Expr>, spec: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

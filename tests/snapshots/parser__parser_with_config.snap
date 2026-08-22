@@ -3,6 +3,7 @@ source: tests/parser.rs
 expression: parse(src).unwrap()
 ---
 Program {
+    module_docs: None,
     config: Some(
         ConfigBlock {
             entries: [
@@ -110,6 +111,7 @@ Program {
                 start: 30,
                 end: 44,
             },
+            docs: None,
         },
         WithConfig {
             entries: [
@@ -203,6 +205,7 @@ Program {
                             start: 83,
                             end: 99,
                         },
+                        docs: None,
                     },
                 ],
                 span: Span {
@@ -271,6 +274,7 @@ Program {
                 start: 103,
                 end: 119,
             },
+            docs: None,
         },
     ],
 }
