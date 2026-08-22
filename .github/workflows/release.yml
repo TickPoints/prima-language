@@ -14,7 +14,8 @@
 # riscv64gc-unknown-linux-gnu, armv7-unknown-linux-gnueabihf,
 # powerpc64le-unknown-linux-gnu, s390x-unknown-linux-gnu.
 # Cross-compile helpers: Linux GNU targets use apt cross linkers; x86_64 musl uses the
-# host musl toolchain; aarch64 musl uses a musl.cc cross toolchain; aarch64-windows uses cargo-xwin.
+# host musl toolchain; aarch64 musl uses a musl-cross toolchain mirrored on GitHub
+# (musl.cc blocks GitHub Actions IP ranges); aarch64-windows uses cargo-xwin.
 
 name: release
 
@@ -25,6 +26,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: release
@@ -133,10 +135,10 @@ jobs:
       - name: Install musl cross toolchain (aarch64 musl)
         if: matrix.musl_cross == 'aarch64'
         run: |
-          curl -sSL https://musl.cc/aarch64-linux-musl-cross.tgz -o /tmp/musl-cross.tgz
+          curl -fsSL https://github.com/cross-tools/musl-cross/releases/download/20260515/aarch64-unknown-linux-musl.tar.xz -o /tmp/musl-cross.tar.xz
           mkdir -p "$HOME/musl-cross"
-          tar xzf /tmp/musl-cross.tgz -C "$HOME/musl-cross"
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=$HOME/musl-cross/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc" >> "$GITHUB_ENV"
+          tar xf /tmp/musl-cross.tar.xz -C "$HOME/musl-cross"
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=$HOME/musl-cross/aarch64-unknown-linux-musl/bin/aarch64-unknown-linux-musl-gcc" >> "$GITHUB_ENV"
 
       - name: Configure cross linker
         if: matrix.linker
@@ -185,3 +187,9 @@ jobs:
             "${{ steps.package.outputs.artifact }}" \
             "${{ steps.package.outputs.artifact }}.sha256" \
             --clobber
+
+      - name: Cancel workflow on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ github.run_id }}" || true
