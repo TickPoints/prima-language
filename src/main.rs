@@ -44,7 +44,7 @@ enum Command {
     },
     Check {
         file: PathBuf,
-        /// Promote the given warning codes (e.g. `W0001`) to errors (spec §16.5).
+        /// Promote the given warning codes (e.g. `W0005`) to errors (spec §16.5).
         #[arg(long = "deny")]
         deny: Vec<String>,
     },

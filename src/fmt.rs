@@ -151,6 +151,7 @@ fn format_import(imp: &Import, out: &mut String) {
             }
         }
     }
+    out.push(';');
 }
 
 fn format_path(segments: &[prima_syntax::ast::Spanned<String>], out: &mut String) {
@@ -686,7 +687,6 @@ fn format_type_list(types: &[Type], out: &mut String) {
 /// Binding power (lbp) of a binary operator when embedded as a subexpression (parser `binop_bp`).
 fn binop_lbp(op: BinOp) -> u8 {
     match op {
-        BinOp::Pipeline => 1,
         BinOp::Or => 2,
         BinOp::And => 3,
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In => 4,
@@ -699,7 +699,6 @@ fn binop_lbp(op: BinOp) -> u8 {
 /// Right binding power (rbp) of a binary operator for its right operand (parser `binop_bp`).
 fn binop_rbp(op: BinOp) -> u8 {
     match op {
-        BinOp::Pipeline => 2,
         BinOp::Or => 3,
         BinOp::And => 4,
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In => 5,
@@ -731,7 +730,6 @@ fn binop_sym(op: BinOp) -> &'static str {
         BinOp::Intersect => "∩",
         BinOp::Difference => "\\",
         BinOp::Broadcast => "@.",
-        BinOp::Pipeline => "|>",
     }
 }
 
@@ -747,7 +745,6 @@ fn unary_sym(op: UnOp) -> &'static str {
 fn root_prec(e: &Expr) -> u8 {
     match &e.kind {
         ExprKind::Binary { op, .. } => binop_lbp(*op),
-        ExprKind::Pipeline { .. } => 1,
         ExprKind::Unary { .. } => UNARY_BP,
         _ => ATOM_BP,
     }
@@ -908,11 +905,6 @@ fn format_expr(e: &Expr, min_bp: u8, out: &mut String) {
                 format_match_arm(arm, 1, out);
             }
             out.push('}');
-        }
-        ExprKind::Pipeline { lhs, rhs } => {
-            format_expr(lhs, 1, out);
-            out.push_str(" |> ");
-            format_expr(rhs, 2, out);
         }
         ExprKind::Custom(pairs) => {
             out.push_str("custom { ");
@@ -1133,8 +1125,8 @@ mod tests {
     #[test]
     fn fmt_covers_config_and_imports() {
         assert_idempotent("config { fraction := false }\nlet x = 1/3;");
-        assert_idempotent("import mymath\nprintln(mymath::square(3));");
-        assert_idempotent("import a::b as c\nfrom x import y as z, w\nlet q = 1;");
+        assert_idempotent("import mymath;\nprintln(mymath::square(3));");
+        assert_idempotent("import a::b as c;\nfrom x import y as z, w;\nlet q = 1;");
     }
 
     #[test]
@@ -1158,9 +1150,8 @@ mod tests {
     }
 
     #[test]
-    fn fmt_covers_lambdas_pipeline_and_methods() {
+    fn fmt_covers_lambdas_and_methods() {
         assert_idempotent("let f = |a, b| a + b;");
-        assert_idempotent("let x = 1 |> to_f64;");
         assert_idempotent("let y = obj.method(1, 2).field;");
     }
 }

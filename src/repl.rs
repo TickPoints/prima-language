@@ -105,7 +105,7 @@ fn eval_candidate(
             print!("{tail}");
             let _ = io::stdout().flush();
             *prev_output = captured;
-            *session = candidate.to_string();
+            *session = terminate_with_semicolon(candidate);
             // `eval_value` reports the last expression's value over the whole session; print it
             // only when the new entry itself ends in a value-yielding statement.
             if yields_value(buffer) && !matches!(result, Value::Nil) {
@@ -124,6 +124,18 @@ fn eval_candidate(
 fn yields_value(buffer: &str) -> bool {
     let Ok(program) = prima_syntax::parse(buffer) else { return false };
     matches!(program.stmts.last(), Some(Stmt::Expr(_)) | Some(Stmt::Match { .. }))
+}
+
+/// The committed session replays as a single program (session + next entry), so each entry
+/// must be `;`-terminated: newline is no longer a statement separator (spec §4.2). Block-level
+/// statements accept the trailing `;`; an entry that already ends in `;` is left unchanged.
+fn terminate_with_semicolon(src: &str) -> String {
+    let trimmed = src.trim_end();
+    if trimmed.ends_with(';') {
+        src.to_string()
+    } else {
+        format!("{trimmed};\n")
+    }
 }
 
 /// Whether a (possibly multi-line) buffer has balanced `{ } [ ] ( )`, ignoring
