@@ -252,8 +252,8 @@ fn doc_lists_definitions() {
 }
 
 #[test]
-fn check_deny_promotes_warning() {
-    // Newline-separated statements trigger W0001 (deprecated separator, spec §16.5).
+fn check_rejects_newline_separated_statements() {
+    // Newline-separated statements are a hard parse error (E0011, spec §4.2).
     let mut file = std::env::temp_dir();
     file.push(format!("prima_deny_{}.pra", std::process::id()));
     std::fs::write(&file, "let a = 1\nlet b = 2\n").unwrap();
@@ -262,17 +262,8 @@ fn check_deny_promotes_warning() {
         .arg("check")
         .arg(&file)
         .assert()
-        .success()
-        .stderr(predicate::str::contains("W0001"));
-    Command::cargo_bin("prima")
-        .unwrap()
-        .arg("check")
-        .arg("--deny")
-        .arg("W0001")
-        .arg(&file)
-        .assert()
         .failure()
-        .stderr(predicate::str::contains("W0001"));
+        .stderr(predicate::str::contains("E0011"));
     let _ = std::fs::remove_file(&file);
 }
 

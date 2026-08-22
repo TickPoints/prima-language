@@ -1,5 +1,6 @@
-// Warning tests (spec §16.5): `W0001` (newline-separated statements), `W0002` (deprecated `|>` pipeline),
-// and `W0005` (operator-overload use) with configurable `overload_policy`.
+// Warning tests (spec §16.5): newline-separated statements and the `|>` pipeline were
+// removed in v2.3 and are now hard parse errors (E0011/E0010); `W0005` (operator-overload
+// use) remains configurable via `overload_policy`.
 use prima_runtime::Evaluator;
 
 fn warnings_of(src: &str) -> Vec<String> {
@@ -9,27 +10,25 @@ fn warnings_of(src: &str) -> Vec<String> {
 }
 
 #[test]
-fn newline_separated_statements_emit_w0001() {
-    let ws = warnings_of("let x = 1\nx + 1\n");
-    assert!(ws.iter().any(|c| c == "W0001"), "warnings = {ws:?}");
+fn newline_separated_statements_are_parse_error() {
+    let err = Evaluator::new().eval_value("let x = 1\nx + 1\n").unwrap_err();
+    assert!(err.to_string().contains("E0011"), "error = {err}");
 }
 
 #[test]
-fn semicolon_terminated_statements_emit_no_warning() {
-    let ws = warnings_of("let x = 1;\nx + 1;");
-    assert!(!ws.iter().any(|c| c == "W0001"), "warnings = {ws:?}");
+fn semicolon_terminated_statements_evaluate() {
+    assert!(Evaluator::new().eval_value("let x = 1;\nx + 1;").is_ok());
 }
 
 #[test]
-fn pipeline_emits_w0002() {
-    let ws = warnings_of("let x = 1;\nx |> to_f64");
-    assert!(ws.iter().any(|c| c == "W0002"), "warnings = {ws:?}");
+fn pipeline_is_parse_error() {
+    let err = Evaluator::new().eval_value("let x = 1;\nx |> to_f64").unwrap_err();
+    assert!(err.to_string().contains("E0010"), "error = {err}");
 }
 
 #[test]
-fn pipeline_still_evaluates() {
-    let mut ev = Evaluator::new();
-    let v = ev.eval_value("let f(x) = x^2;\n3 |> f").expect("eval failed");
+fn direct_call_evaluates() {
+    let v = Evaluator::new().eval_value("let f(x) = x^2;\nf(3)").expect("eval failed");
     assert_eq!(v, prima_core::Value::Number(prima_core::Number::from(9)));
 }
 
@@ -56,9 +55,10 @@ fn overload_policy_deny_errors() {
 #[test]
 fn warnings_do_not_accumulate_across_eval_value() {
     let mut ev = Evaluator::new();
-    ev.eval_value("let x = 1;\nx |> to_f64").expect("eval failed");
-    assert!(ev.warnings().iter().any(|w| w.code == "W0002"));
+    let src = "class Vec2 { pub x: F64, pub y: F64 }\nimpl ops::Add for Vec2 {\n    fn add(self, rhs) -> Vec2 { Vec2 { x: self.x + rhs.x, y: self.y + rhs.y } }\n}\nlet a = Vec2 { x: 1, y: 2 };\nlet b = Vec2 { x: 3, y: 4 };\na + b";
+    ev.eval_value(src).expect("eval failed");
+    assert!(ev.warnings().iter().any(|w| w.code == "W0005"));
     // A fresh parse resets the warning list (spec §16.5: collected since the last parse entry point).
     ev.eval_value("let y = 2;").expect("eval failed");
-    assert!(!ev.warnings().iter().any(|w| w.code == "W0002"), "warnings = {:?}", ev.warnings());
+    assert!(!ev.warnings().iter().any(|w| w.code == "W0005"), "warnings = {:?}", ev.warnings());
 }

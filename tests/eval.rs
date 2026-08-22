@@ -13,12 +13,12 @@ fn eval_fmt(src: &str) -> String {
 
 #[test]
 fn mathdef_call() {
-    assert_eq!(eval("let f(x) = x^2\nf(3)"), Value::Number(Number::from(9)));
+    assert_eq!(eval("let f(x) = x^2;\nf(3)"), Value::Number(Number::from(9)));
 }
 
 #[test]
 fn mfn_broadcasts_over_array() {
-    let v = eval("let f(x) = x^2\nf([1, 2, 3])");
+    let v = eval("let f(x) = x^2;\nf([1, 2, 3])");
     assert_eq!(
         v,
         Value::Array(vec![
@@ -31,7 +31,7 @@ fn mfn_broadcasts_over_array() {
 
 #[test]
 fn symbolic_substitution_collapses() {
-    assert_eq!(eval("let f(x) = x^2 + 6\nf(sqrt(2))"), Value::Number(Number::from(8)));
+    assert_eq!(eval("let f(x) = x^2 + 6;\nf(sqrt(2))"), Value::Number(Number::from(8)));
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn trig_and_log_constants() {
 
 #[test]
 fn empty_array_broadcast_rejected() {
-    assert!(Evaluator::new().eval_value("let f(x) = x^2\nf([])").is_err());
+    assert!(Evaluator::new().eval_value("let f(x) = x^2;\nf([])").is_err());
 }
 
 #[test]
@@ -145,12 +145,7 @@ fn unbound_variable_is_symbolic() {
 
 #[test]
 fn closure_over_let() {
-    assert_eq!(eval("let a = 5\nlet f(x) = x + a\nf(1)"), Value::Number(Number::from(6)));
-}
-
-#[test]
-fn pipeline_applies() {
-    assert_eq!(eval("let f(x) = x^2\n3 |> f"), Value::Number(Number::from(9)));
+    assert_eq!(eval("let a = 5;\nlet f(x) = x + a;\nf(1)"), Value::Number(Number::from(6)));
 }
 
 #[test]
@@ -163,13 +158,13 @@ fn comparisons() {
 
 #[test]
 fn index_read() {
-    assert_eq!(eval("let v = [10, 20, 30]\nv[1]"), Value::Number(Number::from(20)));
-    assert!(Evaluator::new().eval_value("let v = [1, 2]\nv[5]").is_err());
+    assert_eq!(eval("let v = [10, 20, 30];\nv[1]"), Value::Number(Number::from(20)));
+    assert!(Evaluator::new().eval_value("let v = [1, 2];\nv[5]").is_err());
 }
 
 #[test]
 fn float_contagion_in_function() {
-    let v = eval("let f(x) = x^2\nf(3.0)");
+    let v = eval("let f(x) = x^2;\nf(3.0)");
     match v {
         Value::Number(Number::Real(prima_core::Real::F64(f))) => assert_eq!(f, 9.0),
         other => panic!("expected F64, got {other:?}"),

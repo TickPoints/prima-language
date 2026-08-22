@@ -194,7 +194,7 @@ Program {
             },
             span: Span {
                 start: 98,
-                end: 117,
+                end: 118,
             },
         },
         Import {
@@ -203,8 +203,8 @@ Program {
                     Spanned {
                         value: "stats",
                         span: Span {
-                            start: 123,
-                            end: 128,
+                            start: 124,
+                            end: 129,
                         },
                     },
                 ],
@@ -213,8 +213,8 @@ Program {
                         name: Spanned {
                             value: "mean",
                             span: Span {
-                                start: 136,
-                                end: 140,
+                                start: 137,
+                                end: 141,
                             },
                         },
                         alias: None,
@@ -223,8 +223,8 @@ Program {
                         name: Spanned {
                             value: "std",
                             span: Span {
-                                start: 142,
-                                end: 145,
+                                start: 143,
+                                end: 146,
                             },
                         },
                         alias: None,
@@ -232,8 +232,8 @@ Program {
                 ],
             },
             span: Span {
-                start: 118,
-                end: 146,
+                start: 119,
+                end: 147,
             },
         },
         Import {
@@ -242,8 +242,8 @@ Program {
                     Spanned {
                         value: "mymath",
                         span: Span {
-                            start: 151,
-                            end: 157,
+                            start: 153,
+                            end: 159,
                         },
                     },
                 ],
@@ -252,8 +252,8 @@ Program {
                 ],
             },
             span: Span {
-                start: 146,
-                end: 166,
+                start: 148,
+                end: 169,
             },
         },
     ],
@@ -262,8 +262,8 @@ Program {
             name: Spanned {
                 value: "f",
                 span: Span {
-                    start: 172,
-                    end: 173,
+                    start: 175,
+                    end: 176,
                 },
             },
             params: [
@@ -271,8 +271,8 @@ Program {
                     name: Spanned {
                         value: "x",
                         span: Span {
-                            start: 174,
-                            end: 175,
+                            start: 177,
+                            end: 178,
                         },
                     },
                     type_ann: None,
@@ -293,15 +293,15 @@ Program {
                                         Spanned {
                                             value: "x",
                                             span: Span {
-                                                start: 179,
-                                                end: 180,
+                                                start: 182,
+                                                end: 183,
                                             },
                                         },
                                     ],
                                 },
                                 span: Span {
-                                    start: 179,
-                                    end: 180,
+                                    start: 182,
+                                    end: 183,
                                 },
                             },
                             rhs: Expr {
@@ -311,14 +311,14 @@ Program {
                                     ),
                                 ),
                                 span: Span {
-                                    start: 181,
-                                    end: 182,
+                                    start: 184,
+                                    end: 185,
                                 },
                             },
                         },
                         span: Span {
-                            start: 179,
-                            end: 182,
+                            start: 182,
+                            end: 185,
                         },
                     },
                     rhs: Expr {
@@ -328,19 +328,19 @@ Program {
                             ),
                         ),
                         span: Span {
-                            start: 185,
-                            end: 186,
+                            start: 188,
+                            end: 189,
                         },
                     },
                 },
                 span: Span {
-                    start: 179,
-                    end: 186,
+                    start: 182,
+                    end: 189,
                 },
             },
             span: Span {
-                start: 168,
-                end: 186,
+                start: 171,
+                end: 189,
             },
         },
         Let {
@@ -348,8 +348,8 @@ Program {
                 Spanned {
                     value: "count",
                     span: Span {
-                        start: 196,
-                        end: 201,
+                        start: 199,
+                        end: 204,
                     },
                 },
             ),
@@ -364,21 +364,21 @@ Program {
                     ),
                 ),
                 span: Span {
-                    start: 213,
-                    end: 214,
+                    start: 216,
+                    end: 217,
                 },
             },
             span: Span {
-                start: 188,
-                end: 214,
+                start: 191,
+                end: 217,
             },
         },
         Const {
             name: Spanned {
                 value: "C",
                 span: Span {
-                    start: 222,
-                    end: 223,
+                    start: 225,
+                    end: 226,
                 },
             },
             type_ann: F64,
@@ -389,13 +389,13 @@ Program {
                     ),
                 ),
                 span: Span {
-                    start: 231,
-                    end: 234,
+                    start: 234,
+                    end: 237,
                 },
             },
             span: Span {
-                start: 216,
-                end: 234,
+                start: 219,
+                end: 237,
             },
         },
         Pub(
@@ -403,8 +403,8 @@ Program {
                 name: Spanned {
                     value: "process",
                     span: Span {
-                        start: 243,
-                        end: 250,
+                        start: 246,
+                        end: 253,
                     },
                 },
                 params: [
@@ -412,8 +412,8 @@ Program {
                         name: Spanned {
                             value: "x",
                             span: Span {
-                                start: 251,
-                                end: 252,
+                                start: 254,
+                                end: 255,
                             },
                         },
                         type_ann: Some(
@@ -433,8 +433,8 @@ Program {
                                 Spanned {
                                     value: "y",
                                     span: Span {
-                                        start: 276,
-                                        end: 277,
+                                        start: 279,
+                                        end: 280,
                                     },
                                 },
                             ),
@@ -449,15 +449,15 @@ Program {
                                                 Spanned {
                                                     value: "x",
                                                     span: Span {
-                                                        start: 280,
-                                                        end: 281,
+                                                        start: 283,
+                                                        end: 284,
                                                     },
                                                 },
                                             ],
                                         },
                                         span: Span {
-                                            start: 280,
-                                            end: 281,
+                                            start: 283,
+                                            end: 284,
                                         },
                                     },
                                     rhs: Expr {
@@ -467,19 +467,19 @@ Program {
                                             ),
                                         ),
                                         span: Span {
-                                            start: 284,
-                                            end: 287,
+                                            start: 287,
+                                            end: 290,
                                         },
                                     },
                                 },
                                 span: Span {
-                                    start: 280,
-                                    end: 287,
+                                    start: 283,
+                                    end: 290,
                                 },
                             },
                             span: Span {
-                                start: 272,
-                                end: 287,
+                                start: 275,
+                                end: 290,
                             },
                         },
                         If {
@@ -492,15 +492,15 @@ Program {
                                                 Spanned {
                                                     value: "y",
                                                     span: Span {
-                                                        start: 296,
-                                                        end: 297,
+                                                        start: 299,
+                                                        end: 300,
                                                     },
                                                 },
                                             ],
                                         },
                                         span: Span {
-                                            start: 296,
-                                            end: 297,
+                                            start: 299,
+                                            end: 300,
                                         },
                                     },
                                     rhs: Expr {
@@ -510,14 +510,14 @@ Program {
                                             ),
                                         ),
                                         span: Span {
-                                            start: 300,
-                                            end: 301,
+                                            start: 303,
+                                            end: 304,
                                         },
                                     },
                                 },
                                 span: Span {
-                                    start: 296,
-                                    end: 301,
+                                    start: 299,
+                                    end: 304,
                                 },
                             },
                             then: Block {
@@ -530,27 +530,27 @@ Program {
                                                         Spanned {
                                                             value: "y",
                                                             span: Span {
-                                                                start: 319,
-                                                                end: 320,
+                                                                start: 322,
+                                                                end: 323,
                                                             },
                                                         },
                                                     ],
                                                 },
                                                 span: Span {
-                                                    start: 319,
-                                                    end: 320,
+                                                    start: 322,
+                                                    end: 323,
                                                 },
                                             },
                                         ),
                                         span: Span {
-                                            start: 312,
-                                            end: 320,
+                                            start: 315,
+                                            end: 323,
                                         },
                                     },
                                 ],
                                 span: Span {
-                                    start: 302,
-                                    end: 327,
+                                    start: 305,
+                                    end: 330,
                                 },
                             },
                             elifs: [],
@@ -566,37 +566,37 @@ Program {
                                                         ),
                                                     ),
                                                     span: Span {
-                                                        start: 350,
-                                                        end: 353,
+                                                        start: 353,
+                                                        end: 356,
                                                     },
                                                 },
                                             ),
                                             span: Span {
-                                                start: 343,
-                                                end: 353,
+                                                start: 346,
+                                                end: 356,
                                             },
                                         },
                                     ],
                                     span: Span {
-                                        start: 333,
-                                        end: 360,
+                                        start: 336,
+                                        end: 363,
                                     },
                                 },
                             ),
                             span: Span {
-                                start: 293,
-                                end: 360,
+                                start: 296,
+                                end: 363,
                             },
                         },
                     ],
                     span: Span {
-                        start: 266,
-                        end: 362,
+                        start: 269,
+                        end: 365,
                     },
                 },
                 span: Span {
-                    start: 240,
-                    end: 362,
+                    start: 243,
+                    end: 365,
                 },
             },
         ),
@@ -604,8 +604,8 @@ Program {
             var: Spanned {
                 value: "i",
                 span: Span {
-                    start: 367,
-                    end: 368,
+                    start: 370,
+                    end: 371,
                 },
             },
             range: (
@@ -616,8 +616,8 @@ Program {
                         ),
                     ),
                     span: Span {
-                        start: 372,
-                        end: 373,
+                        start: 375,
+                        end: 376,
                     },
                 },
                 Expr {
@@ -627,8 +627,8 @@ Program {
                         ),
                     ),
                     span: Span {
-                        start: 375,
-                        end: 377,
+                        start: 378,
+                        end: 380,
                     },
                 },
             ),
@@ -640,8 +640,8 @@ Program {
                         ),
                     ),
                     span: Span {
-                        start: 383,
-                        end: 384,
+                        start: 386,
+                        end: 387,
                     },
                 },
             ),
@@ -654,15 +654,15 @@ Program {
                                     Spanned {
                                         value: "count",
                                         span: Span {
-                                            start: 391,
-                                            end: 396,
+                                            start: 394,
+                                            end: 399,
                                         },
                                     },
                                 ],
                             },
                             span: Span {
-                                start: 391,
-                                end: 396,
+                                start: 394,
+                                end: 399,
                             },
                         },
                         op: AddAssign,
@@ -672,39 +672,39 @@ Program {
                                     Spanned {
                                         value: "i",
                                         span: Span {
-                                            start: 400,
-                                            end: 401,
+                                            start: 403,
+                                            end: 404,
                                         },
                                     },
                                 ],
                             },
                             span: Span {
-                                start: 400,
-                                end: 401,
+                                start: 403,
+                                end: 404,
                             },
                         },
                         span: Span {
-                            start: 391,
-                            end: 401,
+                            start: 394,
+                            end: 404,
                         },
                     },
                 ],
                 span: Span {
-                    start: 385,
-                    end: 404,
+                    start: 388,
+                    end: 407,
                 },
             },
             span: Span {
-                start: 363,
-                end: 404,
+                start: 366,
+                end: 407,
             },
         },
         ParFor {
             var: Spanned {
                 value: "j",
                 span: Span {
-                    start: 412,
-                    end: 413,
+                    start: 415,
+                    end: 416,
                 },
             },
             range: (
@@ -715,8 +715,8 @@ Program {
                         ),
                     ),
                     span: Span {
-                        start: 417,
-                        end: 418,
+                        start: 420,
+                        end: 421,
                     },
                 },
                 Expr {
@@ -726,8 +726,8 @@ Program {
                         ),
                     ),
                     span: Span {
-                        start: 420,
-                        end: 422,
+                        start: 423,
+                        end: 425,
                     },
                 },
             ),
@@ -743,15 +743,15 @@ Program {
                                             Spanned {
                                                 value: "A",
                                                 span: Span {
-                                                    start: 429,
-                                                    end: 430,
+                                                    start: 432,
+                                                    end: 433,
                                                 },
                                             },
                                         ],
                                     },
                                     span: Span {
-                                        start: 429,
-                                        end: 430,
+                                        start: 432,
+                                        end: 433,
                                     },
                                 },
                                 index: Index {
@@ -763,15 +763,15 @@ Program {
                                                         Spanned {
                                                             value: "j",
                                                             span: Span {
-                                                                start: 431,
-                                                                end: 432,
+                                                                start: 434,
+                                                                end: 435,
                                                             },
                                                         },
                                                     ],
                                                 },
                                                 span: Span {
-                                                    start: 431,
-                                                    end: 432,
+                                                    start: 434,
+                                                    end: 435,
                                                 },
                                             },
                                         ),
@@ -779,8 +779,8 @@ Program {
                                 },
                             },
                             span: Span {
-                                start: 429,
-                                end: 433,
+                                start: 432,
+                                end: 436,
                             },
                         },
                         op: Assign,
@@ -792,15 +792,15 @@ Program {
                                             Spanned {
                                                 value: "f",
                                                 span: Span {
-                                                    start: 436,
-                                                    end: 437,
+                                                    start: 439,
+                                                    end: 440,
                                                 },
                                             },
                                         ],
                                     },
                                     span: Span {
-                                        start: 436,
-                                        end: 437,
+                                        start: 439,
+                                        end: 440,
                                     },
                                 },
                                 args: [
@@ -810,38 +810,38 @@ Program {
                                                 Spanned {
                                                     value: "j",
                                                     span: Span {
-                                                        start: 438,
-                                                        end: 439,
+                                                        start: 441,
+                                                        end: 442,
                                                     },
                                                 },
                                             ],
                                         },
                                         span: Span {
-                                            start: 438,
-                                            end: 439,
+                                            start: 441,
+                                            end: 442,
                                         },
                                     },
                                 ],
                             },
                             span: Span {
-                                start: 436,
-                                end: 440,
+                                start: 439,
+                                end: 443,
                             },
                         },
                         span: Span {
-                            start: 429,
-                            end: 440,
+                            start: 432,
+                            end: 443,
                         },
                     },
                 ],
                 span: Span {
-                    start: 423,
-                    end: 443,
+                    start: 426,
+                    end: 446,
                 },
             },
             span: Span {
-                start: 405,
-                end: 443,
+                start: 408,
+                end: 446,
             },
         },
         Let {
@@ -849,8 +849,8 @@ Program {
                 Spanned {
                     value: "v",
                     span: Span {
-                        start: 448,
-                        end: 449,
+                        start: 451,
+                        end: 452,
                     },
                 },
             ),
@@ -866,8 +866,8 @@ Program {
                                 ),
                             ),
                             span: Span {
-                                start: 453,
-                                end: 454,
+                                start: 456,
+                                end: 457,
                             },
                         },
                         Expr {
@@ -877,8 +877,8 @@ Program {
                                 ),
                             ),
                             span: Span {
-                                start: 456,
-                                end: 457,
+                                start: 459,
+                                end: 460,
                             },
                         },
                         Expr {
@@ -888,20 +888,20 @@ Program {
                                 ),
                             ),
                             span: Span {
-                                start: 459,
-                                end: 460,
+                                start: 462,
+                                end: 463,
                             },
                         },
                     ],
                 ),
                 span: Span {
-                    start: 452,
-                    end: 461,
+                    start: 455,
+                    end: 464,
                 },
             },
             span: Span {
-                start: 444,
-                end: 461,
+                start: 447,
+                end: 464,
             },
         },
         Let {
@@ -909,8 +909,8 @@ Program {
                 Spanned {
                     value: "z",
                     span: Span {
-                        start: 467,
-                        end: 468,
+                        start: 470,
+                        end: 471,
                     },
                 },
             ),
@@ -924,15 +924,15 @@ Program {
                                 Spanned {
                                     value: "v",
                                     span: Span {
-                                        start: 471,
-                                        end: 472,
+                                        start: 474,
+                                        end: 475,
                                     },
                                 },
                             ],
                         },
                         span: Span {
-                            start: 471,
-                            end: 472,
+                            start: 474,
+                            end: 475,
                         },
                     },
                     index: Index {
@@ -946,8 +946,8 @@ Program {
                                             ),
                                         ),
                                         span: Span {
-                                            start: 473,
-                                            end: 474,
+                                            start: 476,
+                                            end: 477,
                                         },
                                     },
                                 ),
@@ -959,8 +959,8 @@ Program {
                                             ),
                                         ),
                                         span: Span {
-                                            start: 476,
-                                            end: 477,
+                                            start: 479,
+                                            end: 480,
                                         },
                                     },
                                 ),
@@ -969,13 +969,13 @@ Program {
                     },
                 },
                 span: Span {
-                    start: 471,
-                    end: 478,
+                    start: 474,
+                    end: 481,
                 },
             },
             span: Span {
-                start: 463,
-                end: 478,
+                start: 466,
+                end: 481,
             },
         },
         Let {
@@ -983,8 +983,8 @@ Program {
                 Spanned {
                     value: "w",
                     span: Span {
-                        start: 484,
-                        end: 485,
+                        start: 487,
+                        end: 488,
                     },
                 },
             ),
@@ -998,15 +998,15 @@ Program {
                                 Spanned {
                                     value: "M",
                                     span: Span {
-                                        start: 488,
-                                        end: 489,
+                                        start: 491,
+                                        end: 492,
                                     },
                                 },
                             ],
                         },
                         span: Span {
-                            start: 488,
-                            end: 489,
+                            start: 491,
+                            end: 492,
                         },
                     },
                     index: Index {
@@ -1023,8 +1023,8 @@ Program {
                                         ),
                                     ),
                                     span: Span {
-                                        start: 494,
-                                        end: 495,
+                                        start: 497,
+                                        end: 498,
                                     },
                                 },
                             ),
@@ -1032,13 +1032,13 @@ Program {
                     },
                 },
                 span: Span {
-                    start: 488,
-                    end: 496,
+                    start: 491,
+                    end: 499,
                 },
             },
             span: Span {
-                start: 480,
-                end: 496,
+                start: 483,
+                end: 499,
             },
         },
         Let {
@@ -1046,8 +1046,8 @@ Program {
                 Spanned {
                     value: "g",
                     span: Span {
-                        start: 502,
-                        end: 503,
+                        start: 505,
+                        end: 506,
                     },
                 },
             ),
@@ -1060,8 +1060,8 @@ Program {
                             name: Spanned {
                                 value: "x",
                                 span: Span {
-                                    start: 507,
-                                    end: 508,
+                                    start: 510,
+                                    end: 511,
                                 },
                             },
                             type_ann: None,
@@ -1071,8 +1071,8 @@ Program {
                             name: Spanned {
                                 value: "y",
                                 span: Span {
-                                    start: 510,
-                                    end: 511,
+                                    start: 513,
+                                    end: 514,
                                 },
                             },
                             type_ann: None,
@@ -1088,15 +1088,15 @@ Program {
                                         Spanned {
                                             value: "x",
                                             span: Span {
-                                                start: 513,
-                                                end: 514,
+                                                start: 516,
+                                                end: 517,
                                             },
                                         },
                                     ],
                                 },
                                 span: Span {
-                                    start: 513,
-                                    end: 514,
+                                    start: 516,
+                                    end: 517,
                                 },
                             },
                             rhs: Expr {
@@ -1105,32 +1105,32 @@ Program {
                                         Spanned {
                                             value: "y",
                                             span: Span {
-                                                start: 517,
-                                                end: 518,
+                                                start: 520,
+                                                end: 521,
                                             },
                                         },
                                     ],
                                 },
                                 span: Span {
-                                    start: 517,
-                                    end: 518,
+                                    start: 520,
+                                    end: 521,
                                 },
                             },
                         },
                         span: Span {
-                            start: 513,
-                            end: 518,
+                            start: 516,
+                            end: 521,
                         },
                     },
                 },
                 span: Span {
-                    start: 506,
-                    end: 518,
+                    start: 509,
+                    end: 521,
                 },
             },
             span: Span {
-                start: 498,
-                end: 518,
+                start: 501,
+                end: 521,
             },
         },
         Let {
@@ -1138,8 +1138,8 @@ Program {
                 Spanned {
                     value: "r",
                     span: Span {
-                        start: 524,
-                        end: 525,
+                        start: 527,
+                        end: 528,
                     },
                 },
             ),
@@ -1153,15 +1153,15 @@ Program {
                                 Spanned {
                                     value: "try_i32",
                                     span: Span {
-                                        start: 528,
-                                        end: 535,
+                                        start: 531,
+                                        end: 538,
                                     },
                                 },
                             ],
                         },
                         span: Span {
-                            start: 528,
-                            end: 535,
+                            start: 531,
+                            end: 538,
                         },
                     },
                     args: [
@@ -1172,20 +1172,20 @@ Program {
                                 ),
                             ),
                             span: Span {
-                                start: 536,
-                                end: 540,
+                                start: 539,
+                                end: 543,
                             },
                         },
                     ],
                 },
                 span: Span {
-                    start: 528,
-                    end: 541,
+                    start: 531,
+                    end: 544,
                 },
             },
             span: Span {
-                start: 520,
-                end: 541,
+                start: 523,
+                end: 544,
             },
         },
         Match {
@@ -1195,15 +1195,15 @@ Program {
                         Spanned {
                             value: "r",
                             span: Span {
-                                start: 549,
-                                end: 550,
+                                start: 552,
+                                end: 553,
                             },
                         },
                     ],
                 },
                 span: Span {
-                    start: 549,
-                    end: 550,
+                    start: 552,
+                    end: 553,
                 },
             },
             arms: [
@@ -1212,8 +1212,8 @@ Program {
                         name: Spanned {
                             value: "Ok",
                             span: Span {
-                                start: 557,
-                                end: 559,
+                                start: 560,
+                                end: 562,
                             },
                         },
                         args: [
@@ -1221,15 +1221,15 @@ Program {
                                 Spanned {
                                     value: "n",
                                     span: Span {
-                                        start: 560,
-                                        end: 561,
+                                        start: 563,
+                                        end: 564,
                                     },
                                 },
                             ),
                         ],
                         span: Span {
-                            start: 557,
-                            end: 562,
+                            start: 560,
+                            end: 565,
                         },
                     },
                     guard: None,
@@ -1241,15 +1241,15 @@ Program {
                                         Spanned {
                                             value: "print",
                                             span: Span {
-                                                start: 566,
-                                                end: 571,
+                                                start: 569,
+                                                end: 574,
                                             },
                                         },
                                     ],
                                 },
                                 span: Span {
-                                    start: 566,
-                                    end: 571,
+                                    start: 569,
+                                    end: 574,
                                 },
                             },
                             args: [
@@ -1260,8 +1260,8 @@ Program {
                                         ),
                                     ),
                                     span: Span {
-                                        start: 572,
-                                        end: 580,
+                                        start: 575,
+                                        end: 583,
                                     },
                                 },
                                 Expr {
@@ -1270,22 +1270,22 @@ Program {
                                             Spanned {
                                                 value: "n",
                                                 span: Span {
-                                                    start: 582,
-                                                    end: 583,
+                                                    start: 585,
+                                                    end: 586,
                                                 },
                                             },
                                         ],
                                     },
                                     span: Span {
-                                        start: 582,
-                                        end: 583,
+                                        start: 585,
+                                        end: 586,
                                     },
                                 },
                             ],
                         },
                         span: Span {
-                            start: 566,
-                            end: 584,
+                            start: 569,
+                            end: 587,
                         },
                     },
                 },
@@ -1294,8 +1294,8 @@ Program {
                         name: Spanned {
                             value: "Err",
                             span: Span {
-                                start: 590,
-                                end: 593,
+                                start: 593,
+                                end: 596,
                             },
                         },
                         args: [
@@ -1303,15 +1303,15 @@ Program {
                                 Spanned {
                                     value: "e",
                                     span: Span {
-                                        start: 594,
-                                        end: 595,
+                                        start: 597,
+                                        end: 598,
                                     },
                                 },
                             ),
                         ],
                         span: Span {
-                            start: 590,
-                            end: 596,
+                            start: 593,
+                            end: 599,
                         },
                     },
                     guard: None,
@@ -1323,15 +1323,15 @@ Program {
                                         Spanned {
                                             value: "print",
                                             span: Span {
-                                                start: 600,
-                                                end: 605,
+                                                start: 603,
+                                                end: 608,
                                             },
                                         },
                                     ],
                                 },
                                 span: Span {
-                                    start: 600,
-                                    end: 605,
+                                    start: 603,
+                                    end: 608,
                                 },
                             },
                             args: [
@@ -1342,8 +1342,8 @@ Program {
                                         ),
                                     ),
                                     span: Span {
-                                        start: 606,
-                                        end: 615,
+                                        start: 609,
+                                        end: 618,
                                     },
                                 },
                                 Expr {
@@ -1352,134 +1352,29 @@ Program {
                                             Spanned {
                                                 value: "e",
                                                 span: Span {
-                                                    start: 617,
-                                                    end: 618,
+                                                    start: 620,
+                                                    end: 621,
                                                 },
                                             },
                                         ],
                                     },
                                     span: Span {
-                                        start: 617,
-                                        end: 618,
+                                        start: 620,
+                                        end: 621,
                                     },
                                 },
                             ],
                         },
                         span: Span {
-                            start: 600,
-                            end: 619,
+                            start: 603,
+                            end: 622,
                         },
                     },
                 },
             ],
             span: Span {
-                start: 543,
-                end: 621,
-            },
-        },
-        Let {
-            pat: Binding(
-                Spanned {
-                    value: "piped",
-                    span: Span {
-                        start: 626,
-                        end: 631,
-                    },
-                },
-            ),
-            mut_: false,
-            type_ann: None,
-            value: Expr {
-                kind: Pipeline {
-                    lhs: Expr {
-                        kind: Pipeline {
-                            lhs: Expr {
-                                kind: Path {
-                                    segments: [
-                                        Spanned {
-                                            value: "a",
-                                            span: Span {
-                                                start: 634,
-                                                end: 635,
-                                            },
-                                        },
-                                    ],
-                                },
-                                span: Span {
-                                    start: 634,
-                                    end: 635,
-                                },
-                            },
-                            rhs: Expr {
-                                kind: Path {
-                                    segments: [
-                                        Spanned {
-                                            value: "try_f64",
-                                            span: Span {
-                                                start: 639,
-                                                end: 646,
-                                            },
-                                        },
-                                    ],
-                                },
-                                span: Span {
-                                    start: 639,
-                                    end: 646,
-                                },
-                            },
-                        },
-                        span: Span {
-                            start: 634,
-                            end: 646,
-                        },
-                    },
-                    rhs: Expr {
-                        kind: Call {
-                            callee: Expr {
-                                kind: Path {
-                                    segments: [
-                                        Spanned {
-                                            value: "unwrap_or",
-                                            span: Span {
-                                                start: 650,
-                                                end: 659,
-                                            },
-                                        },
-                                    ],
-                                },
-                                span: Span {
-                                    start: 650,
-                                    end: 659,
-                                },
-                            },
-                            args: [
-                                Expr {
-                                    kind: Literal(
-                                        Float(
-                                            "0.0",
-                                        ),
-                                    ),
-                                    span: Span {
-                                        start: 660,
-                                        end: 663,
-                                    },
-                                },
-                            ],
-                        },
-                        span: Span {
-                            start: 650,
-                            end: 664,
-                        },
-                    },
-                },
-                span: Span {
-                    start: 634,
-                    end: 664,
-                },
-            },
-            span: Span {
-                start: 622,
-                end: 664,
+                start: 546,
+                end: 624,
             },
         },
         While {
@@ -1489,15 +1384,15 @@ Program {
                         Spanned {
                             value: "cond",
                             span: Span {
-                                start: 672,
-                                end: 676,
+                                start: 631,
+                                end: 635,
                             },
                         },
                     ],
                 },
                 span: Span {
-                    start: 672,
-                    end: 676,
+                    start: 631,
+                    end: 635,
                 },
             },
             body: Block {
@@ -1511,15 +1406,15 @@ Program {
                                             Spanned {
                                                 value: "print",
                                                 span: Span {
-                                                    start: 683,
-                                                    end: 688,
+                                                    start: 642,
+                                                    end: 647,
                                                 },
                                             },
                                         ],
                                     },
                                     span: Span {
-                                        start: 683,
-                                        end: 688,
+                                        start: 642,
+                                        end: 647,
                                     },
                                 },
                                 args: [
@@ -1529,34 +1424,34 @@ Program {
                                                 Spanned {
                                                     value: "cond",
                                                     span: Span {
-                                                        start: 689,
-                                                        end: 693,
+                                                        start: 648,
+                                                        end: 652,
                                                     },
                                                 },
                                             ],
                                         },
                                         span: Span {
-                                            start: 689,
-                                            end: 693,
+                                            start: 648,
+                                            end: 652,
                                         },
                                     },
                                 ],
                             },
                             span: Span {
-                                start: 683,
-                                end: 694,
+                                start: 642,
+                                end: 653,
                             },
                         },
                     ),
                 ],
                 span: Span {
-                    start: 677,
-                    end: 697,
+                    start: 636,
+                    end: 656,
                 },
             },
             span: Span {
-                start: 666,
-                end: 697,
+                start: 625,
+                end: 656,
             },
         },
         Let {
@@ -1564,8 +1459,8 @@ Program {
                 Spanned {
                     value: "m",
                     span: Span {
-                        start: 702,
-                        end: 703,
+                        start: 661,
+                        end: 662,
                     },
                 },
             ),
@@ -1581,8 +1476,8 @@ Program {
                             ),
                         ),
                         span: Span {
-                            start: 706,
-                            end: 707,
+                            start: 665,
+                            end: 666,
                         },
                     },
                     rhs: Expr {
@@ -1595,8 +1490,8 @@ Program {
                                     ),
                                 ),
                                 span: Span {
-                                    start: 708,
-                                    end: 709,
+                                    start: 667,
+                                    end: 668,
                                 },
                             },
                             rhs: Expr {
@@ -1606,25 +1501,25 @@ Program {
                                     ),
                                 ),
                                 span: Span {
-                                    start: 710,
-                                    end: 711,
+                                    start: 669,
+                                    end: 670,
                                 },
                             },
                         },
                         span: Span {
-                            start: 708,
-                            end: 711,
+                            start: 667,
+                            end: 670,
                         },
                     },
                 },
                 span: Span {
-                    start: 706,
-                    end: 711,
+                    start: 665,
+                    end: 670,
                 },
             },
             span: Span {
-                start: 698,
-                end: 711,
+                start: 657,
+                end: 670,
             },
         },
         Let {
@@ -1632,8 +1527,8 @@ Program {
                 Spanned {
                     value: "neg",
                     span: Span {
-                        start: 717,
-                        end: 720,
+                        start: 676,
+                        end: 679,
                     },
                 },
             ),
@@ -1651,15 +1546,15 @@ Program {
                                         Spanned {
                                             value: "x",
                                             span: Span {
-                                                start: 724,
-                                                end: 725,
+                                                start: 683,
+                                                end: 684,
                                             },
                                         },
                                     ],
                                 },
                                 span: Span {
-                                    start: 724,
-                                    end: 725,
+                                    start: 683,
+                                    end: 684,
                                 },
                             },
                             rhs: Expr {
@@ -1669,25 +1564,25 @@ Program {
                                     ),
                                 ),
                                 span: Span {
-                                    start: 726,
-                                    end: 727,
+                                    start: 685,
+                                    end: 686,
                                 },
                             },
                         },
                         span: Span {
-                            start: 724,
-                            end: 727,
+                            start: 683,
+                            end: 686,
                         },
                     },
                 },
                 span: Span {
-                    start: 723,
-                    end: 727,
+                    start: 682,
+                    end: 686,
                 },
             },
             span: Span {
-                start: 713,
-                end: 727,
+                start: 672,
+                end: 686,
             },
         },
         Let {
@@ -1695,8 +1590,8 @@ Program {
                 Spanned {
                     value: "at",
                     span: Span {
-                        start: 733,
-                        end: 735,
+                        start: 692,
+                        end: 694,
                     },
                 },
             ),
@@ -1711,15 +1606,15 @@ Program {
                                 Spanned {
                                     value: "A",
                                     span: Span {
-                                        start: 738,
-                                        end: 739,
+                                        start: 697,
+                                        end: 698,
                                     },
                                 },
                             ],
                         },
                         span: Span {
-                            start: 738,
-                            end: 739,
+                            start: 697,
+                            end: 698,
                         },
                     },
                     rhs: Expr {
@@ -1728,26 +1623,26 @@ Program {
                                 Spanned {
                                     value: "B",
                                     span: Span {
-                                        start: 742,
-                                        end: 743,
+                                        start: 701,
+                                        end: 702,
                                     },
                                 },
                             ],
                         },
                         span: Span {
-                            start: 742,
-                            end: 743,
+                            start: 701,
+                            end: 702,
                         },
                     },
                 },
                 span: Span {
-                    start: 738,
-                    end: 743,
+                    start: 697,
+                    end: 702,
                 },
             },
             span: Span {
-                start: 729,
-                end: 743,
+                start: 688,
+                end: 702,
             },
         },
         Let {
@@ -1755,8 +1650,8 @@ Program {
                 Spanned {
                     value: "bd",
                     span: Span {
-                        start: 749,
-                        end: 751,
+                        start: 708,
+                        end: 710,
                     },
                 },
             ),
@@ -1771,15 +1666,15 @@ Program {
                                 Spanned {
                                     value: "v",
                                     span: Span {
-                                        start: 754,
-                                        end: 755,
+                                        start: 713,
+                                        end: 714,
                                     },
                                 },
                             ],
                         },
                         span: Span {
-                            start: 754,
-                            end: 755,
+                            start: 713,
+                            end: 714,
                         },
                     },
                     rhs: Expr {
@@ -1788,26 +1683,26 @@ Program {
                                 Spanned {
                                     value: "f",
                                     span: Span {
-                                        start: 759,
-                                        end: 760,
+                                        start: 718,
+                                        end: 719,
                                     },
                                 },
                             ],
                         },
                         span: Span {
-                            start: 759,
-                            end: 760,
+                            start: 718,
+                            end: 719,
                         },
                     },
                 },
                 span: Span {
-                    start: 754,
-                    end: 760,
+                    start: 713,
+                    end: 719,
                 },
             },
             span: Span {
-                start: 745,
-                end: 760,
+                start: 704,
+                end: 719,
             },
         },
     ],

@@ -7,9 +7,9 @@ config {
     fraction := true
     undefined_handling := custom { 0/0 := 1, log(0) := -\infty }
 }
-import linalg as la
-from stats import mean, std
-from mymath import *
+import linalg as la;
+from stats import mean, std;
+from mymath import *;
 
 let f(x) = x^2 + 6;
 let mut count: Integer = 0;
@@ -37,7 +37,6 @@ match r {
     Ok(n) => print("ok: {}", n),
     Err(e) => print("err: {}", e)
 }
-let piped = a |> try_f64 |> unwrap_or(0.0);
 while cond {
     print(cond);
 }

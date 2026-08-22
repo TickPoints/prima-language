@@ -98,7 +98,7 @@ fn pub_mod_visible_within_module() {
 fn class_in_module_imported_and_called() {
     let dir = TempDir::new();
     dir.write("shapes.pra", "pub class Point {\n    pub x: Integer,\n    pub y: Integer,\n    pub fn new(x, y) -> Self { Point { x, y } }\n    pub fn sum(self) -> Integer { self.x + self.y }\n}\n");
-    let main = dir.write("main.pra", "import shapes\nlet p = shapes::Point::new(3, 4);\nprintln(p.sum());\nprintln(p.x);");
+    let main = dir.write("main.pra", "import shapes;\nlet p = shapes::Point::new(3, 4);\nprintln(p.sum());\nprintln(p.x);");
     let out = run_file(&main);
     assert_eq!(out, "7\n3\n");
 }
@@ -107,7 +107,7 @@ fn class_in_module_imported_and_called() {
 fn class_in_module_method_chain() {
     let dir = TempDir::new();
     dir.write("acc.pra", "pub class Acc {\n    pub total: Integer,\n    pub fn new() -> Self { Acc { total: 0 } }\n    pub fn add(self, n: Integer) -> Self { Acc { total: self.total + n } }\n}\n");
-    let main = dir.write("main.pra", "import acc\nlet s = acc::Acc::new().add(5).add(6);\nprintln(s.total);");
+    let main = dir.write("main.pra", "import acc;\nlet s = acc::Acc::new().add(5).add(6);\nprintln(s.total);");
     assert_eq!(run_file(&main), "11\n");
 }
 

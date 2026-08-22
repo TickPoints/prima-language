@@ -28,12 +28,12 @@ fn collapse_return_type_satisfies_annotation() {
 
 #[test]
 fn numeric_promotion_allowed() {
-    assert!(check_src("let n: Integer = 7\nlet r: F64 = 1\nlet q: Rational = 1/2").is_empty());
+    assert!(check_src("let n: Integer = 7;\nlet r: F64 = 1;\nlet q: Rational = 1/2").is_empty());
 }
 
 #[test]
 fn collect_multiple_errors_in_order() {
-    let errs = check_src("let a: F64 = sqrt(2)\nlet b: String = 3\nlet c: Bool = 1");
+    let errs = check_src("let a: F64 = sqrt(2);\nlet b: String = 3;\nlet c: Bool = 1");
     assert_eq!(errs.len(), 3);
     assert!(errs[0].line <= errs[1].line && errs[1].line <= errs[2].line);
 }

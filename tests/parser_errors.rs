@@ -8,13 +8,13 @@ fn duplicate_config_rejected() {
 
 #[test]
 fn config_after_import_rejected() {
-    let errs = parse("import foo\nconfig {}").unwrap_err();
+    let errs = parse("import foo;\nconfig {}").unwrap_err();
     assert!(errs[0].message.contains("config"));
 }
 
 #[test]
 fn import_after_statement_rejected() {
-    let errs = parse("let x = 1\nimport foo").unwrap_err();
+    let errs = parse("let x = 1;\nimport foo").unwrap_err();
     assert!(errs[0].message.contains("import"));
 }
 

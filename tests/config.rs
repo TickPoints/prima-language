@@ -23,13 +23,13 @@ fn fraction_default_is_exact() {
 
 #[test]
 fn broadcast_disabled_rejects_implicit() {
-    let err = Evaluator::new().eval_value("config { broadcast := false }\nlet f(x) = x^2\nf([1, 2, 3])");
+    let err = Evaluator::new().eval_value("config { broadcast := false }\nlet f(x) = x^2;\nf([1, 2, 3])");
     assert!(err.is_err(), "implicit broadcast should error when disabled");
 }
 
 #[test]
 fn broadcast_op_works_when_disabled() {
-    let v = eval("config { broadcast := false }\nlet f(x) = x^2\nlet v = [1, 2, 3]\nv @. f");
+    let v = eval("config { broadcast := false }\nlet f(x) = x^2;\nlet v = [1, 2, 3];\nv @. f");
     assert_eq!(
         v,
         Value::Array(vec![

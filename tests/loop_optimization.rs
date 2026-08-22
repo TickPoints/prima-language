@@ -18,12 +18,12 @@ fn run_src(src: &str) -> String {
 
 #[test]
 fn sum_1_to_100_closed_form() {
-    assert_eq!(eval("let s = 0\nfor i in 1..100 { s += i }\ns"), prima_core::Value::Number(Number::from(5050)));
+    assert_eq!(eval("let s = 0;\nfor i in 1..100 { s += i }\ns"), prima_core::Value::Number(Number::from(5050)));
 }
 
 #[test]
 fn sum_0_to_n_closed_form() {
-    assert_eq!(eval("let s = 0\nfor i in 0..6 { s += i }\ns"), prima_core::Value::Number(Number::from(15)));
+    assert_eq!(eval("let s = 0;\nfor i in 0..6 { s += i }\ns"), prima_core::Value::Number(Number::from(15)));
 }
 
 #[test]
@@ -33,5 +33,5 @@ fn non_accumulating_body_not_optimized() {
 
 #[test]
 fn optimization_off_falls_back_to_loop() {
-    assert_eq!(eval("config { loop_optimization := false }\nlet s = 0\nfor i in 0..5 { s += i }\ns"), prima_core::Value::Number(Number::from(10)));
+    assert_eq!(eval("config { loop_optimization := false }\nlet s = 0;\nfor i in 0..5 { s += i }\ns"), prima_core::Value::Number(Number::from(10)));
 }

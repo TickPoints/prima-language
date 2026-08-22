@@ -1,4 +1,4 @@
-// Method chaining (spec §9.7, §4.5): the deprecated `|>` pipeline (W0002) is replaced by class methods.
+// Method chaining (spec §9.7, §4.5): the `|>` pipeline was removed in v2.3 (E0010) and is replaced by class methods.
 class Float {
     pub value: F64,
     pub fn new(v) -> Self { Float { value: v } }

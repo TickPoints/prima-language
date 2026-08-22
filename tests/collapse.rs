@@ -44,9 +44,9 @@ fn try_i32_returns_result() {
 }
 
 #[test]
-fn unwrap_or_via_pipeline() {
-    assert_eq!(eval("try_i32(1e20) |> unwrap_or(0)"), Value::Number(Number::from(0)));
-    assert_eq!(eval("try_i32(7) |> unwrap_or(0)"), Value::Number(Number::I32(7)));
+fn unwrap_or_direct_call() {
+    assert_eq!(eval("unwrap_or(try_i32(1e20), 0)"), Value::Number(Number::from(0)));
+    assert_eq!(eval("unwrap_or(try_i32(7), 0)"), Value::Number(Number::I32(7)));
 }
 
 #[test]

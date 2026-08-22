@@ -31,7 +31,7 @@ fn fn_with_if_else_return() {
 
 #[test]
 fn while_loop_updates_outer_variable() {
-    assert_eq!(run_src("let i = 0\nwhile i < 3 {\n    println(i)\n    i += 1\n}"), "0\n1\n2\n");
+    assert_eq!(run_src("let i = 0;\nwhile i < 3 {\n    println(i);\n    i += 1\n}"), "0\n1\n2\n");
 }
 
 #[test]
@@ -41,7 +41,7 @@ fn for_loop_with_step() {
 
 #[test]
 fn for_loop_accumulates_when_optimization_off() {
-    let v = eval("config { loop_optimization := false }\nlet s = 0\nfor i in 0..5 {\n    s += i\n}\ns");
+    let v = eval("config { loop_optimization := false }\nlet s = 0;\nfor i in 0..5 {\n    s += i\n}\ns");
     assert_eq!(v, prima_core::Value::Number(Number::from(10)));
 }
 
