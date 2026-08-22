@@ -11,9 +11,9 @@ use prima_core::render::{render_latex, render_number};
 use prima_core::simplify::simplify;
 use prima_core::{BuiltinSymbols, ExprData, ExprId, ExprPool, Number, Real, SymbolId, SymbolTable, Value, ValueKey};
 use prima_syntax::ast::{
-    Annotation, AssignOp, BinOp, Block, ClassMemberKind, CompKind, ComprehensionClause, ConfigBlock, Expr, ExprKind,
-    FieldValue, ImportItem, ImportKind, ImplOp, IndexItem, Literal, MatchArm, Param, Pattern, Program, Spanned, Stmt,
-    Type, UnOp, Visibility,
+    Annotation, AssignOp, BinOp, Block, ClassMemberKind, CompKind, ComprehensionClause, ConfigBlock, DocComment, Expr,
+    ExprKind, FStringPart, FieldValue, ImportItem, ImportKind, ImplOp, IndexItem, Literal, MatchArm, Param, Pattern,
+    Program, Spanned, Stmt, Type, UnOp, Visibility,
 };
 use prima_syntax::error::SyntaxError;
 use prima_syntax::{Span, SyntaxWarning};
@@ -197,7 +197,7 @@ impl Env {
             "unwrap",
             "unwrap_or",
             "expect",
-            "format",
+            // `format` was removed in v2.2 (spec §18.1): it is not pre-imported and not a builtin.
             "to_string",
             "concat",
             "len",
@@ -602,8 +602,8 @@ impl Evaluator {
                 items.insert(name.value.clone(), NamespaceItem::Val(v));
                 Ok(())
             }
-            Stmt::ClassDef { name, members, .. } => {
-                let def = self.build_class_def(name, members, env);
+            Stmt::ClassDef { name, members, docs, .. } => {
+                let def = self.build_class_def(name, members, docs.as_ref(), env);
                 self.register_class(def.clone());
                 items.insert(def.name.clone(), NamespaceItem::Class(def));
                 Ok(())
@@ -948,8 +948,8 @@ impl Evaluator {
                     Ok(Flow::Continue)
                 }
             }
-            Stmt::ClassDef { name, members, .. } => {
-                let def = self.build_class_def(name, members, env);
+            Stmt::ClassDef { name, members, docs, .. } => {
+                let def = self.build_class_def(name, members, docs.as_ref(), env);
                 self.register_class(def);
                 Ok(Flow::Continue)
             }
@@ -964,6 +964,7 @@ impl Evaluator {
                                 body: Some(body.clone()),
                                 vis: Visibility::Public,
                                 env: Rc::clone(env),
+                                docs: None,
                             };
                             self.overloads.insert(overload_key(&target.value, *op), def);
                         }
@@ -975,6 +976,7 @@ impl Evaluator {
                                 body: Some(block),
                                 vis: Visibility::Public,
                                 env: Rc::clone(env),
+                                docs: None,
                             };
                             self.overloads.insert(overload_key(&target.value, *op), def);
                         }
@@ -1464,6 +1466,7 @@ impl Evaluator {
     fn eval_expr_inner(&mut self, env: &EnvRef, expr: &Expr) -> Result<Value, RuntimeError> {
         match &expr.kind {
             ExprKind::Literal(lit) => self.eval_literal(env, lit),
+            ExprKind::FString(parts) => self.eval_fstring(env, parts),
             ExprKind::Symbol(s) => Ok(Value::Expr(self.pool.symbol(self.symbols.intern(&s.value)))),
             ExprKind::Path { segments } => {
                 if segments.len() == 1 {
@@ -1703,7 +1706,7 @@ impl Evaluator {
                 let f = s.parse::<f64>().map_err(|_| RuntimeError::Message("invalid float literal".into()))?;
                 Ok(Value::Number(Number::from(f)))
             }
-            Literal::Str(s) => Ok(Value::String(s.clone())),
+            Literal::String { value, .. } => Ok(Value::String(value.clone())),
             Literal::Char(c) => Ok(Value::Char(*c)),
             Literal::Bool(b) => Ok(Value::Bool(*b)),
             Literal::Tex(s) => {
@@ -1712,6 +1715,24 @@ impl Evaluator {
                 self.eval_expr(env, &tex_ast)
             }
         }
+    }
+
+    /// f-string evaluation (spec §18.1): literal parts concatenate verbatim; each `{expr}`
+    /// interpolation evaluates the expression, renders it with the active `print_format` (default
+    /// LaTeX), and applies the optional `:spec` refinement (float precision, width/alignment).
+    fn eval_fstring(&mut self, env: &EnvRef, parts: &[FStringPart]) -> Result<Value, RuntimeError> {
+        let mut out = String::new();
+        for p in parts {
+            match p {
+                FStringPart::Literal(s) => out.push_str(s),
+                FStringPart::Interp { expr, spec } => {
+                    let v = self.eval_expr(env, expr)?;
+                    let rendered = self.format_value(&v);
+                    out.push_str(&apply_spec(&v, &rendered, spec.as_deref()));
+                }
+            }
+        }
+        Ok(Value::String(out))
     }
 
     /// `Undefined` strictness (spec §6.2): it must not participate in any operation; any input errors immediately (no propagation).
@@ -2476,30 +2497,52 @@ impl Evaluator {
 
     /// Call an associated function `T::name(args)` (spec §4.5): a method with no `self` parameter.
     fn call_associated(&mut self, def: &ClassDef, method_name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
-        let method = def.methods.get(method_name).cloned().ok_or_else(|| {
-            RuntimeError::Message(format!("unknown associated function `{}::{}`", def.name, method_name))
-        })?;
+        let method = match def.methods.get(method_name) {
+            Some(m) => m.clone(),
+            None => {
+                let err = RuntimeError::Message(format!("unknown associated function `{}::{}`", def.name, method_name));
+                // Attach a `did you mean` help and a doc note from the nearest candidate (spec §16.4).
+                let mut notes = Vec::new();
+                let mut help = None;
+                if let Some(cand) = did_you_mean(method_name, def.methods.keys().map(|k| k.as_str())) {
+                    if cand != method_name {
+                        help = Some(format!("did you mean `{cand}`?"));
+                    }
+                    if let Some(m) = def.methods.get(&cand) {
+                        notes.extend(method_note(&cand, m));
+                    }
+                }
+                return Err(with_notes(err, notes, help));
+            }
+        };
+        let note = |e: RuntimeError| with_notes(e, method_note(method_name, &method), None);
         if method.params.iter().any(|p| p.is_self) {
-            return crate::error::err(format!("`{}::{}` is a method; call it on an instance", def.name, method_name));
+            return Err(note(RuntimeError::Message(format!(
+                "`{}::{}` is a method; call it on an instance",
+                def.name, method_name
+            ))));
         }
         if method.body.is_none() {
-            return crate::error::err(format!("`{}::{}` is an unregistered `@builtin` method", def.name, method_name));
+            return Err(note(RuntimeError::Message(format!(
+                "`{}::{}` is an unregistered `@builtin` method",
+                def.name, method_name
+            ))));
         }
         let body = method.body.as_ref().expect("body checked above");
         if args.len() != method.params.len() {
-            return crate::error::err(format!(
+            return Err(note(RuntimeError::Message(format!(
                 "`{}::{}` expects {} arguments, got {}",
                 def.name,
                 method_name,
                 method.params.len(),
                 args.len()
-            ));
+            ))));
         }
         let call_env = Env::child(&method.env);
         for (p, a) in method.params.iter().zip(args) {
             call_env.borrow_mut().set_value(&p.name.value, a);
         }
-        self.eval_block_tail(&call_env, body)
+        self.eval_block_tail(&call_env, body).map_err(note)
     }
 
     /// Evaluate a method call `obj.method(args)` (spec §4.5), including the builtin `String` methods (spec §18.1).
@@ -2517,27 +2560,58 @@ impl Evaluator {
                 let def = self.class_defs.get(&inst.class).cloned().ok_or_else(|| {
                     RuntimeError::Message(format!("unknown class `{}`", inst.class))
                 })?;
-                let method = def.methods.get(&name.value).cloned().ok_or_else(|| {
-                    RuntimeError::Message(format!("unknown method `{}` on `{}`", name.value, def.name))
-                })?;
+                let method = match def.methods.get(&name.value) {
+                    Some(m) => m.clone(),
+                    None => {
+                        // Unknown method: attach a `did you mean` help and a doc note from the
+                        // nearest candidate method (spec §16.4).
+                        let err = RuntimeError::Message(format!("unknown method `{}` on `{}`", name.value, def.name));
+                        let mut notes = Vec::new();
+                        let mut help = None;
+                        if let Some(cand) = did_you_mean(&name.value, def.methods.keys().map(|k| k.as_str())) {
+                            if cand != name.value {
+                                help = Some(format!("did you mean `{cand}`?"));
+                            }
+                            if let Some(m) = def.methods.get(&cand) {
+                                notes.extend(method_note(&cand, m));
+                            }
+                        }
+                        return Err(with_notes(err, notes, help));
+                    }
+                };
                 if method.vis == Visibility::Private && !self.in_method_of(&def.name) {
-                    return crate::error::err(format!("private method `{}` cannot be called", name.value));
+                    return Err(with_notes(
+                        RuntimeError::Message(format!("private method `{}` cannot be called", name.value)),
+                        method_note(&name.value, &method),
+                        None,
+                    ));
                 }
                 if method.vis == Visibility::Module && self.current_module != def.module {
-                    return crate::error::err(format!(
-                        "method `{}` of `{}` is `pub(mod)` and not accessible from this module",
-                        name.value, def.name
+                    return Err(with_notes(
+                        RuntimeError::Message(format!(
+                            "method `{}` of `{}` is `pub(mod)` and not accessible from this module",
+                            name.value, def.name
+                        )),
+                        method_note(&name.value, &method),
+                        None,
                     ));
                 }
                 if !method.params.first().map(|p| p.is_self).unwrap_or(false) {
-                    return crate::error::err(format!(
-                        "`{}` on `{}` is an associated function; call it as `{}::{}(...)`",
-                        name.value, def.name, def.name, name.value
+                    return Err(with_notes(
+                        RuntimeError::Message(format!(
+                            "`{}` on `{}` is an associated function; call it as `{}::{}(...)`",
+                            name.value, def.name, def.name, name.value
+                        )),
+                        method_note(&name.value, &method),
+                        None,
                     ));
                 }
                 self.call_method(&method, Value::Class(id), arg_values)
+                    .map_err(|e| with_notes(e, method_note(&name.value, &method), None))
             }
-            Value::String(s) => self.call_string_method(&s, &name.value, arg_values),
+            Value::String(s) => self
+                .call_string_method(&s, &name.value, arg_values)
+                .map_err(|e| native_method_error("String", &name.value, e)),
             Value::Number(_) => {
                 // Numeric method syntax (spec §9): `x.to_f64()`, `x.rounded(3)` etc. dispatch to the collapse family.
                 let collapse_name = numeric_method_name(&name.value);
@@ -2548,21 +2622,30 @@ impl Evaluator {
             }
             Value::Array(a) => {
                 if is_mutating_array_method(&name.value) {
-                    return self.mutate_array(env, receiver, &name.value, arg_values);
+                    self.mutate_array(env, receiver, &name.value, arg_values)
+                        .map_err(|e| native_method_error("Array", &name.value, e))
+                } else {
+                    self.call_array_method(&a, &name.value, arg_values)
+                        .map_err(|e| native_method_error("Array", &name.value, e))
                 }
-                self.call_array_method(&a, &name.value, arg_values)
             }
             Value::Dict(d) => {
                 if is_mutating_dict_method(&name.value) {
-                    return self.mutate_dict(env, receiver, &name.value, arg_values);
+                    self.mutate_dict(env, receiver, &name.value, arg_values)
+                        .map_err(|e| native_method_error("Dict", &name.value, e))
+                } else {
+                    self.call_dict_method(&d, &name.value, arg_values)
+                        .map_err(|e| native_method_error("Dict", &name.value, e))
                 }
-                self.call_dict_method(&d, &name.value, arg_values)
             }
             Value::Set(s) => {
                 if is_mutating_set_method(&name.value) {
-                    return self.mutate_set(env, receiver, &name.value, arg_values);
+                    self.mutate_set(env, receiver, &name.value, arg_values)
+                        .map_err(|e| native_method_error("Set", &name.value, e))
+                } else {
+                    self.call_set_method(&s, &name.value, arg_values)
+                        .map_err(|e| native_method_error("Set", &name.value, e))
                 }
-                self.call_set_method(&s, &name.value, arg_values)
             }
             Value::Option(_) | Value::Result(_)
                 if matches!(name.value.as_str(), "unwrap" | "unwrap_or" | "expect") =>
@@ -2714,12 +2797,19 @@ impl Evaluator {
     }
 
     /// Build a `ClassDef` from a class statement (spec §4.5): fields and methods.
-    fn build_class_def(&mut self, name: &Spanned<String>, members: &[prima_syntax::ast::ClassMember], env: &EnvRef) -> ClassDef {
+    fn build_class_def(
+        &mut self,
+        name: &Spanned<String>,
+        members: &[prima_syntax::ast::ClassMember],
+        docs: Option<&DocComment>,
+        env: &EnvRef,
+    ) -> ClassDef {
         let mut def = ClassDef {
             name: name.value.clone(),
             module: self.current_module.clone(),
             fields: HashMap::new(),
             methods: HashMap::new(),
+            docs: docs.cloned(),
         };
         for m in members {
             match &m.kind {
@@ -2735,6 +2825,7 @@ impl Evaluator {
                             body: body.clone(),
                             vis: m.vis,
                             env: Rc::clone(env),
+                            docs: m.docs.clone(),
                         },
                     );
                 }
@@ -4484,6 +4575,184 @@ fn value_type_name(v: &Value) -> String {
     }
 }
 
+/// Source-level name of a type for diagnostic signatures (spec §16.4); `Type::User` carries its text.
+fn render_ty(t: &Type) -> String {
+    match t {
+        Type::Number => "Number".into(),
+        Type::Integer => "Integer".into(),
+        Type::Rational => "Rational".into(),
+        Type::F64 => "F64".into(),
+        Type::F32 => "F32".into(),
+        Type::I8 => "I8".into(),
+        Type::I16 => "I16".into(),
+        Type::I32 => "I32".into(),
+        Type::I64 => "I64".into(),
+        Type::I128 => "I128".into(),
+        Type::U8 => "U8".into(),
+        Type::U16 => "U16".into(),
+        Type::U32 => "U32".into(),
+        Type::U64 => "U64".into(),
+        Type::U128 => "U128".into(),
+        Type::Isize => "Isize".into(),
+        Type::Usize => "Usize".into(),
+        Type::Complex => "Complex".into(),
+        Type::Expr => "Expr".into(),
+        Type::Symbol => "Symbol".into(),
+        Type::Bool => "Bool".into(),
+        Type::String => "String".into(),
+        Type::Char => "Char".into(),
+        Type::Array(inner) => format!("Array<{}>", render_ty(inner)),
+        Type::Matrix(inner) => format!("Matrix<{}>", render_ty(inner)),
+        Type::Tuple(ts) => format!("Tuple<{}>", ts.iter().map(render_ty).collect::<Vec<_>>().join(", ")),
+        Type::Option(inner) => format!("Option<{}>", render_ty(inner)),
+        Type::Result(a, b) => format!("Result<{}, {}>", render_ty(a), render_ty(b)),
+        Type::Fn { params, ret } => format!(
+            "Fn({}) -> {}",
+            params.iter().map(render_ty).collect::<Vec<_>>().join(", "),
+            render_ty(ret)
+        ),
+        Type::MFn { params, ret } => format!(
+            "MFn({}) -> {}",
+            params.iter().map(render_ty).collect::<Vec<_>>().join(", "),
+            render_ty(ret)
+        ),
+        Type::SelfType => "Self".into(),
+        Type::User(sp) => sp.value.clone(),
+    }
+}
+
+/// Render a method signature as `name(self, args) -> Ret` for diagnostic notes (spec §16.4),
+/// omitting the `-> Ret` suffix when the method has no return type.
+fn method_signature(name: &str, m: &MethodDef) -> String {
+    let params = m
+        .params
+        .iter()
+        .map(|p| {
+            if p.is_self {
+                "self".to_string()
+            } else {
+                match &p.type_ann {
+                    Some(t) => format!("{}: {}", p.name.value, render_ty(t)),
+                    None => p.name.value.clone(),
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    match &m.ret {
+        Some(t) => format!("{name}({params}) -> {}", render_ty(t)),
+        None => format!("{name}({params})"),
+    }
+}
+
+/// A diagnostic note for a runtime `MethodDef` (spec §16.4): `method \`<sig>\`` plus the `///` doc
+/// text when present. Only emitted when the method carries a doc comment — the runtime class model
+/// records no definition location, so the `defined at` suffix is omitted here (registry/native docs
+/// carry theirs; see [`native_method_error`]).
+fn method_note(name: &str, m: &MethodDef) -> Option<String> {
+    let docs = m.docs.as_ref()?;
+    let mut note = format!("method `{}`", method_signature(name, m));
+    let text = docs.text();
+    if !text.is_empty() {
+        note.push_str(&format!("\n{text}"));
+    }
+    Some(note)
+}
+
+/// A diagnostic note for a registry `MethodDoc` (spec §16.4): `method \`<sig>\` defined at <loc>`
+/// plus the doc text when present.
+fn method_doc_note(doc: &crate::docs::MethodDoc) -> String {
+    let mut note = format!("method `{}` defined at {}", doc.sig, doc.defined_at);
+    if let Some(text) = &doc.doc
+        && !text.is_empty()
+    {
+        note.push_str(&format!("\n{text}"));
+    }
+    note
+}
+
+/// Attach diagnostic notes/help to an error, or return it unchanged when there is nothing to add.
+fn with_notes(error: RuntimeError, notes: impl IntoIterator<Item = String>, help: Option<String>) -> RuntimeError {
+    let notes: Vec<String> = notes.into_iter().collect();
+    if notes.is_empty() && help.is_none() {
+        error
+    } else {
+        RuntimeError::WithNotes { notes, help, error: Box::new(error) }
+    }
+}
+
+/// Wrap a failed native-method call (`String`/`Array`/`Dict`/`Set`, spec §18.1/§11.3/§11.6) with a
+/// doc note from the process-global registry (spec §16.4). A known method uses its own doc; an
+/// unknown method falls back to the class-level doc plus a `did you mean` from the documented
+/// methods. The registry is seeded by `prima-stdlib` at startup and empty in runtime unit tests.
+fn native_method_error(class: &str, name: &str, err: RuntimeError) -> RuntimeError {
+    let mut notes = Vec::new();
+    let mut help = None;
+    if let Some(doc) = crate::docs::get_doc(&format!("{class}::{name}")) {
+        // Known method: attach its own definition + doc (spec §16.4).
+        notes.push(method_doc_note(&doc));
+    } else if let Some(cand) = did_you_mean(name, crate::docs::class_methods(class).iter().map(|d| d.name.as_str()))
+        && cand != name
+    {
+        // Unknown method: point at the nearest documented method (its sig + doc) and suggest it.
+        help = Some(format!("did you mean `{cand}`?"));
+        if let Some(doc) = crate::docs::get_doc(&format!("{class}::{cand}")) {
+            notes.push(method_doc_note(&doc));
+        } else if let Some(doc) = crate::docs::get_doc(class) {
+            notes.push(method_doc_note(&doc));
+        }
+    } else if let Some(doc) = crate::docs::get_doc(class) {
+        notes.push(method_doc_note(&doc));
+    }
+    with_notes(err, notes, help)
+}
+
+/// Best `did you mean` candidate among `candidates` for `attempted` (spec §16.4): the closest name
+/// by Levenshtein distance when it is within 2, else any name sharing a non-empty prefix with the
+/// attempted one. `None` when no plausible candidate exists.
+fn did_you_mean<'a>(attempted: &str, candidates: impl Iterator<Item = &'a str>) -> Option<String> {
+    let mut best: Option<(usize, &str)> = None;
+    let mut prefixed: Option<&str> = None;
+    for c in candidates {
+        if c == attempted {
+            continue;
+        }
+        let d = levenshtein(attempted, c);
+        if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+            best = Some((d, c));
+        }
+        if common_prefix_len(attempted, c) > 0 && prefixed.is_none() {
+            prefixed = Some(c);
+        }
+    }
+    match best {
+        Some((d, c)) if d <= 2 => Some(c.to_string()),
+        Some((_, c)) if common_prefix_len(attempted, c) > 0 => Some(c.to_string()),
+        _ => prefixed.map(str::to_string),
+    }
+}
+
+/// Number of leading characters the two strings share.
+fn common_prefix_len(a: &str, b: &str) -> usize {
+    a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count()
+}
+
+/// Classic dynamic-programming Levenshtein edit distance.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + usize::from(ca != cb));
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
 /// Arity guard for builtin functions (spec §16): wrong argument counts are `Message` errors.
 fn check_arity(name: &str, args: &[Value], n: usize) -> Result<(), RuntimeError> {
     if args.len() == n {
@@ -4579,6 +4848,94 @@ fn numeric_method_name(name: &str) -> String {
     }
 }
 
+/// Apply an f-string `:spec` refinement (spec §18.1): a `.N` precision formats float values to N
+/// decimal places; `[[fill]align][width]` pads/aligns the rendered text (Python `format`
+/// mini-language subset, with the leading-`0` zero-pad flag). Unknown or non-numeric forms are
+/// left untouched rather than breaking the interpolation.
+fn apply_spec(v: &Value, text: &str, spec: Option<&str>) -> String {
+    let Some(spec) = spec else { return text.to_owned() };
+    let spec: Vec<char> = spec.trim().chars().collect();
+    if spec.is_empty() {
+        return text.to_owned();
+    }
+    let mut i = 0;
+    let mut fill = ' ';
+    let mut align = None;
+    if let Some(&c) = spec.first() {
+        if matches!(c, '<' | '>' | '^') {
+            align = Some(c);
+            i = 1;
+        } else if let Some(&a) = spec.get(1)
+            && matches!(a, '<' | '>' | '^')
+        {
+            fill = c;
+            align = Some(a);
+            i = 2;
+        }
+    }
+    if spec.get(i) == Some(&'0') {
+        fill = '0';
+        i += 1;
+    }
+    let mut width = 0usize;
+    while let Some(&c) = spec.get(i) {
+        if c.is_ascii_digit() {
+            width = width * 10 + (c as usize - b'0' as usize);
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    let mut precision = None;
+    if spec.get(i) == Some(&'.') {
+        i += 1;
+        let mut p = 0usize;
+        let mut any = false;
+        while let Some(&c) = spec.get(i) {
+            if c.is_ascii_digit() {
+                p = p * 10 + (c as usize - b'0' as usize);
+                any = true;
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        if any {
+            precision = Some(p);
+        }
+    }
+    let mut body = text.to_owned();
+    if let Some(p) = precision
+        && let Value::Number(n) = v
+    {
+        match n {
+            Number::Real(Real::F64(f)) => body = format!("{f:.p$}"),
+            Number::Real(Real::F32(f)) => body = format!("{f:.p$}"),
+            _ => {}
+        }
+    }
+    if body.len() >= width {
+        return body;
+    }
+    let pad = width - body.len();
+    let fill = fill.to_string();
+    // Python `format` default alignment: right for numbers (and zero-padding implies right),
+    // left otherwise.
+    let is_number = matches!(v, Value::Number(_));
+    let align = align
+        .or(if fill == "0" || is_number { Some('>') } else { None })
+        .unwrap_or('<');
+    match align {
+        '>' => format!("{}{}", fill.repeat(pad), body),
+        '^' => {
+            let left = pad / 2;
+            let right = pad - left;
+            format!("{}{}{}", fill.repeat(left), body, fill.repeat(right))
+        }
+        _ => format!("{body}{}", fill.repeat(pad)),
+    }
+}
+
 fn is_zero_literal(e: &Expr) -> bool {
     matches!(&e.kind, ExprKind::Literal(Literal::Integer(s)) if s == "0")
 }
@@ -4587,7 +4944,7 @@ fn literal_value(e: &Expr) -> Option<Value> {
     match &e.kind {
         ExprKind::Literal(Literal::Integer(s)) => s.parse::<BigInt>().ok().map(Number::Integer).map(Value::Number),
         ExprKind::Literal(Literal::Bool(b)) => Some(Value::Bool(*b)),
-        ExprKind::Literal(Literal::Str(s)) => Some(Value::String(s.clone())),
+        ExprKind::Literal(Literal::String { value, .. }) => Some(Value::String(value.clone())),
         ExprKind::Unary { op: UnOp::Neg, operand } => literal_value(operand).map(|v| match v {
             Value::Number(n) => Value::Number(-n),
             other => other,
@@ -4703,6 +5060,74 @@ mod tests {
     fn private_fields_are_not_accessible_from_outside() {
         let src = "class C {\n    secret: Integer,\n    pub fn new(s) -> Self { C { secret: s } }\n}\nlet c = C::new(1);\nc.secret";
         assert!(Evaluator::new().eval_value(src).is_err());
+    }
+
+    #[test]
+    fn missing_method_attaches_doc_note_and_did_you_mean() {
+        let src = "\
+class Greeter {
+    pub name: String,
+    /// Shout a greeting.
+    pub fn greet(self) -> String { \"hello\" }
+}
+let g = Greeter { name: \"x\" };
+g.greets()";
+        let err = Evaluator::new().eval_value(src).expect_err("expected an unknown-method error");
+        assert!(err.to_string().contains("unknown method `greets`"), "unexpected error: {err}");
+        assert_eq!(err.help().as_deref(), Some("did you mean `greet`?"));
+        let notes = err.notes();
+        assert!(notes.iter().any(|n| n.contains("Shout a greeting.")), "notes: {notes:?}");
+        assert!(notes.iter().any(|n| n.contains("greet(self)")), "notes: {notes:?}");
+    }
+
+    #[test]
+    fn wrong_arity_on_documented_method_attaches_note() {
+        let src = "\
+class Greeter {
+    pub name: String,
+    /// Shout a greeting.
+    pub fn greet(self) -> String { \"hello\" }
+}
+let g = Greeter { name: \"x\" };
+g.greet(1)";
+        let err = Evaluator::new().eval_value(src).expect_err("expected an arity error");
+        assert!(err.to_string().contains("expects 0 arguments"), "unexpected error: {err}");
+        let notes = err.notes();
+        assert!(notes.iter().any(|n| n.contains("greet(self)")), "notes: {notes:?}");
+        assert!(notes.iter().any(|n| n.contains("Shout a greeting.")), "notes: {notes:?}");
+    }
+
+    #[test]
+    fn unknown_native_string_method_attaches_registry_note_and_help() {
+        // Seed the registry with the same values the embedded `core/string.pra` docs use, so the
+        // result is deterministic even if the `docs` module test registered the key first.
+        crate::docs::register_doc(
+            "String::to_upper",
+            crate::docs::MethodDoc {
+                name: "to_upper".into(),
+                sig: "to_upper(self) -> Self".into(),
+                doc: Some("Uppercase the string.".into()),
+                defined_at: "core/string.pra:4:5".into(),
+            },
+        );
+        crate::docs::register_doc(
+            "String",
+            crate::docs::MethodDoc {
+                name: "String".into(),
+                sig: "String".into(),
+                doc: None,
+                defined_at: "core/string.pra:1:1".into(),
+            },
+        );
+        let err = Evaluator::new()
+            .eval_value("let s = \"hi\";\ns.toupper()")
+            .expect_err("expected an unknown-method error");
+        assert!(err.to_string().contains("unknown `String` method `toupper`"), "unexpected error: {err}");
+        assert_eq!(err.help().as_deref(), Some("did you mean `to_upper`?"));
+        let notes = err.notes();
+        // The note points at the suggested method's definition (its doc, spec §16.4).
+        assert!(notes.iter().any(|n| n.contains("core/string.pra:4:5")), "notes: {notes:?}");
+        assert!(notes.iter().any(|n| n.contains("Uppercase the string.")), "notes: {notes:?}");
     }
 
     #[test]

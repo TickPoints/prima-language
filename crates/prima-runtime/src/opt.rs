@@ -95,7 +95,7 @@ fn is_pure_builtin(name: &str) -> bool {
         name,
         "sqrt" | "exp" | "log" | "ln" | "sin" | "cos" | "tan" | "abs" | "simplify"
             | "derivative" | "partial" | "grad" | "limit" | "len" | "sum" | "min" | "max"
-            | "concat" | "format" | "to_string"
+            | "concat" | "to_string"
     )
 }
 

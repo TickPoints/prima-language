@@ -20,6 +20,11 @@ pub enum RuntimeError {
     /// so diagnostics can point at the offending location (spec §16.4).
     #[error("{error}")]
     Located { span: prima_syntax::Span, error: Box<RuntimeError> },
+    /// Wraps an error with diagnostic notes (spec §16.4): failed method calls attach the method
+    /// signature/definition/`///` doc as a note plus an optional `did you mean` help. The notes are
+    /// collected by `notes()`/`help()`; the CLI renders them under the primary message.
+    #[error("{error}")]
+    WithNotes { notes: Vec<String>, help: Option<String>, error: Box<RuntimeError> },
 }
 
 impl RuntimeError {
@@ -34,14 +39,57 @@ impl RuntimeError {
             RuntimeError::Type(_) => "Type",
             RuntimeError::Collapse(_) => "Collapse",
             RuntimeError::Located { error, .. } => error.kind(),
+            RuntimeError::WithNotes { error, .. } => error.kind(),
         }
     }
 
-    /// The source span attached to this error, if any (spec §16.4).
+    /// The source span attached to this error, if any (spec §16.4). Delegates through wrapper
+    /// variants so the deepest/most precise span wins.
     pub fn location(&self) -> Option<prima_syntax::Span> {
         match self {
             RuntimeError::Located { span, .. } => Some(*span),
+            RuntimeError::WithNotes { error, .. } => error.location(),
             _ => None,
+        }
+    }
+
+    /// All diagnostic notes attached along the wrapper chain (spec §16.4), outermost first.
+    /// The primary error message is *not* part of the notes; the CLI renders it separately.
+    pub fn notes(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        self.collect_notes(&mut out);
+        out
+    }
+
+    /// The `did you mean` help attached along the wrapper chain (spec §16.4); the outermost
+    /// suggestion wins when several errors are nested.
+    pub fn help(&self) -> Option<String> {
+        let mut out = None;
+        self.collect_help(&mut out);
+        out
+    }
+
+    fn collect_notes(&self, out: &mut Vec<String>) {
+        match self {
+            RuntimeError::Located { error, .. } => error.collect_notes(out),
+            RuntimeError::WithNotes { notes, error, .. } => {
+                out.extend(notes.iter().cloned());
+                error.collect_notes(out);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_help(&self, out: &mut Option<String>) {
+        match self {
+            RuntimeError::Located { error, .. } => error.collect_help(out),
+            RuntimeError::WithNotes { help, error, .. } => {
+                if out.is_none() {
+                    *out = help.clone();
+                }
+                error.collect_help(out);
+            }
+            _ => {}
         }
     }
 }
@@ -56,4 +104,63 @@ pub(crate) fn attach_span(e: RuntimeError, span: prima_syntax::Span) -> RuntimeE
 
 pub fn err<T>(message: impl Into<String>) -> Result<T, RuntimeError> {
     Err(RuntimeError::Message(message.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn located(e: RuntimeError) -> RuntimeError {
+        attach_span(e, prima_syntax::Span::new(4, 9))
+    }
+
+    #[test]
+    fn with_notes_delegates_kind_and_location() {
+        let e = located(RuntimeError::WithNotes {
+            notes: vec!["note".to_string()],
+            help: Some("did you mean `x`?".into()),
+            error: Box::new(RuntimeError::Type("bad".into())),
+        });
+        assert_eq!(e.kind(), "Type");
+        assert_eq!(e.location(), Some(prima_syntax::Span::new(4, 9)));
+    }
+
+    #[test]
+    fn notes_and_help_collect_across_the_wrapper_chain() {
+        let inner = RuntimeError::WithNotes {
+            notes: vec!["inner note".to_string()],
+            help: None,
+            error: Box::new(RuntimeError::Message("root failure".into())),
+        };
+        let outer = RuntimeError::WithNotes {
+            notes: vec!["outer note".to_string()],
+            help: Some("did you mean `outer`?".into()),
+            error: Box::new(inner),
+        };
+        // Outermost first, and the wrapped `Message`'s own text stays the display string only.
+        assert_eq!(outer.notes(), vec!["outer note".to_string(), "inner note".to_string()]);
+        assert_eq!(outer.help().as_deref(), Some("did you mean `outer`?"));
+        assert_eq!(outer.to_string(), "root failure");
+
+        // `Located` is transparent to the walk.
+        let e = located(RuntimeError::WithNotes {
+            notes: vec!["n".to_string()],
+            help: Some("h".into()),
+            error: Box::new(RuntimeError::Collapse("c".into())),
+        });
+        assert_eq!(e.notes(), vec!["n".to_string()]);
+        assert_eq!(e.help().as_deref(), Some("h"));
+        assert_eq!(e.to_string(), "collapse error: c");
+    }
+
+    #[test]
+    fn notes_only_wrapper_has_no_help() {
+        let e = RuntimeError::WithNotes {
+            notes: vec!["n".to_string()],
+            help: None,
+            error: Box::new(RuntimeError::Message("m".into())),
+        };
+        assert_eq!(e.help(), None);
+        assert_eq!(e.notes(), vec!["n".to_string()]);
+    }
 }

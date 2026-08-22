@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use prima_core::Value;
-use prima_syntax::ast::{Block, Param, Type, Visibility};
+use prima_syntax::ast::{Block, DocComment, Param, Type, Visibility};
 
 use crate::eval::EnvRef;
 
@@ -19,7 +19,8 @@ pub struct FieldDef {
 }
 
 /// A method definition (spec §4.5): parameters, optional return type, body (None for an
-/// `@builtin` signature, spec §18.4) and visibility. The captured environment is the one in which
+/// `@builtin` signature, spec §18.4), visibility, and the `///` doc comment (spec §4.1) used for
+/// the failed-call diagnostic note (spec §16.4). The captured environment is the one in which
 /// the class was defined, so method bodies resolve module-local functions.
 #[derive(Clone)]
 pub struct MethodDef {
@@ -28,6 +29,8 @@ pub struct MethodDef {
     pub body: Option<Block>,
     pub vis: Visibility,
     pub env: EnvRef,
+    /// `///` doc comment preceding the method (spec §4.1).
+    pub docs: Option<DocComment>,
 }
 
 /// Class definition (spec §4.7 class registry): field/method tables indexed by name.
@@ -38,6 +41,8 @@ pub struct ClassDef {
     pub module: String,
     pub fields: HashMap<String, FieldDef>,
     pub methods: HashMap<String, MethodDef>,
+    /// `///` doc comment preceding the class (spec §4.1).
+    pub docs: Option<DocComment>,
 }
 
 /// A runtime class instance: the owning class name plus the field map (spec §12.3).

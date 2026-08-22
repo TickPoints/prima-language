@@ -6,6 +6,7 @@ pub mod class;
 pub mod collapse;
 pub mod config;
 pub mod diff;
+pub mod docs;
 pub mod error;
 pub mod eval;
 pub mod jit;

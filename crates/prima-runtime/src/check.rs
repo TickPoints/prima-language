@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::builtins::Builtin;
 use crate::capi::c_type;
-use prima_syntax::ast::{Annotation, BinOp, ClassMemberKind, CompKind, Expr, ExprKind, ImportItem, ImportKind, Literal, MatchArm, Param, Pattern, Program, Spanned, Stmt, Type, UnOp};
+use prima_syntax::ast::{Annotation, BinOp, ClassMemberKind, CompKind, DocComment, Expr, ExprKind, ImportItem, ImportKind, Literal, MatchArm, Param, Pattern, Program, Spanned, Stmt, Type, UnOp};
 use prima_syntax::parse;
 use prima_syntax::Span;
 
@@ -14,11 +14,29 @@ pub struct TypeError {
     /// Source span of the offending value, for caret rendering (spec §16.4).
     pub span: Span,
     pub message: String,
+    /// Diagnostic notes attached to the error (spec §16.4), e.g. the stdlib `@builtin` signature
+    /// and definition location for `E0050` call-site violations.
+    pub notes: Vec<String>,
 }
 
 /// A stdlib function signature harvested from an embedded `.pra` signature module (spec §18.4):
-/// parameter types plus optional return type (`None` for void functions).
-type Signature = (Vec<Type>, Option<Type>);
+/// parameter types, optional return type (`None` for void functions), and the doc metadata used for
+/// the `E0050` definition note (spec §16.4).
+#[derive(Clone)]
+struct Signature {
+    params: Vec<Type>,
+    ret: Option<Type>,
+    /// Source-level function name as declared (`Matrix::zeros` keeps its joined path).
+    name: String,
+    /// `///` doc comment from the signature module (spec §4.1).
+    docs: Option<DocComment>,
+    /// Display definition location `"<module>.pra:<line>:<col>"`.
+    defined_at: String,
+    /// Span of the `fn` declaration inside the signature module. Kept for future span-precise
+    /// notes; the location string is derived from it at harvest time.
+    #[allow(dead_code)]
+    span: Span,
+}
 
 /// Static-check context: whether `?` (spec §16.3 `E0054`) is allowed — i.e. inside a `fn`/method
 /// whose return type is `Result<..>`/`Option<..>`.
@@ -36,7 +54,7 @@ pub fn check_src(src: &str) -> Vec<TypeError> {
                 .iter()
                 .map(|e| {
                     let (line, column) = line_col(src, e.span.start);
-                    TypeError { line, column, span: e.span, message: e.message.clone() }
+                    TypeError { line, column, span: e.span, message: e.message.clone(), notes: Vec::new() }
                 })
                 .collect();
         }
@@ -70,10 +88,12 @@ fn build_signature_table(program: &Program) -> HashMap<String, Vec<Signature>> {
         let Some(src) = crate::stdlib::get_module_source(&module_key) else { continue };
         // Embedded sources are ours and known-good; a parse failure just yields no signatures.
         let Ok(parsed) = parse(src) else { continue };
+        // Display path of the module, e.g. `linalg` → `linalg.pra`, `sys::path` → `sys/path.pra`.
+        let display_file = format!("{}.pra", module_key.replace("::", "/"));
         let mut sigs = Vec::new();
         for stmt in &parsed.stmts {
             let Stmt::Pub(inner) = stmt else { continue };
-            let Stmt::FnDef { name, params, ret, .. } = inner.as_ref() else { continue };
+            let Stmt::FnDef { name, params, ret, docs, span, .. } = inner.as_ref() else { continue };
             let param_types = params
                 .iter()
                 .map(|p| {
@@ -82,18 +102,26 @@ fn build_signature_table(program: &Program) -> HashMap<String, Vec<Signature>> {
                     })
                 })
                 .collect();
-            sigs.push((name.value.clone(), (param_types, ret.clone())));
+            let (line, column) = line_col(src, span.start);
+            sigs.push(Signature {
+                params: param_types,
+                ret: ret.clone(),
+                name: name.value.clone(),
+                docs: docs.clone(),
+                defined_at: format!("{display_file}:{line}:{column}"),
+                span: *span,
+            });
         }
         // A name may have multiple signatures (overloads, e.g. `stats::quantile`); keep them all.
-        for (name, sig) in &sigs {
-            table.entry(format!("{module_key}::{name}")).or_default().push(sig.clone());
+        for sig in &sigs {
+            table.entry(format!("{module_key}::{}", sig.name)).or_default().push(sig.clone());
         }
         match &imp.kind {
             ImportKind::From { items, .. } => {
-                for (name, sig) in &sigs {
+                for sig in &sigs {
                     for item in items {
                         if let ImportItem::Name { name: item_name, alias } = item
-                            && item_name.value == *name
+                            && item_name.value == sig.name
                         {
                             // Bind exactly what the runtime binds (eval.rs `bind_imports`): the
                             // alias when present, else the item name.
@@ -107,8 +135,8 @@ fn build_signature_table(program: &Program) -> HashMap<String, Vec<Signature>> {
             }
             ImportKind::Namespace { alias, .. } => {
                 if let Some(a) = alias {
-                    for (name, sig) in &sigs {
-                        table.entry(format!("{}::{name}", a.value)).or_default().push(sig.clone());
+                    for sig in &sigs {
+                        table.entry(format!("{}::{}", a.value, sig.name)).or_default().push(sig.clone());
                     }
                 }
             }
@@ -142,16 +170,33 @@ fn lookup_call_signature<'a>(segments: &[Spanned<String>], sigs: &'a HashMap<Str
 
 /// Whether a call matches one signature (spec §18.4): arity at most the param count (stdlib functions
 /// may have optional trailing args) and every provided argument assignable (unknown types never reject).
-fn signature_accepts(params: &[Type], args: &[Expr], sigs: &HashMap<String, Vec<Signature>>) -> bool {
-    if args.len() > params.len() {
+fn signature_accepts(sig: &Signature, args: &[Expr], sigs: &HashMap<String, Vec<Signature>>) -> bool {
+    if args.len() > sig.params.len() {
         return false;
     }
-    args.iter().enumerate().all(|(i, arg)| assignable(&params[i], &infer(arg, sigs)))
+    args.iter().enumerate().all(|(i, arg)| assignable(&sig.params[i], &infer(arg, sigs)))
+}
+
+/// The definition note attached to an `E0050` error (spec §16.4): the rendered call signature plus
+/// the definition location and, when the signature module documents it, the `///` doc text.
+fn sig_note(name: &str, sig: &Signature) -> String {
+    let params = sig.params.iter().map(type_name).collect::<Vec<_>>().join(", ");
+    let mut note = match &sig.ret {
+        Some(t) => format!("function `{name}({params}) -> {}` defined at {}", type_name(t), sig.defined_at),
+        None => format!("function `{name}({params})` defined at {}", sig.defined_at),
+    };
+    if let Some(docs) = &sig.docs {
+        let text = docs.text();
+        if !text.is_empty() {
+            note.push_str(&format!("\n{text}"));
+        }
+    }
+    note
 }
 
 /// Check a call against the harvested stdlib signatures (spec §18.4, §16.2 `E0050`): a call is valid
 /// when ANY overload accepts it; positive arity and per-argument type mismatches only — unknown or
-/// unresolved types never error.
+/// unresolved types never error. Each `E0050` error carries a definition note (spec §16.4).
 fn check_call_signature(
     src: &str,
     call_span: Span,
@@ -161,35 +206,37 @@ fn check_call_signature(
     sigs: &HashMap<String, Vec<Signature>>,
 ) {
     let Some(candidates) = lookup_call_signature(segments, sigs) else { return };
-    if candidates.iter().any(|(params, _)| signature_accepts(params, args, sigs)) {
+    if candidates.iter().any(|sig| signature_accepts(sig, args, sigs)) {
         return;
     }
     let name = segments.iter().map(|s| s.value.as_str()).collect::<Vec<_>>().join("::");
     // Report against the best-fitting signature: the one with the most parameters that still covers
     // the given arity, else the first candidate (for the arity error).
-    let (params, _) = candidates
+    let chosen = candidates
         .iter()
-        .filter(|(params, _)| args.len() <= params.len())
-        .max_by_key(|(params, _)| params.len())
+        .filter(|sig| args.len() <= sig.params.len())
+        .max_by_key(|sig| sig.params.len())
         .or_else(|| candidates.first())
         .expect("candidates is non-empty");
-    if args.len() > params.len() {
-        push_err(
+    if args.len() > chosen.params.len() {
+        push_err_with_note(
             src,
             errors,
             call_span,
-            format!("function `{name}` expects {} argument(s), got {} (E0050)", params.len(), args.len()),
+            format!("function `{name}` expects {} argument(s), got {} (E0050)", chosen.params.len(), args.len()),
+            sig_note(&name, chosen),
         );
         return;
     }
-    for (i, arg) in args.iter().enumerate().take(params.len()) {
+    for (i, arg) in args.iter().enumerate().take(chosen.params.len()) {
         let got = infer(arg, sigs);
-        if !assignable(&params[i], &got) {
-            push_err(
+        if !assignable(&chosen.params[i], &got) {
+            push_err_with_note(
                 src,
                 errors,
                 arg.span,
-                format!("argument {} of `{name}` expects {}, got {} (E0050)", i + 1, type_name(&params[i]), got),
+                format!("argument {} of `{name}` expects {}, got {} (E0050)", i + 1, type_name(&chosen.params[i]), got),
+                sig_note(&name, chosen),
             );
             return;
         }
@@ -218,6 +265,7 @@ fn collect_stmt_errors(
                     column,
                     span: *span,
                     message: "refutable pattern in `let` (E0053)".into(),
+                    notes: Vec::new(),
                 });
             }
             if let Some(t) = type_ann {
@@ -229,6 +277,7 @@ fn collect_stmt_errors(
                         column,
                         span: value.span,
                         message: format!("type mismatch: expected {}, got {}", annot_name(t), inf),
+                        notes: Vec::new(),
                     });
                 }
             }
@@ -243,6 +292,7 @@ fn collect_stmt_errors(
                     column,
                     span: value.span,
                     message: format!("type mismatch: expected {}, got {}", annot_name(t), inf),
+                    notes: Vec::new(),
                 });
             }
             collect_expr_errors(src, value, errors, ctx, sigs);
@@ -412,7 +462,13 @@ fn type_span(t: &Type, fallback: Span) -> Span {
 /// Push a located error, deriving line/column from the span (spec §16.4).
 fn push_err(src: &str, errors: &mut Vec<TypeError>, span: Span, message: String) {
     let (line, column) = line_col(src, span.start);
-    errors.push(TypeError { line, column, span, message });
+    errors.push(TypeError { line, column, span, message, notes: Vec::new() });
+}
+
+/// Push a located error carrying a diagnostic note (spec §16.4).
+fn push_err_with_note(src: &str, errors: &mut Vec<TypeError>, span: Span, message: String, note: String) {
+    let (line, column) = line_col(src, span.start);
+    errors.push(TypeError { line, column, span, message, notes: vec![note] });
 }
 
 /// Descend an expression tree, flagging `?` outside a `Result`/`Option`-returning function (spec
@@ -427,6 +483,7 @@ fn collect_expr_errors(src: &str, expr: &Expr, errors: &mut Vec<TypeError>, ctx:
                     column,
                     span: expr.span,
                     message: "`?` can only be used inside a function returning `Result`/`Option` (E0054)".into(),
+                    notes: Vec::new(),
                 });
             }
             collect_expr_errors(src, inner, errors, ctx, sigs);
@@ -478,6 +535,13 @@ fn collect_expr_errors(src: &str, expr: &Expr, errors: &mut Vec<TypeError>, ctx:
             collect_expr_errors(src, rhs, errors, ctx, sigs);
         }
         ExprKind::Unary { operand, .. } => collect_expr_errors(src, operand, errors, ctx, sigs),
+        ExprKind::FString(parts) => {
+            for p in parts {
+                if let prima_syntax::ast::FStringPart::Interp { expr, .. } = p {
+                    collect_expr_errors(src, expr, errors, ctx, sigs);
+                }
+            }
+        }
         ExprKind::Array(items) | ExprKind::Tuple(items) | ExprKind::Set(items) => {
             for i in items {
                 collect_expr_errors(src, i, errors, ctx, sigs);
@@ -542,17 +606,18 @@ fn infer(expr: &Expr, sigs: &HashMap<String, Vec<Signature>>) -> String {
             Literal::Integer(_) | Literal::Hex(_) | Literal::Binary(_) => "Integer".into(),
             Literal::Float(_) => "F64".into(),
             Literal::Bool(_) => "Bool".into(),
-            Literal::Str(_) => "String".into(),
+            Literal::String { .. } => "String".into(),
             Literal::Char(_) => "Char".into(),
             Literal::Tex(_) => "Expr".into(),
         },
+        ExprKind::FString(_) => "String".into(),
         ExprKind::Symbol(_) => "Expr".into(),
         ExprKind::Call { callee, .. } => {
             if let ExprKind::Path { segments } = &callee.kind {
                 if let Some(candidates) = lookup_call_signature(segments, sigs)
-                    && let Some((_, ret)) = candidates.first()
+                    && let Some(sig) = candidates.first()
                 {
-                    return match ret {
+                    return match &sig.ret {
                         Some(t) => type_name(t),
                         None => "unit".into(),
                     };
@@ -857,12 +922,40 @@ fn line_col(src: &str, offset: u32) -> (usize, usize) {
 mod tests {
     use super::*;
 
+    /// Embedded signature module with a `///`-documented `inverse`, for the `E0050` note test.
+    /// The module path is unique to this test binary and registration is idempotent.
+    const DOC_SRC: &str = "\
+/// Compute the inverse of a square matrix.
+@builtin pub fn inverse(M: Matrix<F64>) -> Matrix<F64>;
+";
+
     #[test]
     fn f64_annotation_rejects_symbolic_value() {
         let errs = check_src("let x: F64 = sqrt(2);");
         assert_eq!(errs.len(), 1);
         assert!(errs[0].message.contains("F64"));
         assert!(errs[0].message.contains("Expr"));
+    }
+
+    #[test]
+    fn e0050_error_carries_definition_note() {
+        crate::stdlib::register_module_source("checkdoc", DOC_SRC);
+        let errs = check_src("import checkdoc; let x = checkdoc::inverse(1);");
+        assert_eq!(errs.len(), 1, "expected one error, got {errs:?}");
+        assert!(errs[0].message.contains("E0050"), "got: {errs:?}");
+        let notes = &errs[0].notes;
+        assert!(
+            notes.iter().any(|n| n.contains("checkdoc.pra:2:")),
+            "note should mention the definition location, notes: {notes:?}"
+        );
+        assert!(
+            notes.iter().any(|n| n.contains("inverse(Matrix<F64>) -> Matrix<F64>")),
+            "note should carry the rendered signature, notes: {notes:?}"
+        );
+        assert!(
+            notes.iter().any(|n| n.contains("Compute the inverse of a square matrix.")),
+            "note should carry the `///` doc text, notes: {notes:?}"
+        );
     }
 
     #[test]

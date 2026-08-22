@@ -1,5 +1,5 @@
 /// Runtime builtin functions (spec §15.5 `core` pre-import): math operators, the collapse function family (spec §9),
-/// string helpers (`format`/`to_string`/`concat`, §18.1), the `Option`/`Result` constructors (spec §4.4),
+/// string helpers (`to_string`/`concat`, §18.1; `format` was removed in v2.2), the `Option`/`Result` constructors (spec §4.4),
 /// symbolic differentiation (`derivative`/`partial`/`grad`/`limit`, spec §19.4) and console I/O
 /// (`print`/`println`/`input`/`read_line`, v2.1 §18.1b).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,8 +170,7 @@ impl Builtin {
             "unwrap" => Some(Builtin::Collapse("unwrap")),
             "unwrap_or" => Some(Builtin::Collapse("unwrap_or")),
             "expect" => Some(Builtin::Collapse("expect")),
-            // String/format helpers (spec §18.1).
-            "format" => Some(Builtin::Collapse("format")),
+            // String/format helpers (spec §18.1). `format` was removed in v2.2 (f-strings replace it).
             "to_string" => Some(Builtin::Collapse("to_string")),
             "concat" => Some(Builtin::Collapse("concat")),
             // Option/Result constructors (spec §4.4).
@@ -289,7 +288,6 @@ mod tests {
             "unwrap",
             "unwrap_or",
             "expect",
-            "format",
             "to_string",
             "concat",
             "Some",

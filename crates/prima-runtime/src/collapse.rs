@@ -1,5 +1,5 @@
 //! Collapse function family (spec §9.2–9.6): `to_/try_/checked_/clamped_/rounded_/truncated_` plus the `unwrap` family,
-//! string helpers (`format`/`to_string`/`concat`, §18.1) and the `Option`/`Result` constructors (spec §4.4).
+//! string helpers (`to_string`/`concat`, §18.1; `format` was removed in v2.2) and the `Option`/`Result` constructors (spec §4.4).
 //!
 //! The naming scheme encodes safety properties (spec §9.1): the basic forms raise a runtime error on failure (§9.2),
 //! the try forms return a `Result` (§9.3), the checked forms check for overflow (§9.4), the clamped forms force a range (§9.5), and the rounding forms round in the specified way (§9.6).
@@ -119,8 +119,7 @@ pub fn call(
         "None" => none(args),
         "Ok" => ok(args),
         "Err" => err_builtin(args),
-        // ---- string/format helpers (spec §18.1) ----
-        "format" => format_call(args, pool),
+        // ---- string/format helpers (spec §18.1); `format` was removed in v2.2 (f-strings) ----
         "to_string" => to_string_call(args, pool),
         "concat" => concat_call(args, pool),
         _ => Err(RuntimeError::Message(format!("unknown collapse function `{name}`"))),
@@ -502,15 +501,7 @@ fn err_builtin(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 // ---- String/format helpers (spec §18.1) ----
-
-fn format_call(args: &[Value], pool: &ExprPool) -> Result<Value, RuntimeError> {
-    if args.is_empty() {
-        return Err(RuntimeError::Message("`format` expects a format string plus arguments".into()));
-    }
-    let fmt = arg_to_string(&args[0]);
-    let out = do_format(&fmt, &args[1..], pool)?;
-    Ok(Value::String(out))
-}
+// `format` was removed in v2.2 (f-strings replace it, spec §18.1); `to_string`/`concat` remain.
 
 fn to_string_call(args: &[Value], pool: &ExprPool) -> Result<Value, RuntimeError> {
     arity("to_string", args, 1)?;
@@ -524,66 +515,8 @@ fn concat_call(args: &[Value], pool: &ExprPool) -> Result<Value, RuntimeError> {
     Ok(Value::String(a + &b))
 }
 
-/// `format` placeholder engine (spec §18.1): `{}` consumes the next argument in order, `{0}`/`{1}` select by index,
-/// and `{{`/`}}` render literal braces. Every placeable value renders via `value_to_string`.
-fn do_format(fmt: &str, args: &[Value], pool: &ExprPool) -> Result<String, RuntimeError> {
-    let mut out = String::new();
-    let mut chars = fmt.chars().peekable();
-    let mut positional = 0usize;
-    while let Some(c) = chars.next() {
-        match c {
-            '{' => {
-                if chars.peek() == Some(&'{') {
-                    chars.next();
-                    out.push('{');
-                } else if chars.peek() == Some(&'}') {
-                    chars.next();
-                    let arg = args
-                        .get(positional)
-                        .ok_or_else(|| RuntimeError::Message(format!(
-                            "`format`: placeholder #{} has no argument ({} supplied)", positional + 1, args.len()
-                        )))?;
-                    out.push_str(&value_to_string(pool, arg));
-                    positional += 1;
-                } else {
-                    let mut index = String::new();
-                    loop {
-                        match chars.next() {
-                            Some('}') => break,
-                            Some(ch) if ch.is_ascii_digit() => index.push(ch),
-                            Some(ch) => {
-                                return Err(RuntimeError::Message(format!(
-                                    "`format`: invalid placeholder `{{{ch}...}}`"
-                                )))
-                            }
-                            None => return Err(RuntimeError::Message("`format`: unterminated placeholder".into())),
-                        }
-                    }
-                    let idx: usize = index.parse().map_err(|_| {
-                        RuntimeError::Message(format!("`format`: invalid placeholder index `{{{index}}}`"))
-                    })?;
-                    let arg = args.get(idx).ok_or_else(|| {
-                        RuntimeError::Message(format!("`format`: placeholder {{{idx}}} is out of range ({} supplied)", args.len()))
-                    })?;
-                    out.push_str(&value_to_string(pool, arg));
-                }
-            }
-            '}' => {
-                if chars.peek() == Some(&'}') {
-                    chars.next();
-                    out.push('}');
-                } else {
-                    return Err(RuntimeError::Message("`format`: unmatched `}` in format string".into()));
-                }
-            }
-            other => out.push(other),
-        }
-    }
-    Ok(out)
-}
-
 /// Render any value to its display string (spec §16.1 `format_value`): mirrors the evaluator's rendering so
-/// `format`/`to_string`/`concat` agree with `print`. `Expr` renders through the LaTeX view (spec §8.3).
+/// `to_string`/`concat` agree with `print`. `Expr` renders through the LaTeX view (spec §8.3).
 fn value_to_string(pool: &ExprPool, v: &Value) -> String {
     match v {
         Value::Nil => "nil".into(),
@@ -1004,65 +937,6 @@ mod tests {
             call("Err", &[Value::String("boom".into())], &pool, builtins).unwrap(),
             Value::Result(Err("boom".into()))
         );
-    }
-
-    #[test]
-    fn format_positional_and_indexed() {
-        let (pool, builtins) = setup();
-        let args = |fmt: &str| {
-            vec![
-                Value::String(fmt.into()),
-                Value::Number(Number::from(3)),
-                Value::Number(Number::from(5)),
-                Value::Number(Number::from(8)),
-            ]
-        };
-        assert_eq!(
-            call("format", &args("a is {}"), &pool, builtins).unwrap(),
-            Value::String("a is 3".into())
-        );
-        assert_eq!(
-            call("format", &args("{} + {} = {}"), &pool, builtins).unwrap(),
-            Value::String("3 + 5 = 8".into())
-        );
-        // Index form selects by position among the arguments after the format string.
-        assert_eq!(
-            call("format", &args("{1} {0}"), &pool, builtins).unwrap(),
-            Value::String("5 3".into())
-        );
-        // Escaped braces render literally.
-        assert_eq!(
-            call("format", &args("{{}} {}"), &pool, builtins).unwrap(),
-            Value::String("{} 3".into())
-        );
-        // Mixed values render through value_to_string.
-        let v = call(
-            "format",
-            &[Value::String("x={} ok={} none={}".into()), Value::Bool(true), Value::Number(Number::from(1)), Value::Option(None)],
-            &pool,
-            builtins,
-        )
-        .unwrap();
-        assert_eq!(v, Value::String("x=true ok=1 none=none".into()));
-    }
-
-    #[test]
-    fn format_out_of_range_and_unmatched() {
-        let (pool, builtins) = setup();
-        let missing = call("format", &[Value::String("{}".into())], &pool, builtins).unwrap_err();
-        assert!(matches!(missing, RuntimeError::Message(_)));
-
-        let index = call(
-            "format",
-            &[Value::String("{2}".into()), Value::Number(Number::from(1))],
-            &pool,
-            builtins,
-        )
-        .unwrap_err();
-        assert!(matches!(index, RuntimeError::Message(_)));
-
-        let unmatched = call("format", &[Value::String("}".into())], &pool, builtins).unwrap_err();
-        assert!(matches!(unmatched, RuntimeError::Message(_)));
     }
 
     #[test]

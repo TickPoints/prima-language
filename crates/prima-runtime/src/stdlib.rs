@@ -109,3 +109,13 @@ pub fn get_module_source(path: &str) -> Option<&'static str> {
     let map = sources().lock().unwrap_or_else(|e| e.into_inner());
     map.get(path).copied()
 }
+
+/// All embedded stdlib signature modules, as `(module path, source)` pairs. `prima doc --stdlib`
+/// (spec §20) lists exactly these, so the docs are available offline (spec §16.4).
+pub fn all_module_sources() -> Vec<(String, &'static str)> {
+    let map = sources().lock().unwrap_or_else(|e| e.into_inner());
+    let mut out: Vec<(String, &'static str)> =
+        map.iter().map(|(k, v)| (k.clone(), *v)).collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
