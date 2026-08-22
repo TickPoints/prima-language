@@ -12,9 +12,9 @@ use std::process::ExitCode;
 
 use prima_syntax::ast::{
     Annotation, AssignOp, BinOp, Block, ClassMember, ClassMemberKind, CompKind,
-    ComprehensionClause, ConfigBlock, ConfigEntry, Expr, ExprKind, Import, ImportItem, ImportKind,
-    ImplOp, Index, IndexItem, Literal, MatchArm, Param, Pattern, Program, Stmt, Type, UnOp,
-    Visibility,
+    ComprehensionClause, ConfigBlock, ConfigEntry, Expr, ExprKind, FStringPart, Import, ImportItem,
+    ImportKind, ImplOp, Index, IndexItem, Literal, MatchArm, Param, Pattern, Program, Stmt,
+    StringQuote, Type, UnOp, Visibility,
 };
 use prima_syntax::parse;
 
@@ -71,11 +71,18 @@ const ATOM_BP: u8 = 100;
 /// each statement is `;`-terminated where the grammar requires it (spec §4.2).
 pub fn format_program(program: &Program) -> String {
     let mut out = String::new();
+    if let Some(docs) = &program.module_docs {
+        format_doc_lines(docs, 0, &mut out, true);
+        out.push('\n');
+    }
     if let Some(cfg) = &program.config {
         format_config_block(cfg, &mut out);
         out.push_str("\n\n");
     }
     for imp in &program.imports {
+        if let Some(docs) = &imp.docs {
+            format_doc_lines(docs, 0, &mut out, false);
+        }
         format_import(imp, &mut out);
         out.push('\n');
     }
@@ -87,6 +94,31 @@ pub fn format_program(program: &Program) -> String {
         out.push('\n');
     }
     out
+}
+
+/// Emit the doc lines of a `///`/`//!` comment (spec §4.1) as `///` comment lines at `indent`.
+/// Leaves the output at the start of a new line (no trailing indent).
+fn format_doc_lines(docs: &prima_syntax::ast::DocComment, indent: usize, out: &mut String, module: bool) {
+    let marker = if module { "//! " } else { "/// " };
+    for (line, _) in &docs.lines {
+        push_indent(indent, out);
+        out.push_str(marker);
+        out.push_str(line);
+        out.push('\n');
+    }
+}
+
+/// The `///` doc attached to a definition statement, recursing through `pub` (spec §4.1).
+fn stmt_docs(stmt: &Stmt) -> Option<&prima_syntax::ast::DocComment> {
+    match stmt {
+        Stmt::Let { docs, .. }
+        | Stmt::Const { docs, .. }
+        | Stmt::FnDef { docs, .. }
+        | Stmt::MathDef { docs, .. }
+        | Stmt::ClassDef { docs, .. } => docs.as_ref(),
+        Stmt::Pub(inner) => stmt_docs(inner),
+        _ => None,
+    }
 }
 
 fn push_indent(indent: usize, out: &mut String) {
@@ -183,6 +215,11 @@ fn needs_semicolon(stmt: &Stmt) -> bool {
 }
 
 fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
+    // Re-emit the `///` doc comment above the statement it documents (spec §4.1); `prima fmt`
+    // preserves doc comments as part of the AST.
+    if let Some(docs) = stmt_docs(stmt) {
+        format_doc_lines(docs, indent, out, false);
+    }
     push_indent(indent, out);
     // Unwrap `pub` so the inner statement renders with the visibility prefix and the
     // `;` rule follows the inner statement kind (spec §15.2).
@@ -406,6 +443,9 @@ fn format_annotations(annotations: &[Annotation], out: &mut String) {
 }
 
 fn format_class_member(member: &ClassMember, indent: usize, out: &mut String) {
+    if let Some(docs) = &member.docs {
+        format_doc_lines(docs, indent, out, false);
+    }
     push_indent(indent, out);
     format_visibility(member.vis, out);
     match &member.kind {
@@ -759,6 +799,7 @@ fn format_expr(e: &Expr, min_bp: u8, out: &mut String) {
     }
     match &e.kind {
         ExprKind::Literal(lit) => format_literal(lit, out),
+        ExprKind::FString(parts) => format_fstring(parts, out),
         ExprKind::Symbol(name) => out.push_str(&name.value),
         ExprKind::Path { segments } => format_path(segments, out),
         ExprKind::Self_ => out.push_str("self"),
@@ -975,27 +1016,23 @@ fn format_index(index: &Index, out: &mut String) {
     out.push(']');
 }
 
-/// Re-escape a decoded string for re-emission (spec §18.1): the lexer accepts
+/// Re-escape a decoded char for re-emission (spec §18.1): the lexer accepts
 /// `\n \t \r \0 \\ \" \'` and `\u{HEX}`; other control characters use `\u{...}`.
-fn escape_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '\n' => out.push_str("\\n"),
-            '\t' => out.push_str("\\t"),
-            '\r' => out.push_str("\\r"),
-            '\0' => out.push_str("\\0"),
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\'' => out.push_str("\\'"),
-            c if c.is_control() => {
-                // `\u{...}` round-trips through the lexer's unicode escape (spec §18.1).
-                out.push_str(&format!("\\u{{{:X}}}", c as u32));
-            }
-            c => out.push(c),
+fn escape_string(c: char) -> String {
+    match c {
+        '\n' => "\\n".to_string(),
+        '\t' => "\\t".to_string(),
+        '\r' => "\\r".to_string(),
+        '\0' => "\\0".to_string(),
+        '\\' => "\\\\".to_string(),
+        '"' => "\\\"".to_string(),
+        '\'' => "\\'".to_string(),
+        c if c.is_control() => {
+            // `\u{...}` round-trips through the lexer's unicode escape (spec §18.1).
+            format!("\\u{{{:X}}}", c as u32)
         }
+        c => c.to_string(),
     }
-    out
 }
 
 /// Re-escape a decoded char literal: the char literal grammar has no `\u{}` form, so only
@@ -1017,10 +1054,25 @@ fn format_literal(lit: &Literal, out: &mut String) {
     match lit {
         // Numeric literals keep their raw source text (impl §3): re-emitting it is lossless.
         Literal::Integer(s) | Literal::Float(s) | Literal::Hex(s) | Literal::Binary(s) => out.push_str(s),
-        Literal::Str(s) => {
-            out.push('"');
-            out.push_str(&escape_string(s));
-            out.push('"');
+        Literal::String { value, quote, raw } => {
+            let delim = match quote {
+                StringQuote::Double => '"',
+                StringQuote::Single => '\'',
+            };
+            // A raw string is re-emitted verbatim when the value does not contain the delimiter
+            // (raw strings cannot escape it); otherwise fall back to the lossless escaped form.
+            if *raw && !value.contains(delim) {
+                out.push('r');
+                out.push(delim);
+                out.push_str(value);
+                out.push(delim);
+            } else {
+                out.push(delim);
+                for c in value.chars() {
+                    out.push_str(&escape_string(c));
+                }
+                out.push(delim);
+            }
         }
         Literal::Char(c) => {
             out.push('\'');
@@ -1035,6 +1087,49 @@ fn format_literal(lit: &Literal, out: &mut String) {
             out.push('"');
         }
     }
+}
+
+/// Re-emit an f-string in escaped canonical form (spec §18.1): literal text is escaped and
+/// `{`/`}` doubled so the output round-trips to the same value (raw-ness is not preserved).
+fn format_fstring(parts: &[FStringPart], out: &mut String) {
+    out.push('f');
+    out.push('"');
+    for p in parts {
+        match p {
+            FStringPart::Literal(s) => {
+                for c in s.chars() {
+                    match c {
+                        '{' => out.push_str("{{"),
+                        '}' => out.push_str("}}"),
+                        _ => out.push_str(&escape_string(c)),
+                    }
+                }
+            }
+            FStringPart::Interp { expr, spec } => {
+                out.push('{');
+                // A formatted expression that starts with `{` (e.g. a dict literal or a postfix
+                // over one) would lex as an escaped `{{`, and one ending with `}` would collide
+                // with the closing `}` — insert spaces so the output re-parses to the same parts.
+                let mut rendered = String::new();
+                format_expr(expr, 0, &mut rendered);
+                let leading = rendered.starts_with('{');
+                let trailing = rendered.ends_with('}');
+                if leading {
+                    out.push(' ');
+                }
+                out.push_str(&rendered);
+                if let Some(s) = spec {
+                    out.push(':');
+                    out.push_str(s);
+                }
+                if trailing {
+                    out.push(' ');
+                }
+                out.push('}');
+            }
+        }
+    }
+    out.push('"');
 }
 
 #[cfg(test)]
@@ -1120,6 +1215,20 @@ mod tests {
         assert_idempotent("let a = tex\"\\sqrt{2} + \\pi\";");
         assert_idempotent("let s = \"a\\nb\\t\\\"q\\'\";");
         assert_idempotent("let t = \"\\u{1F600} smile\";");
+    }
+
+    #[test]
+    fn fmt_covers_fstrings_and_string_forms() {
+        // f-strings re-emit in escaped canonical form (spec §18.1), idempotently.
+        assert_idempotent(r#"let s = f"a = {x} b = {y + 1:0.2}";"#);
+        assert_idempotent(r#"let s = f"{{literal}} {a}";"#);
+        assert_idempotent(r#"let s = f"d = { {"a": 1}["a"] }";"#);
+        // `r"..."` raw and `'...'` single-quoted forms are preserved when lossless.
+        assert_eq!(fmt_of(r#"let s = r"a\nb";"#), "let s = r\"a\\nb\";\n");
+        assert_eq!(fmt_of("let s = 'ab';"), "let s = 'ab';\n");
+        assert_eq!(fmt_of("let c = 'a';"), "let c = 'a';\n");
+        // A raw string containing the delimiter falls back to the escaped form.
+        assert_idempotent("let s = \"a\\\"b\";");
     }
 
     #[test]

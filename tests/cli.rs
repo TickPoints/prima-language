@@ -252,6 +252,89 @@ fn doc_lists_definitions() {
 }
 
 #[test]
+fn doc_stdlib_outputs_module_docs() {
+    // `prima doc --stdlib` lists the embedded stdlib modules offline (spec §20).
+    Command::cargo_bin("prima")
+        .unwrap()
+        .arg("doc")
+        .arg("--stdlib")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("core::string"))
+        .stdout(predicate::str::contains("to_upper"))
+        .stdout(predicate::str::contains("linalg"));
+}
+
+#[test]
+fn doc_writes_markdown_to_output_file() {
+    let mut out = std::env::temp_dir();
+    out.push(format!("prima_doc_{}.md", std::process::id()));
+    Command::cargo_bin("prima")
+        .unwrap()
+        .arg("doc")
+        .arg("examples/classes.pra")
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .success();
+    let text = std::fs::read_to_string(&out).expect("doc output file written");
+    assert!(text.contains("# Module"), "unexpected doc output: {text}");
+    let _ = std::fs::remove_file(&out);
+}
+
+#[test]
+fn doc_comment_renders_in_doc_output() {
+    // A `///` doc comment is part of the AST and shows up in `prima doc` (spec §4.1/§20).
+    let mut file = std::env::temp_dir();
+    file.push(format!("prima_doccomment_{}.pra", std::process::id()));
+    std::fs::write(&file, "/// Adds two integers.\n/// Returns the sum.\npub fn add(a: Integer, b: Integer) -> Integer { a + b }\n")
+        .unwrap();
+    Command::cargo_bin("prima")
+        .unwrap()
+        .arg("doc")
+        .arg(&file)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Adds two integers."))
+        .stdout(predicate::str::contains("Returns the sum."));
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn run_method_error_attaches_doc_note_and_did_you_mean() {
+    // A failed `String` method call renders a note with the suggested method's doc (spec §16.4).
+    let mut file = std::env::temp_dir();
+    file.push(format!("prima_methnote_{}.pra", std::process::id()));
+    std::fs::write(&file, "let s = \"hi\";\nprint(s.toupper());\n").unwrap();
+    Command::cargo_bin("prima")
+        .unwrap()
+        .arg("run")
+        .arg(&file)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown `String` method `toupper`"))
+        .stderr(predicate::str::contains("to_upper"))
+        .stderr(predicate::str::contains("did you mean"));
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn check_warns_dangling_doc_comment() {
+    // A `///` with no following item warns W0007 (spec §16.5) and does not fail the check.
+    let mut file = std::env::temp_dir();
+    file.push(format!("prima_dangling_{}.pra", std::process::id()));
+    std::fs::write(&file, "let x = 1;\n/// nothing follows\n").unwrap();
+    Command::cargo_bin("prima")
+        .unwrap()
+        .arg("check")
+        .arg(&file)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("W0007"));
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
 fn check_rejects_newline_separated_statements() {
     // Newline-separated statements are a hard parse error (E0011, spec §4.2).
     let mut file = std::env::temp_dir();

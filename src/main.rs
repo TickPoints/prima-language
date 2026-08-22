@@ -51,7 +51,16 @@ enum Command {
     Test {
         path: Option<PathBuf>,
     },
-    Doc { path: PathBuf },
+    Doc {
+        /// Source file to document (omitted with `--stdlib`).
+        path: Option<PathBuf>,
+        /// Write the Markdown to a file instead of stdout (spec §20).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Document the embedded stdlib modules instead of a file (spec §20).
+        #[arg(long)]
+        stdlib: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -71,7 +80,7 @@ fn main() -> ExitCode {
         Command::Repl => repl::run(),
         Command::Fmt { path, write, check } => fmt::run(&path, write, check),
         Command::Test { path } => testcmd::run(&path.unwrap_or_else(|| PathBuf::from(testcmd::DEFAULT_DIR))),
-        Command::Doc { path } => doc::run(&path),
+        Command::Doc { path, output, stdlib } => doc::run(path.as_deref(), output.as_deref(), stdlib),
     }
 }
 

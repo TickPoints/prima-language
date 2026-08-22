@@ -22,8 +22,20 @@ fn term_config() -> Config {
 }
 
 /// Render a full diagnostic: `<severity>[<code>]: <message>` header (code optional),
-/// `--> file:line:col`, and a caret over the offending span (spec §16.4).
-fn emit(file: &Path, source: &str, severity: Severity, code: Option<&str>, message: String, span: Option<(u32, u32)>, notes: Vec<String>) {
+/// `--> file:line:col`, a caret over the offending span, notes, and an optional `= help:` line
+/// (spec §16.4). `emit` is shared by syntax/type/warning/runtime reporting. The help line is
+/// appended after the codespan-reporting block, which has no native `= help:` rendering.
+#[allow(clippy::too_many_arguments)]
+fn emit(
+    file: &Path,
+    source: &str,
+    severity: Severity,
+    code: Option<&str>,
+    message: String,
+    span: Option<(u32, u32)>,
+    notes: Vec<String>,
+    help: Option<&str>,
+) {
     let files = SimpleFile::new(file.display().to_string(), source.to_string());
     let mut diagnostic = Diagnostic::new(severity).with_message(message);
     if let Some(code) = code {
@@ -35,9 +47,14 @@ fn emit(file: &Path, source: &str, severity: Severity, code: Option<&str>, messa
     if !notes.is_empty() {
         diagnostic = diagnostic.with_notes(notes);
     }
-    let mut writer = StandardStream::stderr(ColorChoice::Auto);
+    let buffer_writer = codespan_reporting::term::termcolor::BufferWriter::stderr(ColorChoice::Auto);
+    let mut buffer = buffer_writer.buffer();
     let config = term_config();
-    let _ = emit_to_write_style(&mut writer, &config, &files, &diagnostic);
+    let _ = emit_to_write_style(&mut buffer, &config, &files, &diagnostic);
+    if let Some(h) = help {
+        let _ = writeln!(buffer, "= help: {h}");
+    }
+    let _ = buffer_writer.print(&buffer);
 }
 
 /// Bold red `error: <message>` line for location-less errors.
@@ -52,20 +69,19 @@ pub fn print_colored_error(message: &str) {
 /// Report collected parse errors (spec §16.4 diagnostic format).
 pub fn report_syntax_errors(file: &Path, source: &str, errors: &[SyntaxError]) {
     for e in errors {
-        emit(file, source, Severity::Error, None, e.message.clone(), Some((e.span.start, e.span.end)), Vec::new());
+        emit(file, source, Severity::Error, None, e.message.clone(), Some((e.span.start, e.span.end)), Vec::new(), None);
     }
 }
 
 /// Report static type errors from `prima check` (spec §16.2/§16.4).
 pub fn report_type_errors(file: &Path, source: &str, errors: &[TypeError]) {
     for e in errors {
+        let mut notes = e.notes.clone();
         // Suggest the explicit collapse for the common `Expr` → numeric mismatch (spec §16.4 提示).
-        let notes = if e.message.contains("Expr") {
-            vec!["help: collapse the expression explicitly, e.g. `to_f64(...)`".into()]
-        } else {
-            Vec::new()
-        };
-        emit(file, source, Severity::Error, None, e.message.clone(), Some((e.span.start, e.span.end)), notes);
+        if e.message.contains("Expr") {
+            notes.push("help: collapse the expression explicitly, e.g. `to_f64(...)`".into());
+        }
+        emit(file, source, Severity::Error, None, e.message.clone(), Some((e.span.start, e.span.end)), notes, None);
     }
 }
 
@@ -73,7 +89,7 @@ pub fn report_type_errors(file: &Path, source: &str, errors: &[TypeError]) {
 /// do not affect the exit code; `prima check --deny W####` promotes a subset to errors.
 pub fn report_warnings(file: &Path, source: &str, warnings: &[SyntaxWarning]) {
     for w in warnings {
-        emit(file, source, Severity::Warning, Some(w.code), w.message.clone(), Some((w.span.start, w.span.end)), Vec::new());
+        emit(file, source, Severity::Warning, Some(w.code), w.message.clone(), Some((w.span.start, w.span.end)), Vec::new(), None);
     }
 }
 
@@ -89,23 +105,36 @@ pub fn report_denied_warnings(file: &Path, source: &str, warnings: &[SyntaxWarni
             w.message.clone(),
             Some((w.span.start, w.span.end)),
             vec![format!("help: `{}` is denied by `--deny` and promoted to an error", w.code)],
+            None,
         );
     }
 }
 
 /// Report a runtime error. When the error carries a source span within the given
 /// file, render the full diagnostic; otherwise fall back to a colored line.
+/// Notes attached by the evaluator (method definition + doc, spec §16.4) are
+/// rendered as `= note:` blocks, and a `did you mean` hint as `= help:`.
 pub fn report_runtime_error(file: &Path, source: &str, e: &RuntimeError) {
-    let notes = match e.kind() {
+    let mut notes: Vec<String> = match e.kind() {
         "Domain" => vec!["help: allow the operation with `with config { domain := complex }`".into()],
         "Undefined" => vec!["help: `Undefined` is a numeric-layer error state and cannot take part in operations (spec §6.2)".into()],
         "Collapse" => vec!["help: collapse the value with `to_<type>` before using it numerically (spec §9)".into()],
         _ => Vec::new(),
     };
+    notes.extend(e.notes());
+    let help = e.help();
     match e.location() {
         Some(span) if (span.end as usize) <= source.len() => {
-            emit(file, source, Severity::Error, None, e.to_string(), Some((span.start, span.end)), notes);
+            emit(file, source, Severity::Error, None, e.to_string(), Some((span.start, span.end)), notes, help.as_deref());
         }
-        _ => print_colored_error(&e.to_string()),
+        _ => {
+            print_colored_error(&e.to_string());
+            for n in &notes {
+                eprintln!("= note: {n}");
+            }
+            if let Some(h) = help {
+                eprintln!("= help: {h}");
+            }
+        }
     }
 }
