@@ -1,49 +1,77 @@
+//! `stats`: descriptive statistics and probability distributions (spec §18.4).
+//!
+//! The `@builtin` declarations below are signature-only; each binds to the Rust-hosted
+//! implementation registered under `stats::<name>`. Distribution constructors return a
+//! descriptor `Dict`; `quantile` is overloaded on a data array or a distribution descriptor.
+
 // `stats` module signatures (spec §18.4 / appendix B.3).
 // `@builtin` declarations are signature-only: each binds to the Rust-hosted implementation
 // registered under `stats::<name>` (spec §18.4). Distribution constructors return a descriptor
 // `Dict`; `quantile` is overloaded on a data array or a distribution descriptor.
 
+/// Arithmetic mean of `data`.
 @builtin
 pub fn mean(data: Array<F64>) -> F64;
+/// Median of `data`.
 @builtin
 pub fn median(data: Array<F64>) -> F64;
+/// Most frequent value of `data`.
 @builtin
 pub fn mode(data: Array<F64>) -> F64;
+/// Sample variance of `data`.
 @builtin
 pub fn variance(data: Array<F64>) -> F64;
+/// Sample standard deviation of `data`.
 @builtin
 pub fn std(data: Array<F64>) -> F64;
+/// The `q`-quantile (0 <= q <= 1) of `data`.
 @builtin
 pub fn quantile(data: Array<F64>, q: F64) -> F64;
+/// The `p`-th percentile (0 <= p <= 100) of `data`.
 @builtin
 pub fn percentile(data: Array<F64>, p: F64) -> F64;
+/// `max(data) - min(data)`.
 @builtin
 pub fn range(data: Array<F64>) -> F64;
+/// Minimum of `data`.
 @builtin
 pub fn min(data: Array<F64>) -> F64;
+/// Maximum of `data`.
 @builtin
 pub fn max(data: Array<F64>) -> F64;
+/// Covariance of paired samples `x` and `y`.
 @builtin
 pub fn cov(x: Array<F64>, y: Array<F64>) -> F64;
+/// Pearson correlation coefficient of paired samples `x` and `y`.
 @builtin
 pub fn corr(x: Array<F64>, y: Array<F64>) -> F64;
+/// Spearman rank correlation of paired samples `x` and `y`.
 @builtin
 pub fn spearman(x: Array<F64>, y: Array<F64>) -> F64;
+/// Construct a normal (Gaussian) distribution descriptor with mean `mu` and std `sigma`.
 @builtin
 pub fn Normal(mu: F64, sigma: F64) -> Dict;
+/// Construct a uniform distribution descriptor on `[a, b]`.
 @builtin
 pub fn Uniform(a: F64, b: F64) -> Dict;
+/// Construct an exponential distribution descriptor with rate `lambda`.
 @builtin
 pub fn Exponential(lambda: F64) -> Dict;
+/// Construct a binomial distribution descriptor with `n` trials and success probability `p`.
 @builtin
 pub fn Binomial(n: Integer, p: F64) -> Dict;
+/// Construct a Poisson distribution descriptor with rate `lambda`.
 @builtin
 pub fn Poisson(lambda: F64) -> Dict;
+/// Probability density of `x` under the distribution `dist`.
 @builtin
 pub fn pdf(dist: Dict, x: F64) -> F64;
+/// Cumulative distribution function of `x` under `dist`.
 @builtin
 pub fn cdf(dist: Dict, x: F64) -> F64;
+/// The `p`-quantile (0 <= p <= 1) of the distribution `dist`.
 @builtin
 pub fn quantile(dist: Dict, p: F64) -> F64;
+/// Draw `n` random samples from `dist`.
 @builtin
 pub fn sample(dist: Dict, n: Integer) -> Array<F64>;

@@ -1,18 +1,30 @@
+//! `num`: number-theory and radix helpers (spec §18.4).
+//!
+//! The `@builtin` declarations below are signature-only; each binds to the Rust-hosted
+//! implementation registered under `num::<name>`.
+
 // `num` module signatures (spec §18.4 / appendix B.5).
 // `@builtin` declarations are signature-only: each binds to the Rust-hosted implementation
 // registered under `num::<name>` (spec §18.4).
 
+/// Greatest common divisor of `a` and `b`.
 @builtin
 pub fn gcd(a: Integer, b: Integer) -> Integer;
+/// Least common multiple of `a` and `b`.
 @builtin
 pub fn lcm(a: Integer, b: Integer) -> Integer;
+/// Whether `n` is a prime number.
 @builtin
 pub fn is_prime(n: Integer) -> Bool;
+/// The smallest prime strictly greater than `n`.
 @builtin
 pub fn next_prime(n: Integer) -> Integer;
+/// A uniform random integer in `[a, b]` inclusive.
 @builtin
 pub fn random_integer(a: Integer, b: Integer) -> Integer;
+/// Render `n` in the given `radix` (2..=36) as a string.
 @builtin
 pub fn to_base(n: Integer, radix: Integer) -> String;
+/// Parse `s` as an integer in the given `radix` (2..=36).
 @builtin
 pub fn from_base(s: String, radix: Integer) -> Result<Integer, String>;

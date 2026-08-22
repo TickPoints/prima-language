@@ -1,16 +1,27 @@
+//! `sys::path`: filesystem path helpers (spec §18.4).
+//!
+//! The `@builtin` declarations below are signature-only; each binds to the Rust-hosted
+//! implementation registered under `sys::path::<name>`. Paths are platform-native strings.
+
 // `sys::path` module signatures (spec §18.4 / appendix B.5).
 // `@builtin` declarations are signature-only: each binds to the Rust-hosted implementation
 // registered under `sys::path::<name>` (spec §18.4).
 
+/// Join two path components with the platform separator.
 @builtin
 pub fn join(a: String, b: String) -> String;
+/// The final component of `p`, or `None` when it has none.
 @builtin
 pub fn file_name(p: String) -> Option<String>;
+/// The extension of `p` (without the dot), or `None`.
 @builtin
 pub fn extension(p: String) -> Option<String>;
+/// The parent directory of `p`, or `None` when there is none.
 @builtin
 pub fn parent(p: String) -> Option<String>;
+/// Whether `p` is an absolute path.
 @builtin
 pub fn is_absolute(p: String) -> Bool;
+/// Resolve `p` to a canonical absolute path.
 @builtin
 pub fn canonicalize(p: String) -> Result<String, String>;

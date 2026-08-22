@@ -1,0 +1,49 @@
+//! The `String` type and its method set (spec §18.1).
+//!
+//! Method list and usage are maintained here; the `///` comments are the single source of truth
+//! and feed `prima doc` and diagnostic notes (spec §4.1/§16.4).
+//!
+//! Associated functions: `String::new()` (empty string) and `String::from(x)` (any value rendered
+//! with f-string semantics); `from` is a keyword so it is not declared as a member here.
+
+/// A UTF-8 string value (value-semantic copies; methods return new strings).
+class String {
+    /// An empty string.
+    pub fn new() -> Self,
+    /// Returns the number of Unicode scalar values in `self`.
+    pub fn len(self) -> Integer,
+    /// Returns `true` when `self` is the empty string.
+    pub fn is_empty(self) -> Bool,
+    /// Append `s` to the end of `self`, returning the new string.
+    pub fn push(self, s: String) -> String,
+    /// Insert `s` at `index` (in Unicode scalar values); errors when out of range.
+    pub fn insert(self, index: Integer, s: String) -> Result<String, String>,
+    /// The Unicode scalar value at `index`, or `None` when out of range.
+    pub fn char_at(self, index: Integer) -> Option<Char>,
+    /// The substring in `[start, end)` measured in Unicode scalar values.
+    pub fn substring(self, start: Integer, end: Integer) -> String,
+    /// Returns `true` when `self` contains `pat` as a substring.
+    pub fn contains(self, pat: String) -> Bool,
+    /// Returns `true` when `self` starts with `pat`.
+    pub fn starts_with(self, pat: String) -> Bool,
+    /// Returns `true` when `self` ends with `pat`.
+    pub fn ends_with(self, pat: String) -> Bool,
+    /// Replace every occurrence of `old` in `self` with `new`.
+    pub fn replace(self, old: String, new: String) -> String,
+    /// Strip ASCII whitespace from both ends of `self`.
+    pub fn trim(self) -> String,
+    /// Strip any leading/trailing character present in `pat` from `self`.
+    pub fn strip(self, pat: String) -> String,
+    /// Split `self` on `sep`, returning an array of substrings.
+    pub fn split(self, sep: String) -> Array<String>,
+    /// Join the array of strings `parts` using `self` as the separator.
+    pub fn join(self, parts: Array<String>) -> String,
+    /// The index of the first occurrence of `pat`, or `None`.
+    pub fn find(self, pat: String) -> Option<Integer>,
+    /// An uppercase copy of `self`.
+    pub fn to_upper(self) -> String,
+    /// A lowercase copy of `self`.
+    pub fn to_lower(self) -> String,
+    /// `self` repeated `n` times.
+    pub fn repeat(self, n: Integer) -> String,
+}

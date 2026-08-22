@@ -1,12 +1,21 @@
+//! `sys::env`: process environment access (spec §18.4).
+//!
+//! The `@builtin` declarations below are signature-only; each binds to the Rust-hosted
+//! implementation registered under `sys::env::<name>`.
+
 // `sys::env` module signatures (spec §18.4 / appendix B.5).
 // `@builtin` declarations are signature-only: each binds to the Rust-hosted implementation
 // registered under `sys::env::<name>` (spec §18.4).
 
+/// The current user's home directory, when known.
 @builtin
 pub fn home_dir() -> Option<String>;
+/// The value of the environment variable `name`, when set.
 @builtin
 pub fn get(name: String) -> Option<String>;
+/// The command-line arguments of the current process.
 @builtin
 pub fn args() -> Array<String>;
+/// The process's current working directory.
 @builtin
 pub fn current_dir() -> String;

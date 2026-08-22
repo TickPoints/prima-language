@@ -1,10 +1,18 @@
+//! `sys::os`: operating-system identification and control (spec §18.4).
+//!
+//! The `@builtin` declarations below are signature-only; each binds to the Rust-hosted
+//! implementation registered under `sys::os::<name>`.
+
 // `sys::os` module signatures (spec §18.4 / appendix B.5).
 // `@builtin` declarations are signature-only: each binds to the Rust-hosted implementation
 // registered under `sys::os::<name>` (spec §18.4).
 
+/// The name of the operating system (e.g. `"linux"`, `"windows"`).
 @builtin
 pub fn name() -> String;
+/// The CPU architecture (e.g. `"x86_64"`, `"aarch64"`).
 @builtin
 pub fn arch() -> String;
+/// Terminate the process with the given exit `code`.
 @builtin
 pub fn exit(code: Integer);

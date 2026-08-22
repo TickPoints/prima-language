@@ -4,6 +4,7 @@ pub mod num;
 pub mod physics;
 pub mod plot;
 pub mod stats;
+mod string_docs;
 pub mod sys;
 pub mod time;
 
@@ -20,6 +21,9 @@ pub fn init() {
     prima_runtime::stdlib::register_module_source("sys::os", include_str!("modules/sys_os.pra"));
     prima_runtime::stdlib::register_module_source("time", include_str!("modules/time.pra"));
     prima_runtime::stdlib::register_module_source("num", include_str!("modules/num.pra"));
+    // `String` is a native runtime class, not a stdlib module, but registering its signature
+    // module under `core::string` lets `prima doc --stdlib` list the class offline (spec §20).
+    prima_runtime::stdlib::register_module_source("core::string", include_str!("modules/string.pra"));
     // implementations
     linalg::register();
     stats::register();
@@ -30,4 +34,6 @@ pub fn init() {
     num::register();
     // pure-data namespaces
     physics::register();
+    // doc registry for the native `String` class (spec §4.1/§16.4)
+    string_docs::register();
 }

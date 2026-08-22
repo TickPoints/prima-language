@@ -1163,6 +1163,7 @@ dependencies = [
  "num-bigint",
  "prima-core",
  "prima-runtime",
+ "prima-syntax",
  "serde_json",
 ]
 

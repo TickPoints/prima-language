@@ -1,19 +1,32 @@
+//! `time`: wall-clock time and durations (spec §18.4).
+//!
+//! The `@builtin` declarations below are signature-only; each binds to the Rust-hosted
+//! implementation registered under `time::<name>` / `time::Duration::<name>`. Times and durations
+//! are numbers (unix seconds; durations may be fractional).
+
 // `time` module signatures (spec §18.4 / appendix B.5).
 // `@builtin` declarations are signature-only: each binds to the Rust-hosted implementation
 // registered under `time::<name>` / `time::Duration::<name>` (spec §18.4). Times and durations
 // are numbers (unix seconds; durations may be fractional).
 
+/// The current wall-clock time as a unix timestamp (seconds).
 @builtin
 pub fn now() -> Integer;
+/// Sleep for `secs` seconds (may be fractional).
 @builtin
 pub fn sleep(secs: F64);
+/// Convert a `Number` time to a whole-number unix timestamp.
 @builtin
 pub fn unix_timestamp(t: Number) -> Integer;
+/// Format a time `t` with a `strftime`-style format string.
 @builtin
 pub fn format(t: Number, fmt: String) -> String;
+/// Parse a time `s` with a `strftime`-style format string.
 @builtin
 pub fn parse(s: String, fmt: String) -> Result<Number, String>;
+/// Build a duration of `n` whole seconds.
 @builtin
 pub fn Duration::from_secs(n: Integer) -> Number;
+/// Build a duration of `n` milliseconds.
 @builtin
 pub fn Duration::from_millis(n: Integer) -> Number;
