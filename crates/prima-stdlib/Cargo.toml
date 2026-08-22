@@ -8,9 +8,9 @@ license.workspace = true
 description = "Prima standard library modules (linalg, stats, io, physics, plot)"
 
 [dependencies]
-prima-runtime = { path = "../prima-runtime", version = "0.2.1-alpha" }
-prima-core = { path = "../prima-core", version = "0.2.1-alpha" }
-prima-syntax = { path = "../prima-syntax", version = "0.2.1-alpha" }
+prima-runtime = { path = "../prima-runtime", version = "0.2.2-alpha" }
+prima-core = { path = "../prima-core", version = "0.2.2-alpha" }
+prima-syntax = { path = "../prima-syntax", version = "0.2.2-alpha" }
 num-bigint = { workspace = true }
 nalgebra = { workspace = true }
 serde_json = { workspace = true }

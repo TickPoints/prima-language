@@ -8,7 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ## [0.2.2-alpha] - 2026-08-22
-
 ### Added
 
 - **Phase 6: string & formatting rework (spec §3/§18.1, v2.2).** Python-style f-strings land: `f"..."`/`f'...'` with `{expr}` interpolation, `{:spec}` format refinements (float precision, zero-padding, width/alignment), `{{`/`}}` escapes, and raw `rf"..."`/`rf'...'` combined form. New literals: single-quoted strings `'...'` (escape-equivalent to `"..."`; a single character remains a `Char` per the spec BNF) and raw strings `r"..."`/`r'...'` (no escape processing). The lexer tracks `{{`/`}}` and brace/string nesting inside interpolations and rejects nested f-string literals as a compile-time error. Interpolations are rendered with the active `print_format` (default LaTeX).
