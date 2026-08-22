@@ -1781,6 +1781,7 @@ error[E0040]: undefined name `toUpperCase`
  `W0004` | `unreachable_code` | 不可达代码 |
  `W0005` | `overloaded_operator` | 使用运算符重载（§18.5；`overload_policy := warn` 默认触发，`allow` 解除） |
  `W0006` | `deprecated_format` | 调用已移除的 `format` 函数（改用 f-string，§18.1；过渡期警告，目标版本移除） |
+ `W0007` | `unattached_doc_comment` | `///`/`//!` 文档注释后无文档项（§4.1；`//!` 用于文件顶部之外位置同码） |
 
 **规则**：
 
@@ -3044,6 +3045,7 @@ mem::collect()                              // 手动触发 GC
  `W0004` | `unreachable_code` | 不可达代码 |
  `W0005` | `overloaded_operator` | 运算符重载使用（`overload_policy := allow` 解除） |
  `W0006` | `deprecated_format` | 调用已移除的 `format` 函数（改用 f-string，§18.1；过渡期警告） |
+ `W0007` | `unattached_doc_comment` | `///`/`//!` 文档注释后无文档项（§4.1） |
 
 ---
 

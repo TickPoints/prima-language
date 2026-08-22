@@ -615,6 +615,23 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
   prima check 样例：W0006 提示改用 f-string
   ```
 
+> **Phase 6 落地记录（2026-08，v2.2）**：全部完成。与本文档的偏差/定稿：
+>
+> - **`'...'` 的 Char/String 消歧**：规范附录 A 的 `char ::= "'" character "'"` 与 `string ::= "'" char* "'"` 对单字符同时匹配。实现定稿：单字符（转义处理后）→ `Char`，多字符/空串 → 单引号字符串（保留原有 `Char` 字面量写法，范围模式 `'a'..'z'` 继续可用；§4.4）。
+> - **f-string 词法**：lexer 在 `read_fstring` 内扫描模板，`{{`/`}}` 折叠进字面段，`{expr[:spec]}` 插值体用 `read_fstring_interp` 扫描（跟踪 `{}`/`()`/`[]` 深度与嵌套字符串；深度 0 处、非 `::` 的 `:` 起为 `:spec`）；表达式体经 `lex_range` 子词法得到**绝对 span** 的 token 流，parser 以嵌套 `Parser` 递归解析。嵌套 f-string 在子 token 流检测，lex 期报错（编译期错误，§18.1）。**f-string 字面段不做 `{{`/`}}` 之外的反斜杠处理**（`raw` 位），但插值体内表达式一律按转义解析（Python 同语义）。
+> - **`W0006` 在 parser 层发出**（`parse_postfix` 对裸 `format(...)` 调用推警告）：`prima check` 的警告通道与求值器警告（`parse_checked` 汇入 `Evaluator.warnings`）因此同时生效；模块函数（`time::format`）不触发。`format` 从 `Builtin::from_name`、`Env::core` 预导入与 `collapse::call` 三处移除，调用即按未定义名报错。
+> - **`{:spec}` 子集**：`[[fill]align][width][.precision]` + 前导 `0` 零填充旗标（Python `format` 迷你语言）；精度仅作用于 `Value::Number` 的 `Real`（F64/F32），其余值忽略精度、保留渲染文本；默认对齐数字/零填充右对齐、其余左对齐。`apply_spec` 在 `eval.rs`。
+> - **`Literal::Str` 更名 `Literal::String { value, quote, raw }`**；`TokenKind::Str` 同步为 struct 形态。`prima fmt` 对 `Literal::String` 保留 `r"..."`/`'...'` 原始写法（值含定界符时回退转义形式），f-string 统一输出转义规范形，均通过幂等测试。
+> - **`\a \b \f \v` 转义补全**（§18.1 全量转义表），`read_quoted`/`read_escape`/`read_unicode_escape` 拆分供普通/原始/f-string 共用。
+
+> **Phase 7 落地记录（2026-08，v2.2）**：全部完成。与本文档的偏差/定稿：
+>
+> - **词法/解析**：lexer 新增 `TokenKind::Doc { text, module }`（`///`=item、`//!`=module，剥离标记后一个可选前导空格）；parser 的 `take_docs` 收集连续 doc 行（空行不打断，§4.1 合并语义）并入 `DocComment`，挂到 `Program.module_docs`/`Import.docs`/`Stmt::{Let,Const,FnDef,MathDef,ClassDef}.docs`/`ClassMember.docs`（§4.2）。`//!` 仅限文件顶部（config/import 之前）；悬空 `///`（后无文档项）或非顶部 `//!` → **`W0007 unattached_doc_comment`**（§16.5 新码）。`prima fmt` 保留并重排 doc 注释（幂等）。
+> - **数据面**：`ClassDef.docs`/`MethodDef.docs` 由 AST 复制；新增 `prima-runtime::docs` 注册表（`register_doc`/`get_doc`/`class_methods`，键 `"String::to_upper"`、类级 `"String"`），由 `prima-stdlib::init` 解析 `core/string.pra` 在启动时填充。`prima-stdlib` 新增直接依赖 `prima-syntax`（解析内嵌源码）。
+> - **诊断 note**（§16.4）：`RuntimeError::WithNotes { notes, help, error }` 包装层，`notes()`/`help()` 沿链收集；方法调用失败（未知/参数个数/可见性/方法体运行时报错）与 `T::name` 关联调用失败均附 **签名 + 定义位置 + `///` 文档** note 与 `did you mean`（Levenshtein ≤2 或共享前缀）help；原生 `String`/`Array`/`Dict`/`Set` 未知方法回退类级文档。`prima check` 的 `E0050`（`TypeError.notes`）附 stdlib 函数签名 + 定义位置 + 文档。**用户类方法 note 不附行号**（运行期类模型未记录源位置，仅模块路径；stdlib 有完整 `core/string.pra:<line>:<col>`）。
+> - **`prima doc`**：改为从 AST `docs` 渲染 Markdown（`#` 模块标题 + `//!` + `##` 每项 + 类成员行内文档）；新增 `-o FILE` 与 `--stdlib`（经 `stdlib::all_module_sources` 列出全部内嵌模块，离线可查，§16.4）。
+> - **`core/string.pra`**：`class String` 文档模块，覆盖当前原生方法集（`len/is_empty/push/insert/char_at/substring/contains/starts_with/ends_with/replace/trim/strip/split/join/find/to_upper/to_lower/repeat` + 关联 `new`）；`from` 是保留字故不入成员，在 `//!` 头说明。`Result<T>` 单参数不可解析，`insert` 声明为 `Result<String, String>`。
+
 ### Phase 7：文档注释与诊断增强（v2.2，规范 §4.1/16.4，优先级 max）
 
 **对应工作项 2**（doc 稳定化 + stdlib 文档可达 + 方法错误 note 附带定义与文档）。
@@ -786,6 +803,7 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 | 规范条款 | 规范建议 | 本方案 | 理由 |
 |---------|---------|--------|------|
 | §18.1（v2.1） | `format("...{}...", args)` 函数 | **移除，改用 f-string `f"...{expr}..."`；过渡期 `W0006`** | Python 惯例、可读性/静态可分析性更强（插值即表达式）；消除函数式模板的占位符索引问题；与 `print` 多参渲染并存 |
+| 附录 A `char`/`string`（v2.2） | `'a'` 同时匹配 `char` 与 `string` 产生式（BNF 歧义） | **单字符 → `Char`，多字符/空串 → 单引号字符串** | 保留 `Value::Char` 的字面量写法（含范围模式 §4.4）；多字符 `'...'` 按 §18.1 与 `"..."` 等价 |
 | §18.1（v2.1） | `String` 类方法清单由规范维护 | **清单与文档移入内嵌 `core/string.pra` 的 `///` 注释；规范只保留原则** | 方法集随 Python `str` 演进，文档贴近实现（§4.11 同源），避免规范/实现文档漂移 |
 | §16.4（v2.1） | 诊断 note 仅 help/expression | **方法调用错误追加方法签名 + 定义位置 + `///` 文档 note** | 语言内文档（`.pra` 注释）是唯一可信来源；错误即文档入口 |
 | §18.4（v2.1） | `@builtin` 无参、禁函数体 | **`@builtin(ON)` 分层优化：`opt_level ≥ N` 用 Rust 实现，否则求值 `.pra` 函数体** | 同一 API 双实现满足「快」与「可读/可移植」；`.pra` 为语义权威，Rust 为性能分层（Phase 9） |

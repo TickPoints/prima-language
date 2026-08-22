@@ -7,9 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2-alpha] - 2026-08-22
+
+### Added
+
+- **Phase 6: string & formatting rework (spec §3/§18.1, v2.2).** Python-style f-strings land: `f"..."`/`f'...'` with `{expr}` interpolation, `{:spec}` format refinements (float precision, zero-padding, width/alignment), `{{`/`}}` escapes, and raw `rf"..."`/`rf'...'` combined form. New literals: single-quoted strings `'...'` (escape-equivalent to `"..."`; a single character remains a `Char` per the spec BNF) and raw strings `r"..."`/`r'...'` (no escape processing). The lexer tracks `{{`/`}}` and brace/string nesting inside interpolations and rejects nested f-string literals as a compile-time error. Interpolations are rendered with the active `print_format` (default LaTeX).
+- **Doc comments (`///`/`//!`) enter the AST (spec §4.1, v2.2).** Doc comments are now language semantics: the lexer emits them, the parser collects consecutive lines into `Program.module_docs`/`Import.docs`/`Stmt.*.docs`/`ClassMember.docs`, and `prima fmt` re-emits them. A `///`/`//!` with no following item warns `W0007 unattached_doc_comment` (spec §16.5; `//!` anywhere but the file top shares the code).
+- **Method-call diagnostic notes (spec §16.4, v2.2).** When a method call fails — unknown method, wrong arity, visibility violation, or a runtime error thrown inside the method body — the diagnostic attaches a note with the method's signature, definition location, and `///` doc, plus a `did you mean` suggestion for typos (`String.toupper()` → `to_upper`). `prima check` attaches the same definition note to stdlib `@builtin` call-site errors (`E0050`).
+- **`prima doc` Markdown output (spec §20).** Renders `#` module title, `//!` module doc, and one `##` section per definition with its `///` doc and signature; `-o FILE` writes to a file and `--stdlib` documents every embedded stdlib module, giving offline method docs (spec §16.4).
+- **Stdlib & native-class doc comments (spec §4.1/§18.1/§18.4).** Every embedded stdlib signature module (`linalg`, `stats`, `io`, `num`, `plot`, `sys::path`, `sys::env`, `sys::os`, `time`) carries a `//!` module doc and a `///` doc per `@builtin` function, and a new embedded `core::string` module documents the native `String` class and its method set. At startup `prima-stdlib` parses `string.pra` and seeds the runtime doc registry (`String` class-level doc plus one `String::<method>` entry per member) with rendered signatures, `///` doc text, and `core/string.pra:<line>:<col>` definition locations, so diagnostics attach a method signature + doc note to failed calls (spec §16.4).
+
 ### Changed
 
-- Revised the language spec and implementation plan to **v2.2** (docs only, no code landed yet). Planning for: removing `format` in favor of Python-style f-strings (plus `'...'`/raw-string literals), stabilizing `///`/`//!` doc comments with `prima doc` coverage of the embedded standard library and method-error diagnostic notes, `@builtin(ON)` layered optimization by optimization level, the `opt_level` (`O0`–`O3`) optimization-level policy, a Python-`str`-referenced builtin method set maintained in `.pra` doc comments, stdlib expansion (`math`/`physics`/`sys`/`plot`/`render`/`mem`), and a host-layer GC replacing reference counting for class instances. The implementation roadmap is split into Phase 6–12 in `docs/IMPLEMENTATION-zh_CN.md` §5.
+- **`format` removed (spec §18.1).** It is no longer a pre-imported builtin; a call to a bare `format(...)` emits the transition warning `W0006` (visible in `prima check` and evaluator warnings; `--deny W0006` promotes it to an error) and then fails as an unknown function. Module functions such as `time::format` are unaffected. All examples/tests were migrated to f-strings (`examples/fstring.pra` is the new reference; `examples/try_catch.pra` now uses f-strings).
+- `Literal::Str` renamed to `Literal::String { value, quote, raw }` (AST records the delimiter and raw-ness); `prima fmt` re-emits strings/f-strings losslessly and idempotently.
 
 ## [0.2.1-alpha] - 2026-08-22
 

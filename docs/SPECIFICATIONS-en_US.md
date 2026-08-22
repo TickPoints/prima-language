@@ -1782,6 +1782,7 @@ error[E0040]: undefined name `toUpperCase`
   `W0004` | `unreachable_code` | unreachable code |
   `W0005` | `overloaded_operator` | using operator overloading (§18.5; triggered by default with `overload_policy := warn`, released by `allow`) |
   `W0006` | `deprecated_format` | calling the removed `format` function (use f-strings instead, §18.1; transitional warning, removed in the target version) |
+  `W0007` | `unattached_doc_comment` | `///`/`//!` doc comment with no following documented item (§4.1; `//!` anywhere but the file top shares the code) |
 
 **Rules**:
 
@@ -3016,6 +3017,7 @@ c_api::unit         // C void
  `W0004` | `unreachable_code` | Unreachable code |
  `W0005` | `overloaded_operator` | Operator overloading in use (removed via `overload_policy := allow`) |
  `W0006` | `deprecated_format` | Calling the removed `format` function (use f-strings instead, §18.1; transitional warning) |
+ `W0007` | `unattached_doc_comment` | `///`/`//!` doc comment with no following documented item (§4.1) |
 
 ---
 
