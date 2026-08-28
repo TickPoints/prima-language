@@ -13,7 +13,7 @@ println(f(to_f64(101)));          // 101st call runs native ≈ 10201.4520257871
 let g(x) @jit = x^3 + 2*x;
 println(g(to_f64(3)));            // → 33
 
-// `jit(...)` builtin composes with symbolic differentiation (spec §19.2 可组合优化):
+// `jit(...)` builtin composes with symbolic differentiation (spec §19.2 composable optimization):
 // `jit(grad(f))` = reverse-mode gradient compiled/tape-backed, callable as a value.
 let df = jit(grad(f));
 println(df(to_f64(2)));           // → 2x + cos(x) at 2 ≈ 3.5838531634528574

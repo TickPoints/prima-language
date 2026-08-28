@@ -20,7 +20,7 @@ pub enum IndeterminateForm {
 /// the symbolic layer (`Expr`/`Symbol`/`Indeterminate`), the numeric layer (`Number`), and the host layer
 /// (`Bool`/`String`/`Error`, etc.). `Array` is a variable-length heterogeneous sequence (v2.1, spec §11.3);
 /// `Dict`/`Set` are variable host collections keyed/elemented by immutable hashable `ValueKey`s (spec §4.6/§11.6).
-/// `Result`/`Error` carry a structured `Error` as a message string (the structured enum from spec §16.1 is deferred to a later stage).
+/// `Result`/`Error` carry a structured `Error` as a message string (the structured enum from spec §16.1 is deferred to a later release).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Nil,

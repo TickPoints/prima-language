@@ -530,7 +530,7 @@ fn value_to_string(pool: &ExprPool, v: &Value) -> String {
         }
         Value::Dict(d) => {
             let mut keys: Vec<ValueKey> = d.keys().cloned().collect();
-            keys.sort_by(|a, b| value_to_string(pool, &a.to_value()).cmp(&value_to_string(pool, &b.to_value())));
+            keys.sort_by_key(|a| value_to_string(pool, &a.to_value()));
             let inner: Vec<String> = keys
                 .iter()
                 .map(|k| format!("{}: {}", value_to_string(pool, &k.to_value()), value_to_string(pool, &d[k])))
@@ -539,7 +539,7 @@ fn value_to_string(pool: &ExprPool, v: &Value) -> String {
         }
         Value::Set(s) => {
             let mut elems: Vec<Value> = s.iter().map(|k| k.to_value()).collect();
-            elems.sort_by(|a, b| value_to_string(pool, a).cmp(&value_to_string(pool, b)));
+            elems.sort_by_key(|a| value_to_string(pool, a));
             let inner: Vec<String> = elems.iter().map(|e| value_to_string(pool, e)).collect();
             format!("{{{}}}", inner.join(", "))
         }

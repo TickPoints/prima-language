@@ -77,7 +77,7 @@ pub fn report_syntax_errors(file: &Path, source: &str, errors: &[SyntaxError]) {
 pub fn report_type_errors(file: &Path, source: &str, errors: &[TypeError]) {
     for e in errors {
         let mut notes = e.notes.clone();
-        // Suggest the explicit collapse for the common `Expr` → numeric mismatch (spec §16.4 提示).
+        // Suggest the explicit collapse for the common `Expr` → numeric mismatch (spec §16.4 hint).
         if e.message.contains("Expr") {
             notes.push("help: collapse the expression explicitly, e.g. `to_f64(...)`".into());
         }

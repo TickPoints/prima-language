@@ -4,8 +4,8 @@
 //!
 //! The workload is the acceptance expression `f(x) = x^4 + sin(x)*x + exp(x)`; the spec measures
 //! `f(to_f64(101))` going native after JIT hot-path compilation. The compiled group is guarded so
-//! the benchmark builds even while `prima-jit` is a stub (`dag_to_bytecode` returns `None`): in
-//! that case only the interpreted group is registered.
+//! the benchmark still builds when `compile_scalar` returns `None` (expression outside the compiled
+//! subset): in that case only the interpreted group is registered.
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use prima_core::{BuiltinSymbols, ExprData, ExprId, ExprPool, Number, Real, SymbolId, SymbolTable};
@@ -69,8 +69,8 @@ fn bench_jit(c: &mut Criterion) {
         });
     });
 
-    // Guard: while `prima-jit` is a stub `compile_scalar` returns `None`; the interpreted group
-    // still runs so the benchmark always builds and the acceptance comparison is opt-in.
+    // Guard: `compile_scalar` returns `None` for expressions outside the compiled subset; the
+    // interpreted group still runs so the benchmark always builds and the acceptance comparison is opt-in.
     match compile_scalar(pool, builtins, f, &["x".to_string()]) {
         Some(compiled) => {
             group.bench_function("compiled-native", |b| {
@@ -84,7 +84,7 @@ fn bench_jit(c: &mut Criterion) {
             eprintln!("[bench] f(101) interpreted={interpreted} compiled={compiled}");
         }
         None => {
-            eprintln!("[bench] prima-jit stub: `compile_scalar` returned None, skipping the compiled-native group (spec §19.2)");
+            eprintln!("[bench] prima-jit: `compile_scalar` returned None, skipping the compiled-native group (spec §19.2)");
         }
     }
 

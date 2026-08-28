@@ -1,5 +1,5 @@
 /// Runtime error (spec §16): structured categories so `try/catch` can filter by type (spec §16.3),
-/// carrying a human-readable message. The complete fields of the structured `Error` enum (§16.1) are deferred to a later phase.
+/// carrying a human-readable message. The complete fields of the structured `Error` enum (§16.1) are deferred to a later release.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum RuntimeError {
     #[error("{0}")]

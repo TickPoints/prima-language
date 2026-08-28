@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use crate::symbol::{SymbolId, SymbolTable};
 
 /// Built-in symbol set (spec §7.1–7.2): each math constant and operator holds a pre-resolved `SymbolId`,
-/// letting the simplification engine compare symbols in O(1). Physical constants (spec §7.3) are registered in a later stage.
+/// letting the simplification engine compare symbols in O(1). Physical constants (spec §7.3) are registered in a later release.
 pub struct BuiltinSymbols {
     pub e: SymbolId,
     pub pi: SymbolId,
