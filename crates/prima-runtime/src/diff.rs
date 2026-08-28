@@ -322,7 +322,7 @@ mod tests {
         let expr = pool.add2(pool.pow2(pool.symbol(x), pool.integer(2)), pool.pow2(pool.symbol(y), pool.integer(2)));
         let g = grad(pool, b, expr);
         assert_eq!(g.len(), 2);
-        let d = simplify(pool, b, g[0].clone());
+        let d = simplify(pool, b, g[0]);
         // Order is sorted by SymbolId; both should be 2x and 2y in some order.
         let r = renders(pool, sym, d);
         assert!(r == "2 x" || r == "2 y", "got {r}");

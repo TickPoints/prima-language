@@ -158,14 +158,14 @@ fn qr_decomposition_reconstructs() {
         .iter()
         .map(|r| {
             let Value::Array(c) = r else { panic!("expected Q row") };
-            c.iter().map(|x| number(x)).collect()
+            c.iter().map(number).collect()
         })
         .collect();
     let r: Vec<Vec<f64>> = rrows
         .iter()
         .map(|r| {
             let Value::Array(c) = r else { panic!("expected R row") };
-            c.iter().map(|x| number(x)).collect()
+            c.iter().map(number).collect()
         })
         .collect();
     for i in 0..3 {
@@ -195,7 +195,7 @@ fn svd_decomposition() {
         .iter()
         .map(|r| {
             let Value::Array(c) = r else { panic!("expected U row") };
-            c.iter().map(|x| number(x)).collect()
+            c.iter().map(number).collect()
         })
         .collect();
     let Value::Array(vtrows) = &items[2] else { panic!("expected Vt") };
@@ -203,7 +203,7 @@ fn svd_decomposition() {
         .iter()
         .map(|r| {
             let Value::Array(c) = r else { panic!("expected Vt row") };
-            c.iter().map(|x| number(x)).collect()
+            c.iter().map(number).collect()
         })
         .collect();
     for i in 0..2 {
@@ -229,7 +229,7 @@ fn eigen_decomposition() {
     let Value::Array(values) = &items[0] else {
         panic!("expected an eigenvalues vector");
     };
-    let mut vals: Vec<f64> = values.iter().map(|x| number(x)).collect();
+    let mut vals: Vec<f64> = values.iter().map(number).collect();
     vals.sort_by(f64::total_cmp);
     assert!((vals[0] - 2.0).abs() < 1e-9 && (vals[1] - 3.0).abs() < 1e-9, "eigenvalues: {vals:?}");
     eval_err("import linalg;\nlinalg::eigen([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])");
