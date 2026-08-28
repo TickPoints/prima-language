@@ -1,4 +1,4 @@
-// Linear algebra (spec §B.2, appendix): matrix construction, operations, decompositions and solvers., appendix): matrix construction, operations, decompositions and solvers.
+// Linear algebra (spec §B.2, appendix): matrix construction, operations, decompositions and solvers.
 // The module is declared as an embedded `@builtin` signature file (spec §18.4) and backed by nalgebra.
 import linalg;
 

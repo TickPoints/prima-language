@@ -50,12 +50,10 @@ pub fn render_latex(pool: &ExprPool, symbols: &SymbolTable, id: ExprId) -> Strin
 
 fn render_add(pool: &ExprPool, symbols: &SymbolTable, items: &[ExprId]) -> String {
     let mut ordered: Vec<ExprId> = items.to_vec();
-    ordered.sort_by_key(|&id| {
-        match pool.get(id) {
-            Some(ExprData::Integer(_) | ExprData::Rational(_) | ExprData::Real(_)) => (1u8, 0u8),
-            Some(ExprData::Symbol(_)) => (0u8, 1u8),
-            _ => (0u8, 0u8),
-        }
+    ordered.sort_by_key(|&id| match pool.get(id) {
+        Some(ExprData::Integer(_) | ExprData::Rational(_) | ExprData::Real(_)) => (1u8, 0u8),
+        Some(ExprData::Symbol(_)) => (0u8, 1u8),
+        _ => (0u8, 0u8),
     });
     let mut parts = Vec::new();
     for (i, &item) in ordered.iter().enumerate() {
@@ -105,16 +103,21 @@ fn render_mul(pool: &ExprPool, symbols: &SymbolTable, items: &[ExprId]) -> Strin
             }
         }
     }
-    let body = if parts.is_empty() { "1".to_string() } else { parts.join(" ") };
-    if neg {
-        format!("-{body}")
+    let body = if parts.is_empty() {
+        "1".to_string()
     } else {
-        body
-    }
+        parts.join(" ")
+    };
+    if neg { format!("-{body}") } else { body }
 }
 
 fn is_atomic(pool: &ExprPool, id: ExprId) -> bool {
-    matches!(pool.get(id), Some(ExprData::Symbol(_) | ExprData::Integer(_) | ExprData::Rational(_) | ExprData::Real(_)))
+    matches!(
+        pool.get(id),
+        Some(
+            ExprData::Symbol(_) | ExprData::Integer(_) | ExprData::Rational(_) | ExprData::Real(_)
+        )
+    )
 }
 
 fn render_pow(pool: &ExprPool, symbols: &SymbolTable, base: ExprId, exp: ExprId) -> String {
@@ -123,7 +126,11 @@ fn render_pow(pool: &ExprPool, symbols: &SymbolTable, base: ExprId, exp: ExprId)
         return format!("\\sqrt{{{}}}", render_latex(pool, symbols, base));
     }
     let base_s = render_latex(pool, symbols, base);
-    let base_s = if is_atomic(pool, base) { base_s } else { format!("\\left({base_s}\\right)") };
+    let base_s = if is_atomic(pool, base) {
+        base_s
+    } else {
+        format!("\\left({base_s}\\right)")
+    };
     format!("{base_s}^{{{}}}", render_latex(pool, symbols, exp))
 }
 
@@ -132,7 +139,10 @@ fn render_apply(pool: &ExprPool, symbols: &SymbolTable, f: ExprId, args: &[ExprI
         Some(ExprData::Symbol(s)) => symbols.name(s).unwrap_or_else(|| "f".to_string()),
         _ => "f".to_string(),
     };
-    let arg_strs: Vec<String> = args.iter().map(|&a| render_latex(pool, symbols, a)).collect();
+    let arg_strs: Vec<String> = args
+        .iter()
+        .map(|&a| render_latex(pool, symbols, a))
+        .collect();
     if name == "\\sqrt" && args.len() == 1 {
         return format!("\\sqrt{{{}}}", arg_strs[0]);
     }

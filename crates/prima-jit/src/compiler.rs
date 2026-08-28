@@ -91,7 +91,12 @@ fn emit_nary(
 
 /// A `Symbol` compiles to a parameter read (matched by name) or a built-in constant fold;
 /// any other free symbol is not compilable.
-fn emit_symbol(s: prima_core::symbol::SymbolId, builtins: &BuiltinSymbols, params: &[String], ops: &mut Vec<Op>) -> bool {
+fn emit_symbol(
+    s: prima_core::symbol::SymbolId,
+    builtins: &BuiltinSymbols,
+    params: &[String],
+    ops: &mut Vec<Op>,
+) -> bool {
     let name = SymbolTable::global().name(s);
     if let Some(name) = name
         && let Some(idx) = params.iter().position(|p| *p == name)

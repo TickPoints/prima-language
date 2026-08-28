@@ -1,11 +1,15 @@
 use crate::error::SyntaxError;
 use crate::span::Span;
-use crate::token::{describe, FStringToken, Token, TokenKind};
+use crate::token::{FStringToken, Token, TokenKind, describe};
 
 /// Lexing (spec §3): produces a token stream including `Newline`; errors are returned in collection form.
 /// Numeric literals keep their **raw text** (`TokenKind::Integer("0x1F")`); numeric parsing happens in the core layer.
 pub fn lex(src: &str) -> Result<Vec<Token>, Vec<SyntaxError>> {
-    Lexer { src: src.as_bytes(), pos: 0 }.run()
+    Lexer {
+        src: src.as_bytes(),
+        pos: 0,
+    }
+    .run()
 }
 
 // Hand-written lexer (implementation plan §2.1): advances by character class, giving exact token-level errors and spans per literal kind.
@@ -77,7 +81,9 @@ impl<'a> Lexer<'a> {
     }
 
     fn starts_with(&self, s: &str) -> bool {
-        self.src.get(self.pos..).is_some_and(|r| r.starts_with(s.as_bytes()))
+        self.src
+            .get(self.pos..)
+            .is_some_and(|r| r.starts_with(s.as_bytes()))
     }
 
     fn classify(&self) -> Option<Class> {
@@ -116,7 +122,11 @@ impl<'a> Lexer<'a> {
                     Class::SetMinus
                 }
             }
-            '/' if self.peek(1) == Some(b'/') && matches!(self.peek(2), Some(b'/') | Some(b'!')) => Class::Doc,
+            '/' if self.peek(1) == Some(b'/')
+                && matches!(self.peek(2), Some(b'/') | Some(b'!')) =>
+            {
+                Class::Doc
+            }
             '/' if self.peek(1) == Some(b'/') || self.peek(1) == Some(b'*') => Class::Comment,
             _ if unicode_ident::is_xid_start(c) => Class::Ident,
             _ => Class::Punct,
@@ -126,8 +136,15 @@ impl<'a> Lexer<'a> {
     fn run(&mut self) -> Result<Vec<Token>, Vec<SyntaxError>> {
         let mut errors = Vec::new();
         let mut tokens = self.lex_all(&mut errors);
-        tokens.push(Token { kind: TokenKind::Eof, span: Span::new(self.pos as u32, self.pos as u32) });
-        if errors.is_empty() { Ok(tokens) } else { Err(errors) }
+        tokens.push(Token {
+            kind: TokenKind::Eof,
+            span: Span::new(self.pos as u32, self.pos as u32),
+        });
+        if errors.is_empty() {
+            Ok(tokens)
+        } else {
+            Err(errors)
+        }
     }
 
     /// Tokenize the whole input into `tokens`, pushing any lexical errors into `errors`
@@ -147,43 +164,73 @@ impl<'a> Lexer<'a> {
                     if self.cur() == Some('\n') {
                         self.bump();
                     }
-                    tokens.push(Token { kind: TokenKind::Newline, span: Span::new(start as u32, self.pos as u32) });
+                    tokens.push(Token {
+                        kind: TokenKind::Newline,
+                        span: Span::new(start as u32, self.pos as u32),
+                    });
                 }
                 Class::Ident => {
                     let ident = self.read_ident();
                     if ident == "_" {
-                        tokens.push(Token { kind: TokenKind::Underscore, span: Span::new(start as u32, self.pos as u32) });
+                        tokens.push(Token {
+                            kind: TokenKind::Underscore,
+                            span: Span::new(start as u32, self.pos as u32),
+                        });
                     } else if ident == "tex" && self.cur() == Some('"') {
                         self.bump();
                         match self.read_quoted(b'"', false) {
-                            Ok(v) => tokens.push(Token { kind: TokenKind::TexStr(v), span: Span::new(start as u32, self.pos as u32) }),
-                            Err(message) => errors.push(SyntaxError { span: Span::new(start as u32, self.pos as u32), message }),
+                            Ok(v) => tokens.push(Token {
+                                kind: TokenKind::TexStr(v),
+                                span: Span::new(start as u32, self.pos as u32),
+                            }),
+                            Err(message) => errors.push(SyntaxError {
+                                span: Span::new(start as u32, self.pos as u32),
+                                message,
+                            }),
                         }
                     } else {
-                        tokens.push(Token { kind: keyword_or_ident(&ident), span: Span::new(start as u32, self.pos as u32) });
+                        tokens.push(Token {
+                            kind: keyword_or_ident(&ident),
+                            span: Span::new(start as u32, self.pos as u32),
+                        });
                     }
                 }
                 Class::Number => match self.read_number() {
                     Ok(kind) => {
-                        let text = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or_default().to_string();
+                        let text = std::str::from_utf8(&self.src[start..self.pos])
+                            .unwrap_or_default()
+                            .to_string();
                         let kind = match kind {
                             NumKind::Int => TokenKind::Integer(text),
                             NumKind::Float => TokenKind::Float(text),
                             NumKind::Hex => TokenKind::Hex(text),
                             NumKind::Bin => TokenKind::Binary(text),
                         };
-                        tokens.push(Token { kind, span: Span::new(start as u32, self.pos as u32) });
+                        tokens.push(Token {
+                            kind,
+                            span: Span::new(start as u32, self.pos as u32),
+                        });
                     }
-                    Err(message) => errors.push(SyntaxError { span: Span::new(start as u32, self.pos as u32), message }),
+                    Err(message) => errors.push(SyntaxError {
+                        span: Span::new(start as u32, self.pos as u32),
+                        message,
+                    }),
                 },
                 Class::String => {
                     self.bump();
                     match self.read_quoted(b'"', true) {
                         Ok(value) => tokens.push(Token {
-                            kind: TokenKind::Str { value, raw: false, single: false },
+                            kind: TokenKind::Str {
+                                value,
+                                raw: false,
+                                single: false,
+                            },
                             span: Span::new(start as u32, self.pos as u32),
                         }),
-                        Err(message) => errors.push(SyntaxError { span: Span::new(start as u32, self.pos as u32), message }),
+                        Err(message) => errors.push(SyntaxError {
+                            span: Span::new(start as u32, self.pos as u32),
+                            message,
+                        }),
                     }
                 }
                 Class::RawString => {
@@ -191,47 +238,85 @@ impl<'a> Lexer<'a> {
                     self.advance(2);
                     match self.read_quoted(quote, false) {
                         Ok(value) => tokens.push(Token {
-                            kind: TokenKind::Str { value, raw: true, single: quote == b'\'' },
+                            kind: TokenKind::Str {
+                                value,
+                                raw: true,
+                                single: quote == b'\'',
+                            },
                             span: Span::new(start as u32, self.pos as u32),
                         }),
-                        Err(message) => errors.push(SyntaxError { span: Span::new(start as u32, self.pos as u32), message }),
+                        Err(message) => errors.push(SyntaxError {
+                            span: Span::new(start as u32, self.pos as u32),
+                            message,
+                        }),
                     }
                 }
                 Class::FString => {
                     let quote = self.peek(1).expect("f-string quote");
                     self.advance(2);
                     match self.read_fstring(quote, false) {
-                        Ok(parts) => tokens.push(Token { kind: TokenKind::FStr(parts), span: Span::new(start as u32, self.pos as u32) }),
-                        Err(message) => errors.push(SyntaxError { span: Span::new(start as u32, self.pos as u32), message }),
+                        Ok(parts) => tokens.push(Token {
+                            kind: TokenKind::FStr(parts),
+                            span: Span::new(start as u32, self.pos as u32),
+                        }),
+                        Err(message) => errors.push(SyntaxError {
+                            span: Span::new(start as u32, self.pos as u32),
+                            message,
+                        }),
                     }
                 }
                 Class::RawFString => {
                     let quote = self.peek(2).expect("raw f-string quote");
                     self.advance(3);
                     match self.read_fstring(quote, true) {
-                        Ok(parts) => tokens.push(Token { kind: TokenKind::FStr(parts), span: Span::new(start as u32, self.pos as u32) }),
-                        Err(message) => errors.push(SyntaxError { span: Span::new(start as u32, self.pos as u32), message }),
+                        Ok(parts) => tokens.push(Token {
+                            kind: TokenKind::FStr(parts),
+                            span: Span::new(start as u32, self.pos as u32),
+                        }),
+                        Err(message) => errors.push(SyntaxError {
+                            span: Span::new(start as u32, self.pos as u32),
+                            message,
+                        }),
                     }
                 }
                 Class::Char => match self.read_single_quoted() {
-                    Ok(Quoted::Char(c)) => tokens.push(Token { kind: TokenKind::Char(c), span: Span::new(start as u32, self.pos as u32) }),
-                    Ok(Quoted::Str(value)) => tokens.push(Token {
-                        kind: TokenKind::Str { value, raw: false, single: true },
+                    Ok(Quoted::Char(c)) => tokens.push(Token {
+                        kind: TokenKind::Char(c),
                         span: Span::new(start as u32, self.pos as u32),
                     }),
-                    Err(message) => errors.push(SyntaxError { span: Span::new(start as u32, self.pos as u32), message }),
+                    Ok(Quoted::Str(value)) => tokens.push(Token {
+                        kind: TokenKind::Str {
+                            value,
+                            raw: false,
+                            single: true,
+                        },
+                        span: Span::new(start as u32, self.pos as u32),
+                    }),
+                    Err(message) => errors.push(SyntaxError {
+                        span: Span::new(start as u32, self.pos as u32),
+                        message,
+                    }),
                 },
                 Class::Symbol => {
                     self.bump();
                     if let Some(name) = self.read_ident_after_symbol() {
-                        tokens.push(Token { kind: TokenKind::Symbol(name), span: Span::new(start as u32, self.pos as u32) });
+                        tokens.push(Token {
+                            kind: TokenKind::Symbol(name),
+                            span: Span::new(start as u32, self.pos as u32),
+                        });
                     } else {
-                        errors.push(SyntaxError { span: Span::new(start as u32, self.pos as u32), message: "expected an identifier after `\\`".into() });
+                        errors.push(SyntaxError {
+                            span: Span::new(start as u32, self.pos as u32),
+                            message: "expected an identifier after `\\`".into(),
+                        });
                     }
                 }
                 Class::SetMinus => {
                     self.bump();
-                    tokens.push(Token { kind: TokenKind::SetMinus, span: Span::new(start as u32, self.pos as u32) });
+                    tokens.push(Token {
+                        kind: TokenKind::SetMinus,
+                        span: Span::new(start as u32, self.pos as u32),
+                    });
                 }
                 Class::Doc => {
                     let start = self.pos;
@@ -245,7 +330,8 @@ impl<'a> Lexer<'a> {
                         }
                         self.bump();
                     }
-                    let text = std::str::from_utf8(&self.src[text_start..self.pos]).unwrap_or_default();
+                    let text =
+                        std::str::from_utf8(&self.src[text_start..self.pos]).unwrap_or_default();
                     // One optional leading space after the marker is stripped (Rust convention).
                     let text = text.strip_prefix(' ').unwrap_or(text).to_string();
                     tokens.push(Token {
@@ -255,14 +341,23 @@ impl<'a> Lexer<'a> {
                 }
                 Class::Comment => {
                     if let Some(message) = self.skip_comment() {
-                        errors.push(SyntaxError { span: Span::new(start as u32, self.pos as u32), message });
+                        errors.push(SyntaxError {
+                            span: Span::new(start as u32, self.pos as u32),
+                            message,
+                        });
                     }
                 }
                 Class::Punct => match self.operator() {
-                    Ok(kind) => tokens.push(Token { kind, span: Span::new(start as u32, self.pos as u32) }),
+                    Ok(kind) => tokens.push(Token {
+                        kind,
+                        span: Span::new(start as u32, self.pos as u32),
+                    }),
                     Err(message) => {
                         self.bump();
-                        errors.push(SyntaxError { span: Span::new(start as u32, self.pos as u32), message });
+                        errors.push(SyntaxError {
+                            span: Span::new(start as u32, self.pos as u32),
+                            message,
+                        });
                     }
                 },
             }
@@ -534,7 +629,9 @@ impl<'a> Lexer<'a> {
 
     /// Slice the source bytes `[start, end)` back into a `String` (for the `:spec` text).
     fn slice_str(&self, start: usize, end: usize) -> String {
-        std::str::from_utf8(&self.src[start..end]).unwrap_or_default().to_string()
+        std::str::from_utf8(&self.src[start..end])
+            .unwrap_or_default()
+            .to_string()
     }
 
     /// Lex the source bytes in `[start, end)` into a token stream with **absolute** spans
@@ -542,10 +639,16 @@ impl<'a> Lexer<'a> {
     fn lex_range(&mut self, start: usize, end: usize) -> Result<Vec<Token>, String> {
         // A sub-slice that ends at `end` makes the sub-lexer see EOF there while keeping
         // absolute byte positions (spans stay aligned with the whole source).
-        let mut sub = Lexer { src: &self.src[..end], pos: start };
+        let mut sub = Lexer {
+            src: &self.src[..end],
+            pos: start,
+        };
         let mut errors = Vec::new();
         let mut tokens = sub.lex_all(&mut errors);
-        tokens.push(Token { kind: TokenKind::Eof, span: Span::new(sub.pos as u32, sub.pos as u32) });
+        tokens.push(Token {
+            kind: TokenKind::Eof,
+            span: Span::new(sub.pos as u32, sub.pos as u32),
+        });
         if let Some(e) = errors.into_iter().next() {
             Err(e.message)
         } else {
@@ -686,7 +789,12 @@ impl<'a> Lexer<'a> {
             ']' => (TokenKind::RBracket, 1),
             '{' => (TokenKind::LBrace, 1),
             '}' => (TokenKind::RBrace, 1),
-            _ => return Err(format!("unexpected character `{c}` ({})", describe(&TokenKind::Ident(c.to_string())))),
+            _ => {
+                return Err(format!(
+                    "unexpected character `{c}` ({})",
+                    describe(&TokenKind::Ident(c.to_string()))
+                ));
+            }
         };
         self.advance(len);
         Ok(kind)
@@ -735,36 +843,103 @@ mod tests {
     use super::*;
 
     fn kinds(src: &str) -> Vec<TokenKind> {
-        lex(src).expect("lex should succeed").into_iter().map(|t| t.kind).collect()
+        lex(src)
+            .expect("lex should succeed")
+            .into_iter()
+            .map(|t| t.kind)
+            .collect()
     }
 
     #[test]
     fn set_minus_backslash() {
-        assert_eq!(kinds("s \\ {3}"), vec![
-            TokenKind::Ident("s".into()),
-            TokenKind::SetMinus,
-            TokenKind::LBrace,
-            TokenKind::Integer("3".into()),
-            TokenKind::RBrace,
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds("s \\ {3}"),
+            vec![
+                TokenKind::Ident("s".into()),
+                TokenKind::SetMinus,
+                TokenKind::LBrace,
+                TokenKind::Integer("3".into()),
+                TokenKind::RBrace,
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
     fn string_prefixes() {
         // Ordinary `"..."`, single-quoted string `'...'`, raw `r"..."`/`r'...'` (no escapes).
-        assert_eq!(kinds(r#""a\nb""#), vec![TokenKind::Str { value: "a\nb".into(), raw: false, single: false }, TokenKind::Eof]);
-        assert_eq!(kinds(r#"'hello'"#), vec![TokenKind::Str { value: "hello".into(), raw: false, single: true }, TokenKind::Eof]);
-        assert_eq!(kinds(r#"r"a\nb""#), vec![TokenKind::Str { value: "a\\nb".into(), raw: true, single: false }, TokenKind::Eof]);
-        assert_eq!(kinds(r#"r'a\nb'"#), vec![TokenKind::Str { value: "a\\nb".into(), raw: true, single: true }, TokenKind::Eof]);
+        assert_eq!(
+            kinds(r#""a\nb""#),
+            vec![
+                TokenKind::Str {
+                    value: "a\nb".into(),
+                    raw: false,
+                    single: false
+                },
+                TokenKind::Eof
+            ]
+        );
+        assert_eq!(
+            kinds(r#"'hello'"#),
+            vec![
+                TokenKind::Str {
+                    value: "hello".into(),
+                    raw: false,
+                    single: true
+                },
+                TokenKind::Eof
+            ]
+        );
+        assert_eq!(
+            kinds(r#"r"a\nb""#),
+            vec![
+                TokenKind::Str {
+                    value: "a\\nb".into(),
+                    raw: true,
+                    single: false
+                },
+                TokenKind::Eof
+            ]
+        );
+        assert_eq!(
+            kinds(r#"r'a\nb'"#),
+            vec![
+                TokenKind::Str {
+                    value: "a\\nb".into(),
+                    raw: true,
+                    single: true
+                },
+                TokenKind::Eof
+            ]
+        );
     }
 
     #[test]
     fn single_quote_char_vs_string() {
         // A single character is a `Char`, a longer (or empty) literal is a string (spec appendix A).
         assert_eq!(kinds("'a'"), vec![TokenKind::Char('a'), TokenKind::Eof]);
-        assert_eq!(kinds("'ab'"), vec![TokenKind::Str { value: "ab".into(), raw: false, single: true }, TokenKind::Eof]);
-        assert_eq!(kinds("''"), vec![TokenKind::Str { value: String::new(), raw: false, single: true }, TokenKind::Eof]);
+        assert_eq!(
+            kinds("'ab'"),
+            vec![
+                TokenKind::Str {
+                    value: "ab".into(),
+                    raw: false,
+                    single: true
+                },
+                TokenKind::Eof
+            ]
+        );
+        assert_eq!(
+            kinds("''"),
+            vec![
+                TokenKind::Str {
+                    value: String::new(),
+                    raw: false,
+                    single: true
+                },
+                TokenKind::Eof
+            ]
+        );
         assert_eq!(kinds("'\\n'"), vec![TokenKind::Char('\n'), TokenKind::Eof]);
     }
 
@@ -775,7 +950,9 @@ mod tests {
             TokenKind::FStr(parts) => {
                 assert_eq!(parts.len(), 3);
                 assert_eq!(parts[0], FStringToken::Lit("a".into()));
-                let TokenKind::FStr(_) = toks[0].kind else { unreachable!() };
+                let TokenKind::FStr(_) = toks[0].kind else {
+                    unreachable!()
+                };
                 match &parts[1] {
                     FStringToken::Interp { expr, spec } => {
                         assert_eq!(spec, &None);
@@ -800,7 +977,15 @@ mod tests {
                     FStringToken::Interp { expr, spec } => {
                         assert_eq!(spec, &None);
                         let kinds: Vec<_> = expr.iter().map(|t| &t.kind).collect();
-                        assert_eq!(kinds, vec![&TokenKind::Integer("1".into()), &TokenKind::Plus, &TokenKind::Integer("2".into()), &TokenKind::Eof]);
+                        assert_eq!(
+                            kinds,
+                            vec![
+                                &TokenKind::Integer("1".into()),
+                                &TokenKind::Plus,
+                                &TokenKind::Integer("2".into()),
+                                &TokenKind::Eof
+                            ]
+                        );
                     }
                     _ => panic!("expected interpolation"),
                 }
@@ -836,7 +1021,11 @@ mod tests {
     #[test]
     fn fstring_nested_is_error() {
         let err = lex(r#"f"a { f"b" } c""#).unwrap_err();
-        assert!(err[0].message.contains("nested f-string"), "message = {}", err[0].message);
+        assert!(
+            err[0].message.contains("nested f-string"),
+            "message = {}",
+            err[0].message
+        );
     }
 
     #[test]
@@ -847,31 +1036,40 @@ mod tests {
 
     #[test]
     fn backslash_symbol_still_works() {
-        assert_eq!(kinds("\\pi"), vec![TokenKind::Symbol("pi".into()), TokenKind::Eof]);
+        assert_eq!(
+            kinds("\\pi"),
+            vec![TokenKind::Symbol("pi".into()), TokenKind::Eof]
+        );
     }
 
     #[test]
     fn union_and_intersect() {
-        assert_eq!(kinds("a ∪ b ∩ c"), vec![
-            TokenKind::Ident("a".into()),
-            TokenKind::Union,
-            TokenKind::Ident("b".into()),
-            TokenKind::Intersect,
-            TokenKind::Ident("c".into()),
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds("a ∪ b ∩ c"),
+            vec![
+                TokenKind::Ident("a".into()),
+                TokenKind::Union,
+                TokenKind::Ident("b".into()),
+                TokenKind::Intersect,
+                TokenKind::Ident("c".into()),
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
     fn backslash_before_operator_is_set_minus() {
-        assert_eq!(kinds("s \\ ∩ {1}"), vec![
-            TokenKind::Ident("s".into()),
-            TokenKind::SetMinus,
-            TokenKind::Intersect,
-            TokenKind::LBrace,
-            TokenKind::Integer("1".into()),
-            TokenKind::RBrace,
-            TokenKind::Eof,
-        ]);
+        assert_eq!(
+            kinds("s \\ ∩ {1}"),
+            vec![
+                TokenKind::Ident("s".into()),
+                TokenKind::SetMinus,
+                TokenKind::Intersect,
+                TokenKind::LBrace,
+                TokenKind::Integer("1".into()),
+                TokenKind::RBrace,
+                TokenKind::Eof,
+            ]
+        );
     }
 }

@@ -16,8 +16,14 @@ fn embedded_signature_modules_are_registered() {
     );
 
     // Nested `sys::path` and `time` module sources resolve by their full module path.
-    assert!(get_module_source("sys::path").is_some(), "sys::path source registered");
-    assert!(get_module_source("time").is_some(), "time source registered");
+    assert!(
+        get_module_source("sys::path").is_some(),
+        "sys::path source registered"
+    );
+    assert!(
+        get_module_source("time").is_some(),
+        "time source registered"
+    );
 }
 
 #[test]
@@ -26,8 +32,17 @@ fn builtin_impls_are_registered() {
 
     // Impls are keyed by fully-qualified `module::name` (spec §18.4), including the flattened
     // `::`-joined item names.
-    assert!(get_impl("linalg::determinant").is_some(), "linalg::determinant impl registered");
+    assert!(
+        get_impl("linalg::determinant").is_some(),
+        "linalg::determinant impl registered"
+    );
     assert!(get_impl("time::now").is_some(), "time::now impl registered");
-    assert!(get_impl("linalg::Matrix::zeros").is_some(), "linalg::Matrix::zeros impl registered");
-    assert!(get_impl("sys::path::join").is_some(), "sys::path::join impl registered");
+    assert!(
+        get_impl("linalg::Matrix::zeros").is_some(),
+        "linalg::Matrix::zeros impl registered"
+    );
+    assert!(
+        get_impl("sys::path::join").is_some(),
+        "sys::path::join impl registered"
+    );
 }

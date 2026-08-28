@@ -79,7 +79,12 @@ fn type_err(fname: &str, msg: impl Into<String>) -> RuntimeError {
 fn as_matrix(v: &Value, fname: &str) -> Result<DMatrix<f64>, RuntimeError> {
     let rows = match v {
         Value::Array(rows) => rows,
-        other => return Err(type_err(fname, format!("expected a numeric matrix (R0009), got {other:?}"))),
+        other => {
+            return Err(type_err(
+                fname,
+                format!("expected a numeric matrix (R0009), got {other:?}"),
+            ));
+        }
     };
     if rows.is_empty() {
         return Err(type_err(fname, "empty matrix (R0014)"));
@@ -87,13 +92,23 @@ fn as_matrix(v: &Value, fname: &str) -> Result<DMatrix<f64>, RuntimeError> {
     let ncols = match &rows[0] {
         Value::Array(r) if !r.is_empty() => r.len(),
         Value::Array(_) => return Err(type_err(fname, "empty matrix row (R0014)")),
-        other => return Err(type_err(fname, format!("expected a numeric matrix (R0009), got row {other:?}"))),
+        other => {
+            return Err(type_err(
+                fname,
+                format!("expected a numeric matrix (R0009), got row {other:?}"),
+            ));
+        }
     };
     let mut data = Vec::with_capacity(rows.len() * ncols);
     for row in rows {
         let r = match row {
             Value::Array(r) => r,
-            other => return Err(type_err(fname, format!("expected a numeric matrix (R0009), got row {other:?}"))),
+            other => {
+                return Err(type_err(
+                    fname,
+                    format!("expected a numeric matrix (R0009), got row {other:?}"),
+                ));
+            }
         };
         if r.len() != ncols {
             return Err(type_err(fname, "ragged rows: dimension mismatch (R0004)"));
@@ -105,7 +120,7 @@ fn as_matrix(v: &Value, fname: &str) -> Result<DMatrix<f64>, RuntimeError> {
                     return Err(type_err(
                         fname,
                         format!("expected a numeric matrix (R0009), got element {other:?}"),
-                    ))
+                    ));
                 }
             }
         }
@@ -117,7 +132,12 @@ fn as_matrix(v: &Value, fname: &str) -> Result<DMatrix<f64>, RuntimeError> {
 fn as_vector(v: &Value, fname: &str) -> Result<DVector<f64>, RuntimeError> {
     let elems = match v {
         Value::Array(elems) => elems,
-        other => return Err(type_err(fname, format!("expected a numeric vector (R0009), got {other:?}"))),
+        other => {
+            return Err(type_err(
+                fname,
+                format!("expected a numeric vector (R0009), got {other:?}"),
+            ));
+        }
     };
     if elems.is_empty() {
         return Err(type_err(fname, "empty vector (R0014)"));
@@ -130,7 +150,7 @@ fn as_vector(v: &Value, fname: &str) -> Result<DVector<f64>, RuntimeError> {
                 return Err(type_err(
                     fname,
                     format!("expected a numeric vector (R0009), got element {other:?}"),
-                ))
+                ));
             }
         }
     }
@@ -149,7 +169,9 @@ fn dim_arg(args: &[Value], i: usize, fname: &str) -> Result<usize, RuntimeError>
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` dimension {i} must be an integer, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!("`{fname}` missing argument {i}"))),
+        None => Err(RuntimeError::Message(format!(
+            "`{fname}` missing argument {i}"
+        ))),
     }
 }
 
@@ -159,7 +181,11 @@ fn require_square(m: &DMatrix<f64>, fname: &str) -> Result<(), RuntimeError> {
     } else {
         Err(type_err(
             fname,
-            format!("matrix must be square, got {}x{} (R0004)", m.nrows(), m.ncols()),
+            format!(
+                "matrix must be square, got {}x{} (R0004)",
+                m.nrows(),
+                m.ncols()
+            ),
         ))
     }
 }
@@ -299,7 +325,12 @@ fn norm(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     let p = match args.get(1) {
         None => 2.0,
         Some(Value::Number(n)) => n.to_f64_lossy(),
-        Some(other) => return Err(type_err("linalg::norm", format!("p must be a number, got {other:?}"))),
+        Some(other) => {
+            return Err(type_err(
+                "linalg::norm",
+                format!("p must be a number, got {other:?}"),
+            ));
+        }
     };
     // Nested arrays are matrices; flat numeric arrays are vectors (spec §11.3).
     let is_matrix = matches!(&args[0], Value::Array(rows) if !rows.is_empty() && matches!(&rows[0], Value::Array(_)));
@@ -357,22 +388,34 @@ fn lu(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "linalg::lu")?;
     let m = as_matrix(&args[0], "linalg::lu")?;
     let lu = m.clone().lu();
-    Ok(Value::Tuple(vec![matrix_value(&lu.l()), matrix_value(&lu.u())]))
+    Ok(Value::Tuple(vec![
+        matrix_value(&lu.l()),
+        matrix_value(&lu.u()),
+    ]))
 }
 
 fn qr(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "linalg::qr")?;
     let m = as_matrix(&args[0], "linalg::qr")?;
     let qr = m.clone().qr();
-    Ok(Value::Tuple(vec![matrix_value(&qr.q()), matrix_value(&qr.r())]))
+    Ok(Value::Tuple(vec![
+        matrix_value(&qr.q()),
+        matrix_value(&qr.r()),
+    ]))
 }
 
 fn svd(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "linalg::svd")?;
     let m = as_matrix(&args[0], "linalg::svd")?;
     let svd = m.clone().svd(true, true);
-    let u = svd.u.as_ref().ok_or_else(|| type_err("linalg::svd", "failed to compute U"))?;
-    let vt = svd.v_t.as_ref().ok_or_else(|| type_err("linalg::svd", "failed to compute Vt"))?;
+    let u = svd
+        .u
+        .as_ref()
+        .ok_or_else(|| type_err("linalg::svd", "failed to compute U"))?;
+    let vt = svd
+        .v_t
+        .as_ref()
+        .ok_or_else(|| type_err("linalg::svd", "failed to compute Vt"))?;
     Ok(Value::Tuple(vec![
         matrix_value(u),
         vector_value(&svd.singular_values),
@@ -395,11 +438,12 @@ fn cholesky(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> 
     arity(args, 1, "linalg::cholesky")?;
     let m = as_matrix(&args[0], "linalg::cholesky")?;
     require_square(&m, "linalg::cholesky")?;
-    let l = m
-        .clone()
-        .cholesky()
-        .map(|c| c.l())
-        .ok_or_else(|| type_err("linalg::cholesky", "matrix is not positive-definite (R0005)"))?;
+    let l = m.clone().cholesky().map(|c| c.l()).ok_or_else(|| {
+        type_err(
+            "linalg::cholesky",
+            "matrix is not positive-definite (R0005)",
+        )
+    })?;
     Ok(matrix_value(&l))
 }
 

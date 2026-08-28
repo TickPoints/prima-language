@@ -112,6 +112,7 @@ fn run_all_examples_succeed() {
         "number_literals.pra",
         "simple.pra",
         "config_fraction.pra",
+        "config_simplify.pra",
         "loop_optimization.pra",
         "collapse.pra",
         "control_flow.pra",
@@ -133,6 +134,13 @@ fn run_all_examples_succeed() {
         "io.pra",
         "physics.pra",
         "sys_time.pra",
+        "mymath.pra",
+        "fstring.pra",
+        "jit.pra",
+        "autodiff.pra",
+        "opt_levels.pra",
+        "builtin_layers.pra",
+        "capi.pra",
     ];
     for name in examples {
         Command::cargo_bin("prima")
@@ -179,7 +187,10 @@ fn fmt_rewrites_file_in_place() {
         .assert()
         .success();
     let content = std::fs::read_to_string(&file).unwrap();
-    assert!(content.contains("let a = 1;\nlet b = 2;"), "got {content:?}");
+    assert!(
+        content.contains("let a = 1;\nlet b = 2;"),
+        "got {content:?}"
+    );
     let _ = std::fs::remove_file(&file);
 }
 
@@ -312,7 +323,9 @@ fn run_method_error_attaches_doc_note_and_did_you_mean() {
         .arg(&file)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("unknown `String` method `toupper`"))
+        .stderr(predicate::str::contains(
+            "unknown `String` method `toupper`",
+        ))
         .stderr(predicate::str::contains("to_upper"))
         .stderr(predicate::str::contains("did you mean"));
     let _ = std::fs::remove_file(&file);

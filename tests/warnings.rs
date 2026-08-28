@@ -21,14 +21,18 @@ fn format_call_emits_w0006() {
 
 #[test]
 fn fstring_emits_no_w0006() {
-    let ws = warnings_of(r#"let a = 42;
-let s = f"a is {a}";"#);
+    let ws = warnings_of(
+        r#"let a = 42;
+let s = f"a is {a}";"#,
+    );
     assert!(!ws.iter().any(|c| c == "W0006"), "warnings = {ws:?}");
 }
 
 #[test]
 fn newline_separated_statements_are_parse_error() {
-    let err = Evaluator::new().eval_value("let x = 1\nx + 1\n").unwrap_err();
+    let err = Evaluator::new()
+        .eval_value("let x = 1\nx + 1\n")
+        .unwrap_err();
     assert!(err.to_string().contains("E0011"), "error = {err}");
 }
 
@@ -39,13 +43,17 @@ fn semicolon_terminated_statements_evaluate() {
 
 #[test]
 fn pipeline_is_parse_error() {
-    let err = Evaluator::new().eval_value("let x = 1;\nx |> to_f64").unwrap_err();
+    let err = Evaluator::new()
+        .eval_value("let x = 1;\nx |> to_f64")
+        .unwrap_err();
     assert!(err.to_string().contains("E0010"), "error = {err}");
 }
 
 #[test]
 fn direct_call_evaluates() {
-    let v = Evaluator::new().eval_value("let f(x) = x^2;\nf(3)").expect("eval failed");
+    let v = Evaluator::new()
+        .eval_value("let f(x) = x^2;\nf(3)")
+        .expect("eval failed");
     assert_eq!(v, prima_core::Value::Number(prima_core::Number::from(9)));
 }
 
@@ -77,5 +85,9 @@ fn warnings_do_not_accumulate_across_eval_value() {
     assert!(ev.warnings().iter().any(|w| w.code == "W0005"));
     // A fresh parse resets the warning list (spec §16.5: collected since the last parse entry point).
     ev.eval_value("let y = 2;").expect("eval failed");
-    assert!(!ev.warnings().iter().any(|w| w.code == "W0005"), "warnings = {:?}", ev.warnings());
+    assert!(
+        !ev.warnings().iter().any(|w| w.code == "W0005"),
+        "warnings = {:?}",
+        ev.warnings()
+    );
 }

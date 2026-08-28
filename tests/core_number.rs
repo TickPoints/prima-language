@@ -106,9 +106,18 @@ fn fixed_width_stays_distinct() {
 
 #[test]
 fn fixed_width_arithmetic_normalizes_to_exact() {
-    assert_eq!(Number::I8(100) + Number::from(50), Number::Integer(BigInt::from(150)));
-    assert_eq!(Number::I16(7) * Number::from(6), Number::Integer(BigInt::from(42)));
-    assert_eq!(Number::U8(3) - Number::from(10), Number::Integer(BigInt::from(-7)));
+    assert_eq!(
+        Number::I8(100) + Number::from(50),
+        Number::Integer(BigInt::from(150))
+    );
+    assert_eq!(
+        Number::I16(7) * Number::from(6),
+        Number::Integer(BigInt::from(42))
+    );
+    assert_eq!(
+        Number::U8(3) - Number::from(10),
+        Number::Integer(BigInt::from(-7))
+    );
     assert_eq!(-Number::I8(5), Number::Integer(BigInt::from(-5)));
     let exact_div = Number::I64(6) / Number::I64(2);
     match exact_div {
@@ -126,7 +135,10 @@ fn fixed_width_arithmetic_normalizes_to_exact() {
         }
         other => panic!("expected Rational, got {other:?}"),
     }
-    assert_eq!(Number::U128(1) + Number::from(2), Number::Integer(BigInt::from(3)));
+    assert_eq!(
+        Number::U128(1) + Number::from(2),
+        Number::Integer(BigInt::from(3))
+    );
 }
 
 #[test]
@@ -136,7 +148,10 @@ fn bigfloat_normalizes_to_real() {
         Number::Real(Real::F64(v)) => assert_eq!(v, 3.0),
         other => panic!("expected Real F64, got {other:?}"),
     }
-    assert_eq!(Number::BigFloat(4.0).sqrt(), Some(Number::Real(Real::F64(2.0))));
+    assert_eq!(
+        Number::BigFloat(4.0).sqrt(),
+        Some(Number::Real(Real::F64(2.0)))
+    );
     assert_eq!(Number::BigFloat(3.0).to_string(), "3");
 }
 

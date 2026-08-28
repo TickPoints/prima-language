@@ -15,7 +15,10 @@ fn eval_fmt(src: &str) -> String {
 #[test]
 fn derivative_of_mfn() {
     // `derivative(f, x)` lowers the MFn body with `x` as a symbol (spec §19.4).
-    assert_eq!(eval_fmt("let f(x) = x^2 + sin(x);\nderivative(f, x)"), "2 x + \\cos\\left(x\\right)");
+    assert_eq!(
+        eval_fmt("let f(x) = x^2 + sin(x);\nderivative(f, x)"),
+        "2 x + \\cos\\left(x\\right)"
+    );
 }
 
 #[test]
@@ -32,8 +35,14 @@ fn second_derivative() {
 
 #[test]
 fn partial_derivatives() {
-    assert_eq!(eval_fmt("let g(x, y) = x^2*y + y^3;\npartial(g, x)"), "2 x y");
-    assert_eq!(eval_fmt("let g(x, y) = x^2*y + y^3;\npartial(g, y)"), "x^{2} + 3 \\left(y^{2}\\right)");
+    assert_eq!(
+        eval_fmt("let g(x, y) = x^2*y + y^3;\npartial(g, x)"),
+        "2 x y"
+    );
+    assert_eq!(
+        eval_fmt("let g(x, y) = x^2*y + y^3;\npartial(g, y)"),
+        "x^{2} + 3 \\left(y^{2}\\right)"
+    );
 }
 
 #[test]

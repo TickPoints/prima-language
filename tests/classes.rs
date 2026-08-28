@@ -32,7 +32,11 @@ struct TempDir(PathBuf);
 
 impl TempDir {
     fn new() -> TempDir {
-        let dir = std::env::temp_dir().join(format!("prima_class_{}_{}", std::process::id(), COUNTER.fetch_add(1, Ordering::SeqCst)));
+        let dir = std::env::temp_dir().join(format!(
+            "prima_class_{}_{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::SeqCst)
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         TempDir(dir)
     }
@@ -66,7 +70,12 @@ fn private_field_not_accessible_outside() {
 fn pub_field_accessible_and_mutating_method() {
     let src = "class Counter {\n    pub count: Integer,\n    pub fn new(start: Integer) -> Self { Counter { count: start } }\n    pub fn increment(self) -> Self { Counter { count: self.count + 1 } }\n    pub fn value(self) -> Integer { self.count }\n}\nlet c = Counter::new(10);\nlet d = c.increment();\nd.value()";
     assert_eq!(eval(src), Value::Number(Number::from(11)));
-    assert_eq!(eval("class Counter {\n    pub count: Integer,\n    pub fn new(start: Integer) -> Self { Counter { count: start } }\n}\nlet c = Counter::new(10);\nc.count"), Value::Number(Number::from(10)));
+    assert_eq!(
+        eval(
+            "class Counter {\n    pub count: Integer,\n    pub fn new(start: Integer) -> Self { Counter { count: start } }\n}\nlet c = Counter::new(10);\nc.count"
+        ),
+        Value::Number(Number::from(10))
+    );
 }
 
 #[test]
@@ -98,7 +107,10 @@ fn pub_mod_visible_within_module() {
 fn class_in_module_imported_and_called() {
     let dir = TempDir::new();
     dir.write("shapes.pra", "pub class Point {\n    pub x: Integer,\n    pub y: Integer,\n    pub fn new(x, y) -> Self { Point { x, y } }\n    pub fn sum(self) -> Integer { self.x + self.y }\n}\n");
-    let main = dir.write("main.pra", "import shapes;\nlet p = shapes::Point::new(3, 4);\nprintln(p.sum());\nprintln(p.x);");
+    let main = dir.write(
+        "main.pra",
+        "import shapes;\nlet p = shapes::Point::new(3, 4);\nprintln(p.sum());\nprintln(p.x);",
+    );
     let out = run_file(&main);
     assert_eq!(out, "7\n3\n");
 }
@@ -107,7 +119,10 @@ fn class_in_module_imported_and_called() {
 fn class_in_module_method_chain() {
     let dir = TempDir::new();
     dir.write("acc.pra", "pub class Acc {\n    pub total: Integer,\n    pub fn new() -> Self { Acc { total: 0 } }\n    pub fn add(self, n: Integer) -> Self { Acc { total: self.total + n } }\n}\n");
-    let main = dir.write("main.pra", "import acc;\nlet s = acc::Acc::new().add(5).add(6);\nprintln(s.total);");
+    let main = dir.write(
+        "main.pra",
+        "import acc;\nlet s = acc::Acc::new().add(5).add(6);\nprintln(s.total);",
+    );
     assert_eq!(run_file(&main), "11\n");
 }
 
@@ -132,6 +147,8 @@ fn unknown_method_errors() {
 #[test]
 fn class_value_formats_as_instance() {
     let mut ev = Evaluator::new();
-    let v = ev.eval_value("class V { pub x: F64 }\nV { x: 1.0 }").expect("eval failed");
+    let v = ev
+        .eval_value("class V { pub x: F64 }\nV { x: 1.0 }")
+        .expect("eval failed");
     assert_eq!(ev.format_value(&v), "class V");
 }

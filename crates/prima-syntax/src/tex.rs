@@ -5,7 +5,11 @@ use crate::span::Span;
 /// MVP parsing subset for `tex"..."` literals (implementation plan §4.9): numbers/commands/`{}` grouping/`^` powers/implicit multiplication/`\frac`,
 /// producing the **same AST** as normal syntax, evaluated uniformly by the interpreter. TeX is only a view (spec §7); parsing goes the other way.
 pub fn parse_tex(src: &str) -> Result<Expr, SyntaxError> {
-    TexParser { chars: src.chars().collect(), pos: 0 }.parse_expr()
+    TexParser {
+        chars: src.chars().collect(),
+        pos: 0,
+    }
+    .parse_expr()
 }
 
 struct TexParser {
@@ -37,23 +41,50 @@ impl TexParser {
     }
 
     fn err(&self, message: &str) -> SyntaxError {
-        SyntaxError { span: self.span(), message: message.to_string() }
+        SyntaxError {
+            span: self.span(),
+            message: message.to_string(),
+        }
     }
 
     fn binary(&self, op: BinOp, lhs: Expr, rhs: Expr) -> Expr {
         let span = lhs.span.merge(rhs.span);
-        Expr { kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span }
+        Expr {
+            kind: ExprKind::Binary {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            },
+            span,
+        }
     }
 
     fn unary(&self, op: UnOp, e: Expr) -> Expr {
         let span = e.span;
-        Expr { kind: ExprKind::Unary { op, operand: Box::new(e) }, span }
+        Expr {
+            kind: ExprKind::Unary {
+                op,
+                operand: Box::new(e),
+            },
+            span,
+        }
     }
 
     fn call(&self, name: String, args: Vec<Expr>) -> Expr {
         let span = self.span();
-        let path = Expr { kind: ExprKind::Path { segments: vec![Spanned { value: name, span }] }, span };
-        Expr { kind: ExprKind::Call { callee: Box::new(path), args }, span }
+        let path = Expr {
+            kind: ExprKind::Path {
+                segments: vec![Spanned { value: name, span }],
+            },
+            span,
+        };
+        Expr {
+            kind: ExprKind::Call {
+                callee: Box::new(path),
+                args,
+            },
+            span,
+        }
     }
 
     fn parse_expr(&mut self) -> Result<Expr, SyntaxError> {
@@ -161,7 +192,9 @@ impl TexParser {
 
     fn parse_atom(&mut self) -> Result<Expr, SyntaxError> {
         self.skip_ws();
-        let c = self.peek().ok_or_else(|| self.err("expected an expression"))?;
+        let c = self
+            .peek()
+            .ok_or_else(|| self.err("expected an expression"))?;
         if c.is_ascii_digit() {
             let mut s = String::new();
             while let Some(d) = self.peek() {
@@ -172,7 +205,10 @@ impl TexParser {
                     break;
                 }
             }
-            Ok(Expr { kind: ExprKind::Literal(Literal::Integer(s)), span: self.span() })
+            Ok(Expr {
+                kind: ExprKind::Literal(Literal::Integer(s)),
+                span: self.span(),
+            })
         } else if c.is_ascii_alphabetic() {
             let mut s = String::new();
             while let Some(l) = self.peek() {
@@ -183,7 +219,13 @@ impl TexParser {
                     break;
                 }
             }
-            Ok(Expr { kind: ExprKind::Symbol(Spanned { value: s, span: self.span() }), span: self.span() })
+            Ok(Expr {
+                kind: ExprKind::Symbol(Spanned {
+                    value: s,
+                    span: self.span(),
+                }),
+                span: self.span(),
+            })
         } else if c == '\\' {
             self.bump();
             let mut name = String::new();
@@ -212,7 +254,13 @@ impl TexParser {
                 let arg = self.parse_paren()?;
                 return Ok(self.call(name, vec![arg]));
             }
-            Ok(Expr { kind: ExprKind::Symbol(Spanned { value: name, span: self.span() }), span: self.span() })
+            Ok(Expr {
+                kind: ExprKind::Symbol(Spanned {
+                    value: name,
+                    span: self.span(),
+                }),
+                span: self.span(),
+            })
         } else if c == '{' {
             self.parse_group()
         } else if c == '(' {

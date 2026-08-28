@@ -13,7 +13,10 @@ fn eval_fmt(src: &str) -> String {
 
 #[test]
 fn mathdef_call() {
-    assert_eq!(eval("let f(x) = x^2;\nf(3)"), Value::Number(Number::from(9)));
+    assert_eq!(
+        eval("let f(x) = x^2;\nf(3)"),
+        Value::Number(Number::from(9))
+    );
 }
 
 #[test]
@@ -31,7 +34,10 @@ fn mfn_broadcasts_over_array() {
 
 #[test]
 fn symbolic_substitution_collapses() {
-    assert_eq!(eval("let f(x) = x^2 + 6;\nf(sqrt(2))"), Value::Number(Number::from(8)));
+    assert_eq!(
+        eval("let f(x) = x^2 + 6;\nf(sqrt(2))"),
+        Value::Number(Number::from(8))
+    );
 }
 
 #[test]
@@ -47,7 +53,10 @@ fn tex_literal_renders_latex() {
 
 #[test]
 fn euler_identity_collapses_to_zero() {
-    assert_eq!(eval(r#"simplify(tex"\e^{i\pi} + 1")"#), Value::Number(Number::from(0)));
+    assert_eq!(
+        eval(r#"simplify(tex"\e^{i\pi} + 1")"#),
+        Value::Number(Number::from(0))
+    );
 }
 
 #[test]
@@ -104,8 +113,14 @@ fn nested_array_allowed_as_data() {
     assert_eq!(
         eval("[[1, 2], [3, 4]]"),
         Value::Array(vec![
-            Value::Array(vec![Value::Number(Number::from(1)), Value::Number(Number::from(2))]),
-            Value::Array(vec![Value::Number(Number::from(3)), Value::Number(Number::from(4))]),
+            Value::Array(vec![
+                Value::Number(Number::from(1)),
+                Value::Number(Number::from(2))
+            ]),
+            Value::Array(vec![
+                Value::Number(Number::from(3)),
+                Value::Number(Number::from(4))
+            ]),
         ])
     );
 }
@@ -113,7 +128,10 @@ fn nested_array_allowed_as_data() {
 #[test]
 fn sqrt_exact_perfect_squares() {
     assert_eq!(eval("sqrt(4)"), Value::Number(Number::from(2)));
-    assert_eq!(eval("sqrt(9/4)"), Value::Number(Number::from(3) / Number::from(2)));
+    assert_eq!(
+        eval("sqrt(9/4)"),
+        Value::Number(Number::from(3) / Number::from(2))
+    );
     assert_eq!(eval_fmt("sqrt(2)"), "\\sqrt{2}");
 }
 
@@ -130,7 +148,11 @@ fn trig_and_log_constants() {
 
 #[test]
 fn empty_array_broadcast_rejected() {
-    assert!(Evaluator::new().eval_value("let f(x) = x^2;\nf([])").is_err());
+    assert!(
+        Evaluator::new()
+            .eval_value("let f(x) = x^2;\nf([])")
+            .is_err()
+    );
 }
 
 #[test]
@@ -145,7 +167,10 @@ fn unbound_variable_is_symbolic() {
 
 #[test]
 fn closure_over_let() {
-    assert_eq!(eval("let a = 5;\nlet f(x) = x + a;\nf(1)"), Value::Number(Number::from(6)));
+    assert_eq!(
+        eval("let a = 5;\nlet f(x) = x + a;\nf(1)"),
+        Value::Number(Number::from(6))
+    );
 }
 
 #[test]
@@ -158,8 +183,15 @@ fn comparisons() {
 
 #[test]
 fn index_read() {
-    assert_eq!(eval("let v = [10, 20, 30];\nv[1]"), Value::Number(Number::from(20)));
-    assert!(Evaluator::new().eval_value("let v = [1, 2];\nv[5]").is_err());
+    assert_eq!(
+        eval("let v = [10, 20, 30];\nv[1]"),
+        Value::Number(Number::from(20))
+    );
+    assert!(
+        Evaluator::new()
+            .eval_value("let v = [1, 2];\nv[5]")
+            .is_err()
+    );
 }
 
 #[test]

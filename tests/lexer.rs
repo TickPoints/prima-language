@@ -10,8 +10,22 @@ fn tokenizes_literals() {
     assert_eq!(kinds[2], &TokenKind::Float("1e-9".into()));
     assert_eq!(kinds[3], &TokenKind::Hex("0x1F".into()));
     assert_eq!(kinds[4], &TokenKind::Binary("0b1010".into()));
-    assert_eq!(kinds[5], &TokenKind::Str { value: "hi".into(), raw: false, single: false });
-    assert_eq!(kinds[6], &TokenKind::Str { value: "raw\\n".into(), raw: true, single: false });
+    assert_eq!(
+        kinds[5],
+        &TokenKind::Str {
+            value: "hi".into(),
+            raw: false,
+            single: false
+        }
+    );
+    assert_eq!(
+        kinds[6],
+        &TokenKind::Str {
+            value: "raw\\n".into(),
+            raw: true,
+            single: false
+        }
+    );
     assert_eq!(kinds[7], &TokenKind::Char('a'));
     assert_eq!(kinds[8], &TokenKind::TexStr("\\pi".into()));
     assert_eq!(kinds[9], &TokenKind::Eof);
@@ -22,7 +36,10 @@ fn fstring_token_parts() {
     let toks = lex(r#"f"x = {x}""#).unwrap();
     match &toks[0].kind {
         TokenKind::FStr(parts) => {
-            assert_eq!(parts[0], prima_syntax::token::FStringToken::Lit("x = ".into()));
+            assert_eq!(
+                parts[0],
+                prima_syntax::token::FStringToken::Lit("x = ".into())
+            );
             assert!(matches!(
                 &parts[1],
                 prima_syntax::token::FStringToken::Interp { expr, spec: None } if matches!(&expr[0].kind, TokenKind::Ident(n) if n == "x")
@@ -36,9 +53,23 @@ fn fstring_token_parts() {
 fn single_quote_string_vs_char() {
     // A single char is a `Char`; longer strings are single-quoted `Str` (spec appendix A).
     let toks = lex(r#"'hello'"#).unwrap();
-    assert_eq!(toks[0].kind, TokenKind::Str { value: "hello".into(), raw: false, single: true });
+    assert_eq!(
+        toks[0].kind,
+        TokenKind::Str {
+            value: "hello".into(),
+            raw: false,
+            single: true
+        }
+    );
     let toks = lex(r#"''"#).unwrap();
-    assert_eq!(toks[0].kind, TokenKind::Str { value: String::new(), raw: false, single: true });
+    assert_eq!(
+        toks[0].kind,
+        TokenKind::Str {
+            value: String::new(),
+            raw: false,
+            single: true
+        }
+    );
 }
 
 #[test]
@@ -53,7 +84,14 @@ fn range_not_float() {
 #[test]
 fn string_escapes() {
     let toks = lex(r#""a\nb\tc""#).unwrap();
-    assert_eq!(toks[0].kind, TokenKind::Str { value: "a\nb\tc".into(), raw: false, single: false });
+    assert_eq!(
+        toks[0].kind,
+        TokenKind::Str {
+            value: "a\nb\tc".into(),
+            raw: false,
+            single: false
+        }
+    );
 }
 
 #[test]
@@ -88,6 +126,7 @@ fn unterminated_string_is_error() {
 
 #[test]
 fn snapshot_operators() {
-    let src = "+ - * / ^ ** % @ == != < <= > >= && || ! = += -= |> @. :: -> => .. := ( ) [ ] { } , ; | _";
+    let src =
+        "+ - * / ^ ** % @ == != < <= > >= && || ! = += -= |> @. :: -> => .. := ( ) [ ] { } , ; | _";
     insta::assert_debug_snapshot!("lexer_operators", lex(src).unwrap());
 }

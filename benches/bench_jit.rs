@@ -4,10 +4,10 @@
 //!
 //! The workload is the acceptance expression `f(x) = x^4 + sin(x)*x + exp(x)`; the spec measures
 //! `f(to_f64(101))` going native after JIT hot-path compilation. The compiled group is guarded so
-//! the benchmark builds even while `prima-jit` is a stub (`dag_to_bytecode` returns `None`): in
-//! that case only the interpreted group is registered.
+//! the benchmark still builds when `compile_scalar` returns `None` (expression outside the compiled
+//! subset): in that case only the interpreted group is registered.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use prima_core::{BuiltinSymbols, ExprData, ExprId, ExprPool, Number, Real, SymbolId, SymbolTable};
 use prima_jit::compile_scalar;
 
@@ -36,8 +36,14 @@ fn eval_dag(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId, x: SymbolId,
         Some(ExprData::Real(Real::F32(v))) => v as f64,
         Some(ExprData::Symbol(s)) if s == x => xv,
         Some(ExprData::Symbol(_)) => 0.0, // free symbol outside the compiled parameter set
-        Some(ExprData::Add(items)) => items.iter().map(|&c| eval_dag(pool, builtins, c, x, xv)).sum(),
-        Some(ExprData::Mul(items)) => items.iter().map(|&c| eval_dag(pool, builtins, c, x, xv)).product(),
+        Some(ExprData::Add(items)) => items
+            .iter()
+            .map(|&c| eval_dag(pool, builtins, c, x, xv))
+            .sum(),
+        Some(ExprData::Mul(items)) => items
+            .iter()
+            .map(|&c| eval_dag(pool, builtins, c, x, xv))
+            .product(),
         Some(ExprData::Pow { base, exp }) => {
             let b = eval_dag(pool, builtins, base, x, xv);
             let e = eval_dag(pool, builtins, exp, x, xv);
@@ -65,12 +71,13 @@ fn bench_jit(c: &mut Criterion) {
 
     group.bench_function("interpreted-dag", |b| {
         b.iter(|| {
-            let _ = std::hint::black_box(eval_dag(pool, builtins, f, x, std::hint::black_box(input)));
+            let _ =
+                std::hint::black_box(eval_dag(pool, builtins, f, x, std::hint::black_box(input)));
         });
     });
 
-    // Guard: while `prima-jit` is a stub `compile_scalar` returns `None`; the interpreted group
-    // still runs so the benchmark always builds and the acceptance comparison is opt-in.
+    // Guard: `compile_scalar` returns `None` for expressions outside the compiled subset; the
+    // interpreted group still runs so the benchmark always builds and the acceptance comparison is opt-in.
     match compile_scalar(pool, builtins, f, &["x".to_string()]) {
         Some(compiled) => {
             group.bench_function("compiled-native", |b| {
@@ -84,7 +91,9 @@ fn bench_jit(c: &mut Criterion) {
             eprintln!("[bench] f(101) interpreted={interpreted} compiled={compiled}");
         }
         None => {
-            eprintln!("[bench] prima-jit stub: `compile_scalar` returned None, skipping the compiled-native group (spec §19.2)");
+            eprintln!(
+                "[bench] prima-jit: `compile_scalar` returned None, skipping the compiled-native group (spec §19.2)"
+            );
         }
     }
 

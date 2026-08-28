@@ -16,8 +16,14 @@ fn eval_str(src: &str) -> String {
 #[test]
 fn fstring_interpolates_expressions() {
     assert_eq!(eval_str("let a = 42;\nf\"a is {a}\""), "a is 42");
-    assert_eq!(eval_str("let name = \"world\";\nf\"hello {name}\""), "hello world");
-    assert_eq!(eval_str("let x = 1;\nlet y = 2;\nf\"{x} + {y} = {x + y}\""), "1 + 2 = 3");
+    assert_eq!(
+        eval_str("let name = \"world\";\nf\"hello {name}\""),
+        "hello world"
+    );
+    assert_eq!(
+        eval_str("let x = 1;\nlet y = 2;\nf\"{x} + {y} = {x + y}\""),
+        "1 + 2 = 3"
+    );
 }
 
 #[test]
@@ -59,7 +65,10 @@ fn fstring_interpolation_can_be_any_expression() {
 #[test]
 fn single_quote_strings_are_equivalent() {
     assert_eq!(eval_str("'hello'"), "hello");
-    assert_eq!(eval("let s = 'ab';\ns.len()"), Value::Number(Number::from(2)));
+    assert_eq!(
+        eval("let s = 'ab';\ns.len()"),
+        Value::Number(Number::from(2))
+    );
     // A single character is a `Char` (spec appendix A `char`).
     assert_eq!(eval("'a'"), Value::Char('a'));
 }
@@ -72,8 +81,10 @@ fn raw_strings_do_not_escape() {
 
 #[test]
 fn raw_fstring_keeps_literals_raw_but_interpolates() {
-    let v = eval(r#"let x = 5;
-rf"a\nb{x}""#);
+    let v = eval(
+        r#"let x = 5;
+rf"a\nb{x}""#,
+    );
     assert_eq!(v, Value::String("a\\nb5".into()));
 }
 
@@ -90,20 +101,35 @@ fn standard_escapes() {
 
 #[test]
 fn string_len_is_char_count() {
-    assert_eq!(eval("let s = \"hello\";\ns.len()"), Value::Number(Number::from(5)));
+    assert_eq!(
+        eval("let s = \"hello\";\ns.len()"),
+        Value::Number(Number::from(5))
+    );
     // `len` counts characters, not bytes.
-    assert_eq!(eval("let s = \"héllo\";\ns.len()"), Value::Number(Number::from(5)));
+    assert_eq!(
+        eval("let s = \"héllo\";\ns.len()"),
+        Value::Number(Number::from(5))
+    );
 }
 
 #[test]
 fn case_conversion() {
-    assert_eq!(eval("let s = \"aXb\";\ns.to_lower()"), Value::String("axb".into()));
-    assert_eq!(eval("let s = \"aXb\";\ns.to_upper()"), Value::String("AXB".into()));
+    assert_eq!(
+        eval("let s = \"aXb\";\ns.to_lower()"),
+        Value::String("axb".into())
+    );
+    assert_eq!(
+        eval("let s = \"aXb\";\ns.to_upper()"),
+        Value::String("AXB".into())
+    );
 }
 
 #[test]
 fn push_appends() {
-    assert_eq!(eval("let s = \"ab\";\ns.push(\"c\")"), Value::String("abc".into()));
+    assert_eq!(
+        eval("let s = \"ab\";\ns.push(\"c\")"),
+        Value::String("abc".into())
+    );
 }
 
 #[test]
@@ -121,15 +147,30 @@ fn split_yields_array_of_strings() {
 
 #[test]
 fn contains_reports_substring() {
-    assert_eq!(eval("let s = \"hello world\";\ns.contains(\"world\")"), Value::Bool(true));
-    assert_eq!(eval("let s = \"hello world\";\ns.contains(\"xyz\")"), Value::Bool(false));
+    assert_eq!(
+        eval("let s = \"hello world\";\ns.contains(\"world\")"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        eval("let s = \"hello world\";\ns.contains(\"xyz\")"),
+        Value::Bool(false)
+    );
 }
 
 #[test]
 fn trim_replace_repeat() {
-    assert_eq!(eval("let s = \"  hi  \";\ns.trim()"), Value::String("hi".into()));
-    assert_eq!(eval("let s = \"a-b\";\ns.replace(\"-\", \"+\")"), Value::String("a+b".into()));
-    assert_eq!(eval("let s = \"ab\";\ns.repeat(3)"), Value::String("ababab".into()));
+    assert_eq!(
+        eval("let s = \"  hi  \";\ns.trim()"),
+        Value::String("hi".into())
+    );
+    assert_eq!(
+        eval("let s = \"a-b\";\ns.replace(\"-\", \"+\")"),
+        Value::String("a+b".into())
+    );
+    assert_eq!(
+        eval("let s = \"ab\";\ns.repeat(3)"),
+        Value::String("ababab".into())
+    );
 }
 
 #[test]
@@ -138,7 +179,10 @@ fn insert_is_result_checked() {
         eval("let s = \"hi\";\ns.insert(1, \"o\")"),
         Value::Result(Ok(Box::new(Value::String("hoi".into()))))
     );
-    assert!(matches!(eval("let s = \"hi\";\ns.insert(9, \"o\")"), Value::Result(Err(_))));
+    assert!(matches!(
+        eval("let s = \"hi\";\ns.insert(9, \"o\")"),
+        Value::Result(Err(_))
+    ));
 }
 
 #[test]
@@ -149,8 +193,13 @@ fn string_associated_new() {
 #[test]
 fn format_call_is_removed() {
     // `format` was removed in v2.2 (spec §18.1): it is no longer a builtin.
-    let err = Evaluator::new().eval_value("format(\"a is {}\", 42)").unwrap_err();
-    assert!(err.to_string().contains("unknown function `format`"), "error = {err}");
+    let err = Evaluator::new()
+        .eval_value("format(\"a is {}\", 42)")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("unknown function `format`"),
+        "error = {err}"
+    );
 }
 
 #[test]
@@ -159,5 +208,8 @@ fn fixed_width_collapse_round_trips() {
     assert_eq!(eval("to_usize(42)"), Value::Number(Number::Usize(42)));
     assert_eq!(eval("to_i128(-7)"), Value::Number(Number::I128(-7)));
     assert_eq!(eval("to_i32(to_u8(255))"), Value::Number(Number::I32(255)));
-    assert!(Evaluator::new().eval_value("to_u8(256)").is_err(), "u8 overflow must error");
+    assert!(
+        Evaluator::new().eval_value("to_u8(256)").is_err(),
+        "u8 overflow must error"
+    );
 }

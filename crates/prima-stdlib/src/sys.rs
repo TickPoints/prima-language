@@ -11,7 +11,10 @@ fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
     if args.len() == n {
         Ok(())
     } else {
-        Err(RuntimeError::Message(format!("`{fname}` expects {n} argument(s), got {}", args.len())))
+        Err(RuntimeError::Message(format!(
+            "`{fname}` expects {n} argument(s), got {}",
+            args.len()
+        )))
     }
 }
 
@@ -21,7 +24,9 @@ fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeEr
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a string, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!("`{fname}` missing argument {i}"))),
+        None => Err(RuntimeError::Message(format!(
+            "`{fname}` missing argument {i}"
+        ))),
     }
 }
 
@@ -60,9 +65,9 @@ fn path_file_name(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeE
     arity(args, 1, "sys::path::file_name")?;
     let p = string_arg(args, 0, "sys::path::file_name")?;
     match Path::new(&p).file_name() {
-        Some(n) if !n.is_empty() => {
-            Ok(Value::Option(Some(Box::new(Value::String(n.to_string_lossy().into_owned())))))
-        }
+        Some(n) if !n.is_empty() => Ok(Value::Option(Some(Box::new(Value::String(
+            n.to_string_lossy().into_owned(),
+        ))))),
         _ => Ok(Value::Option(None)),
     }
 }
@@ -71,7 +76,9 @@ fn path_extension(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeE
     arity(args, 1, "sys::path::extension")?;
     let p = string_arg(args, 0, "sys::path::extension")?;
     match Path::new(&p).extension() {
-        Some(e) => Ok(Value::Option(Some(Box::new(Value::String(e.to_string_lossy().into_owned()))))),
+        Some(e) => Ok(Value::Option(Some(Box::new(Value::String(
+            e.to_string_lossy().into_owned(),
+        ))))),
         None => Ok(Value::Option(None)),
     }
 }
@@ -80,7 +87,9 @@ fn path_parent(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErro
     arity(args, 1, "sys::path::parent")?;
     let p = string_arg(args, 0, "sys::path::parent")?;
     match Path::new(&p).parent() {
-        Some(par) => Ok(Value::Option(Some(Box::new(Value::String(par.to_string_lossy().into_owned()))))),
+        Some(par) => Ok(Value::Option(Some(Box::new(Value::String(
+            par.to_string_lossy().into_owned(),
+        ))))),
         None => Ok(Value::Option(None)),
     }
 }
@@ -95,8 +104,12 @@ fn path_canonicalize(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, Runti
     arity(args, 1, "sys::path::canonicalize")?;
     let p = string_arg(args, 0, "sys::path::canonicalize")?;
     match std::fs::canonicalize(&p) {
-        Ok(c) => Ok(Value::Result(Ok(Box::new(Value::String(c.to_string_lossy().into_owned()))))),
-        Err(e) => Ok(Value::Result(Err(format!("cannot canonicalize `{p}`: {e}")))),
+        Ok(c) => Ok(Value::Result(Ok(Box::new(Value::String(
+            c.to_string_lossy().into_owned(),
+        ))))),
+        Err(e) => Ok(Value::Result(Err(format!(
+            "cannot canonicalize `{p}`: {e}"
+        )))),
     }
 }
 
@@ -104,7 +117,11 @@ fn env_home_dir(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErr
     arity(args, 0, "sys::env::home_dir")?;
     let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     Ok(std::env::var_os(key)
-        .map(|h| Value::Option(Some(Box::new(Value::String(h.to_string_lossy().into_owned())))))
+        .map(|h| {
+            Value::Option(Some(Box::new(Value::String(
+                h.to_string_lossy().into_owned(),
+            ))))
+        })
         .unwrap_or(Value::Option(None)))
 }
 
@@ -119,7 +136,9 @@ fn env_get(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
 
 fn env_args(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 0, "sys::env::args")?;
-    Ok(Value::Array(std::env::args().skip(1).map(Value::String).collect()))
+    Ok(Value::Array(
+        std::env::args().skip(1).map(Value::String).collect(),
+    ))
 }
 
 fn env_current_dir(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {

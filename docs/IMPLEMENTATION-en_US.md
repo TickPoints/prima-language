@@ -463,9 +463,9 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 ---
 
-## 5. Implementation Roadmap (Phase 0 → 5)
+## 5. Implementation Roadmap (Phase 0 → 12)
 
-Each Phase ends with runnable acceptance commands. Phases 0–2 have been delivered under v1.x; the v2.0 changes are spread across each Phase's incremental tasks — see the "v2.0 increments" subsections of each Phase.
+Each Phase ends with runnable acceptance commands. Phases 0–9 are all delivered (see the "landed" block at the end of each Phase); Phases 10–12 are planned. Phases 0–2 have been delivered under v1.x; the v2.0 changes are spread across each Phase's incremental tasks — see the "v2.0 increments" subsections of each Phase.
 
 ### Phase 0: Project skeleton + front end (syntax crate)
 

@@ -1,5 +1,5 @@
 /// Runtime error (spec §16): structured categories so `try/catch` can filter by type (spec §16.3),
-/// carrying a human-readable message. The complete fields of the structured `Error` enum (§16.1) are deferred to a later phase.
+/// carrying a human-readable message. The complete fields of the structured `Error` enum (§16.1) are deferred to a later release.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum RuntimeError {
     #[error("{0}")]
@@ -19,12 +19,19 @@ pub enum RuntimeError {
     /// Wraps an error with the source span of the statement/expression being evaluated,
     /// so diagnostics can point at the offending location (spec §16.4).
     #[error("{error}")]
-    Located { span: prima_syntax::Span, error: Box<RuntimeError> },
+    Located {
+        span: prima_syntax::Span,
+        error: Box<RuntimeError>,
+    },
     /// Wraps an error with diagnostic notes (spec §16.4): failed method calls attach the method
     /// signature/definition/`///` doc as a note plus an optional `did you mean` help. The notes are
     /// collected by `notes()`/`help()`; the CLI renders them under the primary message.
     #[error("{error}")]
-    WithNotes { notes: Vec<String>, help: Option<String>, error: Box<RuntimeError> },
+    WithNotes {
+        notes: Vec<String>,
+        help: Option<String>,
+        error: Box<RuntimeError>,
+    },
 }
 
 impl RuntimeError {
@@ -98,7 +105,10 @@ impl RuntimeError {
 pub(crate) fn attach_span(e: RuntimeError, span: prima_syntax::Span) -> RuntimeError {
     match e {
         RuntimeError::Located { .. } => e,
-        other => RuntimeError::Located { span, error: Box::new(other) },
+        other => RuntimeError::Located {
+            span,
+            error: Box::new(other),
+        },
     }
 }
 
@@ -138,7 +148,10 @@ mod tests {
             error: Box::new(inner),
         };
         // Outermost first, and the wrapped `Message`'s own text stays the display string only.
-        assert_eq!(outer.notes(), vec!["outer note".to_string(), "inner note".to_string()]);
+        assert_eq!(
+            outer.notes(),
+            vec!["outer note".to_string(), "inner note".to_string()]
+        );
         assert_eq!(outer.help().as_deref(), Some("did you mean `outer`?"));
         assert_eq!(outer.to_string(), "root failure");
 

@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use prima_runtime::check::check_src;
 use prima_runtime::Evaluator;
+use prima_runtime::check::check_src;
 use prima_syntax::parse_checked;
 
 mod cabi;
@@ -23,8 +23,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    Run { file: PathBuf },
-    Parse { file: PathBuf },
+    Run {
+        file: PathBuf,
+    },
+    Parse {
+        file: PathBuf,
+    },
     Compile {
         file: PathBuf,
         #[arg(short, long)]
@@ -71,16 +75,34 @@ fn main() -> ExitCode {
         Command::Parse { file } => parse_file(&file),
         Command::Check { file, deny } => check_file(&file, &deny),
         // `--emit-c-abi` also writes the header, so it takes precedence when both flags are set.
-        Command::Compile { file, output, emit_c_abi: true, .. } => cabi::run(&file, output.as_deref()),
-        Command::Compile { file, output, emit_headers: true, .. } => compile_headers(&file, output.as_deref()),
+        Command::Compile {
+            file,
+            output,
+            emit_c_abi: true,
+            ..
+        } => cabi::run(&file, output.as_deref()),
+        Command::Compile {
+            file,
+            output,
+            emit_headers: true,
+            ..
+        } => compile_headers(&file, output.as_deref()),
         Command::Compile { .. } => {
-            diagnostics::print_colored_error("compilation requires `--emit-headers` or `--emit-c-abi` in this build (spec §20)");
+            diagnostics::print_colored_error(
+                "compilation requires `--emit-headers` or `--emit-c-abi` in this build (spec §20)",
+            );
             ExitCode::FAILURE
         }
         Command::Repl => repl::run(),
         Command::Fmt { path, write, check } => fmt::run(&path, write, check),
-        Command::Test { path } => testcmd::run(&path.unwrap_or_else(|| PathBuf::from(testcmd::DEFAULT_DIR))),
-        Command::Doc { path, output, stdlib } => doc::run(path.as_deref(), output.as_deref(), stdlib),
+        Command::Test { path } => {
+            testcmd::run(&path.unwrap_or_else(|| PathBuf::from(testcmd::DEFAULT_DIR)))
+        }
+        Command::Doc {
+            path,
+            output,
+            stdlib,
+        } => doc::run(path.as_deref(), output.as_deref(), stdlib),
     }
 }
 
@@ -189,7 +211,8 @@ fn compile_headers(file: &Path, output: Option<&Path>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let header = prima_runtime::capi::render_header(&prima_runtime::capi::collect_exports(&program));
+    let header =
+        prima_runtime::capi::render_header(&prima_runtime::capi::collect_exports(&program));
     match output {
         Some(path) => match std::fs::write(path, &header) {
             Ok(()) => ExitCode::SUCCESS,

@@ -60,7 +60,10 @@ fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
     if args.len() == n {
         Ok(())
     } else {
-        Err(RuntimeError::Message(format!("`{fname}` expects {n} argument(s), got {}", args.len())))
+        Err(RuntimeError::Message(format!(
+            "`{fname}` expects {n} argument(s), got {}",
+            args.len()
+        )))
     }
 }
 
@@ -70,7 +73,9 @@ fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeEr
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a string, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!("`{fname}` missing argument {i}"))),
+        None => Err(RuntimeError::Message(format!(
+            "`{fname}` missing argument {i}"
+        ))),
     }
 }
 
@@ -80,11 +85,18 @@ fn number_arg(args: &[Value], i: usize, fname: &str) -> Result<f64, RuntimeError
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a number, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!("`{fname}` missing argument {i}"))),
+        None => Err(RuntimeError::Message(format!(
+            "`{fname}` missing argument {i}"
+        ))),
     }
 }
 
-fn optional_string(args: &[Value], i: usize, default: &str, fname: &str) -> Result<String, RuntimeError> {
+fn optional_string(
+    args: &[Value],
+    i: usize,
+    default: &str,
+    fname: &str,
+) -> Result<String, RuntimeError> {
     match args.get(i) {
         Some(Value::String(s)) => Ok(s.clone()),
         Some(other) => Err(RuntimeError::Type(format!(
@@ -94,7 +106,12 @@ fn optional_string(args: &[Value], i: usize, default: &str, fname: &str) -> Resu
     }
 }
 
-fn optional_bool(args: &[Value], i: usize, default: bool, fname: &str) -> Result<bool, RuntimeError> {
+fn optional_bool(
+    args: &[Value],
+    i: usize,
+    default: bool,
+    fname: &str,
+) -> Result<bool, RuntimeError> {
     match args.get(i) {
         Some(Value::Bool(b)) => Ok(*b),
         Some(other) => Err(RuntimeError::Type(format!(
@@ -134,7 +151,7 @@ fn numeric_array(v: &Value, fname: &str, i: usize) -> Result<Vec<f64>, RuntimeEr
                     other => {
                         return Err(RuntimeError::Type(format!(
                             "`{fname}` argument {i} must be an array of numbers; element {j} is {other:?}"
-                        )))
+                        )));
                     }
                 }
             }
@@ -148,11 +165,7 @@ fn numeric_array(v: &Value, fname: &str, i: usize) -> Result<Vec<f64>, RuntimeEr
 
 /// An empty label means "no legend entry" rather than an empty legend text.
 fn label(text: String) -> Option<String> {
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 /// Register the `plot` `@builtin` implementations (spec §18.4 / appendix B.4). Each `@builtin`
@@ -311,7 +324,9 @@ fn grid(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
 /// (spec §B.4). Only the `svg` format is supported; `dpi` is accepted but ignored (SVG is vector).
 fn savefig(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.is_empty() {
-        return Err(RuntimeError::Message("`plot::savefig` expects a filename".into()));
+        return Err(RuntimeError::Message(
+            "`plot::savefig` expects a filename".into(),
+        ));
     }
     let filename = string_arg(args, 0, "plot::savefig")?;
     let format = optional_string(args, 1, "svg", "plot::savefig")?;
@@ -463,7 +478,9 @@ fn fmt(v: f64) -> String {
 
 /// Escape XML text content (spec-free; required for valid SVG labels).
 fn escape(text: &str) -> String {
-    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn render_svg(s: &PlotState) -> String {

@@ -13,11 +13,11 @@ use std::mem;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use cranelift_codegen::ir::immediates::Offset32;
-use cranelift_codegen::ir::{types, AbiParam, InstBuilder, MemFlagsData, Signature, Type, Value};
+use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlagsData, Signature, Type, Value, types};
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
+use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 
 use crate::bytecode::{Bytecode, Op};
 
@@ -213,7 +213,15 @@ fn validate_bytecode(bc: &Bytecode, arity: usize) -> Option<()> {
                 }
                 height += 1;
             }
-            Op::Neg | Op::Abs | Op::Sqrt | Op::Exp | Op::Ln | Op::Log10 | Op::Sin | Op::Cos | Op::Tan => {
+            Op::Neg
+            | Op::Abs
+            | Op::Sqrt
+            | Op::Exp
+            | Op::Ln
+            | Op::Log10
+            | Op::Sin
+            | Op::Cos
+            | Op::Tan => {
                 if height == 0 {
                     return None;
                 }
@@ -293,9 +301,12 @@ fn emit_op(
         Op::Const(x) => builder.ins().f64const(x),
         Op::Param(i) => {
             let offset = i32::from(8 * i);
-            builder
-                .ins()
-                .load(types::F64, MemFlagsData::new(), buffer, Offset32::new(offset))
+            builder.ins().load(
+                types::F64,
+                MemFlagsData::new(),
+                buffer,
+                Offset32::new(offset),
+            )
         }
         Op::Neg => {
             let x = pop1(stack);
@@ -335,10 +346,7 @@ fn pop2(stack: &mut Vec<Value>) -> (Value, Value) {
 }
 
 /// Fold `f(a, b)` where `a` was pushed before `b` (top of stack is `b`).
-fn binop(
-    f: impl FnOnce(Value, Value) -> Value,
-    stack: &mut Vec<Value>,
-) -> Value {
+fn binop(f: impl FnOnce(Value, Value) -> Value, stack: &mut Vec<Value>) -> Value {
     let (a, b) = pop2(stack);
     f(a, b)
 }

@@ -34,7 +34,10 @@ fn plot_savefig_writes_svg() {
     let content = fs::read_to_string(&path).expect("svg file should exist");
     assert!(content.starts_with("<svg"), "content: {content}");
     assert!(content.contains("<polyline"), "content: {content}");
-    assert!(content.contains("line"), "series label should be rendered: {content}");
+    assert!(
+        content.contains("line"),
+        "series label should be rendered: {content}"
+    );
     remove(&path);
 }
 
@@ -72,7 +75,10 @@ fn plot_savefig_rejects_non_svg_extension() {
         path.display()
     );
     assert!(!run(&src), "png extension must be rejected");
-    assert!(!path.exists(), "no file should be written for a rejected format");
+    assert!(
+        !path.exists(),
+        "no file should be written for a rejected format"
+    );
 }
 
 #[test]
@@ -86,7 +92,10 @@ fn plot_savefig_rejects_non_svg_format() {
         path.display()
     );
     assert!(!run(&src), "format png must be rejected");
-    assert!(!path.exists(), "no file should be written for a rejected format");
+    assert!(
+        !path.exists(),
+        "no file should be written for a rejected format"
+    );
 }
 
 #[test]
@@ -110,5 +119,7 @@ fn plot_scatter_and_bar_render() {
 
 #[test]
 fn plot_show_prints_svg() {
-    assert!(run("import plot;\nplot::plot([0.0, 1.0], [0.0, 1.0]);\nplot::show();"));
+    assert!(run(
+        "import plot;\nplot::plot([0.0, 1.0], [0.0, 1.0]);\nplot::show();"
+    ));
 }

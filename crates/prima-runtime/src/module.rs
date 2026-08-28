@@ -48,12 +48,14 @@ impl ModuleGraph {
     /// Load all reachable modules with `root_file` as the root module; imports resolve relative to `root_file`'s directory.
     /// Returns an `Err(String)` describing: missing file / cycle / any module failing to parse.
     pub fn load(root_file: &Path) -> Result<ModuleGraph, String> {
-        let root_file = fs::canonicalize(root_file).map_err(|e| {
-            format!("cannot access root module `{}`: {e}", root_file.display())
-        })?;
+        let root_file = fs::canonicalize(root_file)
+            .map_err(|e| format!("cannot access root module `{}`: {e}", root_file.display()))?;
         let mut loader = Loader::default();
         let root = loader.load_module(Vec::new(), &root_file)?;
-        Ok(ModuleGraph { root, deps: loader.deps })
+        Ok(ModuleGraph {
+            root,
+            deps: loader.deps,
+        })
     }
 }
 
@@ -84,11 +86,20 @@ impl Loader {
         let src = fs::read_to_string(&file)
             .map_err(|e| format!("cannot read module `{label}` (`{}`): {e}", file.display()))?;
         let program = parse(&src).map_err(|errs| {
-            let details = errs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(", ");
-            format!("module `{label}` (`{}`) failed to parse: {details}", file.display())
+            let details = errs
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "module `{label}` (`{}`) failed to parse: {details}",
+                file.display()
+            )
         })?;
 
-        let dir = file.parent().expect("canonicalized module file has a parent directory");
+        let dir = file
+            .parent()
+            .expect("canonicalized module file has a parent directory");
         let mut imports = Vec::new();
 
         self.stack.push((path.clone(), file.clone()));
@@ -98,7 +109,10 @@ impl Loader {
             match self.resolve_import(dir, &segments) {
                 Resolution::File(resolved) => {
                     let target = fs::canonicalize(&resolved).map_err(|e| {
-                        format!("cannot access module `{key}` (`{}`): {e}", resolved.display())
+                        format!(
+                            "cannot access module `{key}` (`{}`): {e}",
+                            resolved.display()
+                        )
                     })?;
                     if !self.done.contains(&target) {
                         let unit = self.load_module(segments.clone(), &target)?;
@@ -120,11 +134,20 @@ impl Loader {
                         let src = crate::stdlib::get_module_source(&key)
                             .expect("embedded stdlib source present at resolution time");
                         let program = parse(src).map_err(|errs| {
-                            let details = errs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(", ");
+                            let details = errs
+                                .iter()
+                                .map(|e| e.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ");
                             format!("embedded stdlib module `{key}` failed to parse: {details}")
                         })?;
                         let file = embedded_file(&path);
-                        let unit = ModuleUnit { path, file, program, imports: Vec::new() };
+                        let unit = ModuleUnit {
+                            path,
+                            file,
+                            program,
+                            imports: Vec::new(),
+                        };
                         self.deps.push(unit);
                         self.done_embedded.insert(key.clone());
                     }
@@ -159,7 +182,12 @@ impl Loader {
         self.stack.pop();
         self.done.insert(file.clone());
 
-        Ok(ModuleUnit { path, file, program, imports })
+        Ok(ModuleUnit {
+            path,
+            file,
+            program,
+            imports,
+        })
     }
 
     /// Resolve one import path: (1) an embedded stdlib signature source, (2) a registered Rust-hosted
@@ -169,9 +197,13 @@ impl Loader {
     fn resolve_import(&self, dir: &Path, segments: &[String]) -> Resolution {
         let key = segments.join("::");
         if crate::stdlib::get_module_source(&key).is_some() {
-            Resolution::Embedded { path: segments.to_vec() }
+            Resolution::Embedded {
+                path: segments.to_vec(),
+            }
         } else if crate::stdlib::has_namespace(&key) {
-            Resolution::Host { path: segments.to_vec() }
+            Resolution::Host {
+                path: segments.to_vec(),
+            }
         } else if let Some(file) = resolve(dir, segments) {
             Resolution::File(file)
         } else {
@@ -307,7 +339,10 @@ mod tests {
         assert_eq!(g.deps.len(), 1);
         assert_eq!(g.deps[0].path, ["util".to_string()]);
         assert_eq!(g.deps[0].file, abs(&tmp.dir().join("util/main.pra")));
-        assert_eq!(g.root.imports[0].file, abs(&tmp.dir().join("util/main.pra")));
+        assert_eq!(
+            g.root.imports[0].file,
+            abs(&tmp.dir().join("util/main.pra"))
+        );
     }
 
     #[test]
@@ -320,7 +355,10 @@ mod tests {
         assert_eq!(g.deps.len(), 1);
         assert_eq!(g.deps[0].path, ["linalg".to_string(), "fft".to_string()]);
         assert_eq!(g.deps[0].file, abs(&tmp.dir().join("linalg/fft.pra")));
-        assert_eq!(g.root.imports[0].path, ["linalg".to_string(), "fft".to_string()]);
+        assert_eq!(
+            g.root.imports[0].path,
+            ["linalg".to_string(), "fft".to_string()]
+        );
     }
 
     #[test]
@@ -356,7 +394,12 @@ mod tests {
 
         let g = ModuleGraph::load(&root).unwrap();
         assert_eq!(g.deps.len(), 3, "shared dependency `c` must appear once");
-        let pos = |name: &str| g.deps.iter().position(|d| d.path == [name.to_string()]).unwrap();
+        let pos = |name: &str| {
+            g.deps
+                .iter()
+                .position(|d| d.path == [name.to_string()])
+                .unwrap()
+        };
         let (ia, ib, ic) = (pos("a"), pos("b"), pos("c"));
         assert!(ic < ia, "`c` must precede importer `a`: {:?}", g.deps);
         assert!(ic < ib, "`c` must precede importer `b`: {:?}", g.deps);
@@ -374,9 +417,19 @@ mod tests {
         assert_eq!(g.root.imports.len(), 1);
         let imp = &g.root.imports[0];
         assert!(imp.host, "host import must be flagged, got {imp:?}");
-        assert!(!imp.embedded, "host import must not be flagged as embedded, got {imp:?}");
-        assert!(imp.file.as_os_str().is_empty(), "host import must not map to a file");
-        assert_eq!(g.deps.len(), 0, "host import must not load a file dependency");
+        assert!(
+            !imp.embedded,
+            "host import must not be flagged as embedded, got {imp:?}"
+        );
+        assert!(
+            imp.file.as_os_str().is_empty(),
+            "host import must not map to a file"
+        );
+        assert_eq!(
+            g.deps.len(),
+            0,
+            "host import must not load a file dependency"
+        );
     }
 
     #[test]
@@ -390,14 +443,32 @@ mod tests {
         assert_eq!(g.root.imports.len(), 1);
         let imp = &g.root.imports[0];
         assert!(imp.embedded, "embedded import must be flagged, got {imp:?}");
-        assert!(!imp.host, "embedded import must not be flagged as host, got {imp:?}");
-        assert_eq!(imp.file, embedded_file(&["testem".to_string()]), "embedded import must carry the synthetic marker");
-        assert_eq!(g.deps.len(), 1, "embedded import must produce a dependency unit");
+        assert!(
+            !imp.host,
+            "embedded import must not be flagged as host, got {imp:?}"
+        );
+        assert_eq!(
+            imp.file,
+            embedded_file(&["testem".to_string()]),
+            "embedded import must carry the synthetic marker"
+        );
+        assert_eq!(
+            g.deps.len(),
+            1,
+            "embedded import must produce a dependency unit"
+        );
         let dep = &g.deps[0];
         assert_eq!(dep.path, ["testem".to_string()]);
         assert_eq!(dep.file, embedded_file(&["testem".to_string()]));
-        assert!(dep.imports.is_empty(), "embedded modules declare no imports");
-        assert_eq!(dep.program.stmts.len(), 1, "embedded source must parse to its `@builtin` declaration");
+        assert!(
+            dep.imports.is_empty(),
+            "embedded modules declare no imports"
+        );
+        assert_eq!(
+            dep.program.stmts.len(),
+            1,
+            "embedded source must parse to its `@builtin` declaration"
+        );
     }
 
     #[test]
@@ -407,7 +478,11 @@ mod tests {
         let root = write(tmp.dir(), "main.pra", "import testem2;\nimport testem2;\n");
 
         let g = ModuleGraph::load(&root).unwrap();
-        assert_eq!(g.deps.len(), 1, "duplicate embedded imports must dedup to a single dependency");
+        assert_eq!(
+            g.deps.len(),
+            1,
+            "duplicate embedded imports must dedup to a single dependency"
+        );
         assert!(g.root.imports.iter().all(|i| i.embedded));
     }
 }

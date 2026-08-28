@@ -28,12 +28,12 @@ pub fn optimize(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId) -> ExprI
 
 #[cfg(test)]
 mod tests {
+    use crate::BuiltinSymbols;
     use crate::expr_pool::{ExprData, ExprPool};
     use crate::number::Number;
-    use crate::opt::{self, cse, const_fold, optimize};
+    use crate::opt::{self, const_fold, cse, optimize};
     use crate::render::render_latex;
     use crate::symbol::SymbolTable;
-    use crate::BuiltinSymbols;
 
     #[test]
     fn const_fold_merges_constant_arithmetic() {
@@ -51,9 +51,9 @@ mod tests {
         match pool.get(folded) {
             Some(ExprData::Add(items)) => {
                 assert!(
-                    items
-                        .iter()
-                        .any(|&it| matches!(pool.const_number(it), Some(n) if n == Number::from(6))),
+                    items.iter().any(
+                        |&it| matches!(pool.const_number(it), Some(n) if n == Number::from(6))
+                    ),
                     "constant 6 must survive as an `Add` child: {:?}",
                     items
                 );

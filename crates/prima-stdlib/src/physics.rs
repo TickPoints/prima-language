@@ -14,8 +14,8 @@ use std::collections::HashMap;
 
 use num_bigint::BigInt;
 use prima_core::{Number, Real, Value};
-use prima_runtime::stdlib::register_namespace;
 use prima_runtime::NamespaceItem;
+use prima_runtime::stdlib::register_namespace;
 
 /// Wrap a `Number` as a module-namespace constant value (spec §15.2).
 fn val(n: Number) -> NamespaceItem {
@@ -42,18 +42,36 @@ pub fn register() {
     let mut items = HashMap::new();
     // — base —
     items.insert("speed_of_light".into(), val(exact_int("299792458")));
-    items.insert("planck_const".into(), val(exact_rat("662607015", "1000000000000000000000000000")));
-    items.insert("reduced_planck".into(), val(real(6.626_070_15e-34 / (2.0 * std::f64::consts::PI))));
-    items.insert("boltzmann_const".into(), val(exact_rat("1380649", "100000000000000000000000000000")));
+    items.insert(
+        "planck_const".into(),
+        val(exact_rat("662607015", "1000000000000000000000000000")),
+    );
+    items.insert(
+        "reduced_planck".into(),
+        val(real(6.626_070_15e-34 / (2.0 * std::f64::consts::PI))),
+    );
+    items.insert(
+        "boltzmann_const".into(),
+        val(exact_rat("1380649", "100000000000000000000000000000")),
+    );
     items.insert("gravitational_const".into(), val(real(6.674_30e-11)));
     // — electromagnetism —
-    items.insert("elementary_charge".into(), val(exact_rat("1602176634", "1000000000000000000000000000")));
+    items.insert(
+        "elementary_charge".into(),
+        val(exact_rat("1602176634", "1000000000000000000000000000")),
+    );
     items.insert("vacuum_permittivity".into(), val(real(8.854_187_812_8e-12)));
     items.insert("vacuum_permeability".into(), val(real(1.256_637_062_12e-6)));
     items.insert("fine_structure".into(), val(real(7.297_352_569_3e-3)));
     // — chemistry —
-    items.insert("avogadro_const".into(), val(exact_int("602214076000000000000000")));
-    items.insert("gas_const".into(), val(exact_rat("831446261815324", "100000000000000")));
+    items.insert(
+        "avogadro_const".into(),
+        val(exact_int("602214076000000000000000")),
+    );
+    items.insert(
+        "gas_const".into(),
+        val(exact_rat("831446261815324", "100000000000000")),
+    );
     items.insert("atomic_mass_unit".into(), val(real(1.660_539_066_60e-27)));
     // — masses —
     items.insert("electron_mass".into(), val(real(9.109_383_701_5e-31)));

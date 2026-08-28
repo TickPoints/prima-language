@@ -16,6 +16,13 @@
 # Cross-compile helpers: Linux GNU targets use apt cross linkers; x86_64 musl uses the
 # host musl toolchain; aarch64 musl uses a musl-cross toolchain mirrored on GitHub
 # (musl.cc blocks GitHub Actions IP ranges); aarch64-windows uses cargo-xwin.
+#
+# macOS: both targets run on `macos-15` (arm64). GitHub retired the Intel `macos-13`
+# runner in Dec 2025, and a job pinned to a retired `runs-on` label queues forever
+# instead of failing. `x86_64-apple-darwin` is therefore cross-compiled on Apple
+# Silicon via `rustup target add` + `cargo build --target` (the Xcode SDK is
+# universal, so this works out of the box); `aarch64-apple-darwin` builds natively.
+# The x86_64 artifact is `file`-checked so an arm64 binary cannot slip through.
 
 name: release
 
@@ -71,6 +78,7 @@ jobs:
     name: ${{ matrix.target }}
     needs: release
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -87,9 +95,9 @@ jobs:
           - os: windows-latest
             target: aarch64-pc-windows-msvc
             xwin: true
-          - os: macos-13
+          - os: macos-15
             target: x86_64-apple-darwin
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
 
           # Tier 2 with host tools
@@ -159,6 +167,13 @@ jobs:
           else
             cargo build --release --target ${{ matrix.target }} --locked
           fi
+
+      - name: Verify macOS x86_64 artifact architecture
+        # x86_64-apple-darwin is cross-compiled on an arm64 runner; fail loudly if
+        # the linker produced the host architecture instead of the target.
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          file "target/${{ matrix.target }}/release/prima" | grep -q 'x86_64' || { echo "::error::expected an x86_64 binary, got:"; file "target/${{ matrix.target }}/release/prima"; exit 1; }
 
       - name: Package binary and checksum
         id: package

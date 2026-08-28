@@ -9,7 +9,9 @@ fn eval(src: &str) -> Value {
 fn fraction_false_yields_f64() {
     let v = eval("config { fraction := false }\n1/3");
     match v {
-        Value::Number(Number::Real(Real::F64(x))) => assert!((x - 1.0 / 3.0).abs() < 1e-9, "got {x}"),
+        Value::Number(Number::Real(Real::F64(x))) => {
+            assert!((x - 1.0 / 3.0).abs() < 1e-9, "got {x}")
+        }
         other => panic!("expected F64, got {other:?}"),
     }
 }
@@ -23,8 +25,12 @@ fn fraction_default_is_exact() {
 
 #[test]
 fn broadcast_disabled_rejects_implicit() {
-    let err = Evaluator::new().eval_value("config { broadcast := false }\nlet f(x) = x^2;\nf([1, 2, 3])");
-    assert!(err.is_err(), "implicit broadcast should error when disabled");
+    let err =
+        Evaluator::new().eval_value("config { broadcast := false }\nlet f(x) = x^2;\nf([1, 2, 3])");
+    assert!(
+        err.is_err(),
+        "implicit broadcast should error when disabled"
+    );
 }
 
 #[test]
@@ -50,7 +56,11 @@ fn negative_base_fractional_pow_domain() {
         }
         other => panic!("expected Complex, got {other:?}"),
     }
-    assert!(Evaluator::new().eval_value("config { domain := real }\n(-1)^0.5").is_err());
+    assert!(
+        Evaluator::new()
+            .eval_value("config { domain := real }\n(-1)^0.5")
+            .is_err()
+    );
 }
 
 #[test]
@@ -74,5 +84,9 @@ fn custom_zero_div_black_magic() {
 
 #[test]
 fn unknown_config_key_rejected() {
-    assert!(Evaluator::new().eval_value("config { nonsense := true }\n1").is_err());
+    assert!(
+        Evaluator::new()
+            .eval_value("config { nonsense := true }\n1")
+            .is_err()
+    );
 }

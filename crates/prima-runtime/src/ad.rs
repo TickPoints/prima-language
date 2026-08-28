@@ -27,28 +27,43 @@ impl Dual {
 
     /// Dual addition: `(u + u'ε) + (v + v'ε)`.
     pub fn add(self, o: Dual) -> Dual {
-        Dual { val: self.val + o.val, der: self.der + o.der }
+        Dual {
+            val: self.val + o.val,
+            der: self.der + o.der,
+        }
     }
 
     /// Dual subtraction.
     pub fn sub(self, o: Dual) -> Dual {
-        Dual { val: self.val - o.val, der: self.der - o.der }
+        Dual {
+            val: self.val - o.val,
+            der: self.der - o.der,
+        }
     }
 
     /// Dual multiplication (product rule): `(uv)' = u'v + uv'`.
     pub fn mul(self, o: Dual) -> Dual {
-        Dual { val: self.val * o.val, der: self.der * o.val + self.val * o.der }
+        Dual {
+            val: self.val * o.val,
+            der: self.der * o.val + self.val * o.der,
+        }
     }
 
     /// Dual division: `(u/v)' = (u'v - uv')/v²`.
     pub fn div(self, o: Dual) -> Dual {
         let v2 = o.val * o.val;
-        Dual { val: self.val / o.val, der: (self.der * o.val - self.val * o.der) / v2 }
+        Dual {
+            val: self.val / o.val,
+            der: (self.der * o.val - self.val * o.der) / v2,
+        }
     }
 
     /// Dual negation.
     pub fn neg(self) -> Dual {
-        Dual { val: -self.val, der: -self.der }
+        Dual {
+            val: -self.val,
+            der: -self.der,
+        }
     }
 
     /// Dual power `u^v`: `d/dx = v·u^(v-1)·u' + ln(u)·u^v·v'` (log-derivative for the `v` part).
@@ -61,36 +76,57 @@ impl Dual {
     }
 
     pub fn sin(self) -> Dual {
-        Dual { val: self.val.sin(), der: self.der * self.val.cos() }
+        Dual {
+            val: self.val.sin(),
+            der: self.der * self.val.cos(),
+        }
     }
 
     pub fn cos(self) -> Dual {
-        Dual { val: self.val.cos(), der: -self.der * self.val.sin() }
+        Dual {
+            val: self.val.cos(),
+            der: -self.der * self.val.sin(),
+        }
     }
 
     /// sec²(x) = 1 + tan²(x).
     pub fn tan(self) -> Dual {
         let t = self.val.tan();
-        Dual { val: t, der: self.der * (1.0 + t * t) }
+        Dual {
+            val: t,
+            der: self.der * (1.0 + t * t),
+        }
     }
 
     pub fn exp(self) -> Dual {
         let e = self.val.exp();
-        Dual { val: e, der: self.der * e }
+        Dual {
+            val: e,
+            der: self.der * e,
+        }
     }
 
     pub fn ln(self) -> Dual {
-        Dual { val: self.val.ln(), der: self.der / self.val }
+        Dual {
+            val: self.val.ln(),
+            der: self.der / self.val,
+        }
     }
 
     pub fn sqrt(self) -> Dual {
         let s = self.val.sqrt();
-        Dual { val: s, der: self.der / (2.0 * s) }
+        Dual {
+            val: s,
+            der: self.der / (2.0 * s),
+        }
     }
 
     /// abs'(x) = sign(x).
     pub fn abs(self) -> Dual {
-        Dual { val: self.val.abs(), der: self.der * self.val.signum() }
+        Dual {
+            val: self.val.abs(),
+            der: self.der * self.val.signum(),
+        }
     }
 }
 
@@ -140,7 +176,12 @@ pub struct Tape {
 impl Tape {
     /// Build the tape from a numeric scalar DAG, or `None` if `expr` is not numeric-compilable
     /// (a non-param/non-constant symbol, a multi-argument application, an unknown function, …).
-    pub fn build(pool: &ExprPool, builtins: &BuiltinSymbols, expr: ExprId, params: &[String]) -> Option<Arc<Tape>> {
+    pub fn build(
+        pool: &ExprPool,
+        builtins: &BuiltinSymbols,
+        expr: ExprId,
+        params: &[String],
+    ) -> Option<Arc<Tape>> {
         let symbols = SymbolTable::global();
         // Parameter symbols map by name; built-in constants fold to their f64 value.
         let mut param_ids: HashMap<SymbolId, u8> = HashMap::new();
@@ -178,7 +219,12 @@ impl Tape {
                 }
             }
         }
-        Some(Arc::new(Tape { nodes: builder.nodes, n_params: params.len(), output, param_nodes: builder.param_nodes }))
+        Some(Arc::new(Tape {
+            nodes: builder.nodes,
+            n_params: params.len(),
+            output,
+            param_nodes: builder.param_nodes,
+        }))
     }
 
     /// Gradient of the expression w.r.t. all parameters (`len == params.len()`): one forward pass to
@@ -288,7 +334,9 @@ impl Builder<'_> {
                     return None;
                 }
                 let child = self.build_node(args[0])?;
-                let ExprData::Symbol(sym) = self.pool.get(f)? else { return None };
+                let ExprData::Symbol(sym) = self.pool.get(f)? else {
+                    return None;
+                };
                 let kind = math_kind(self.builtins, sym)?;
                 self.push(Node::Math(kind, child))
             }
@@ -376,7 +424,10 @@ pub fn forward_derivative(
     for (i, node) in tape.nodes.iter().enumerate() {
         duals[i] = match *node {
             Node::Const(c) => Dual::new(c, 0.0),
-            Node::Param(p) => Dual::new(inputs[p as usize], if p as usize == wrt { 1.0 } else { 0.0 }),
+            Node::Param(p) => Dual::new(
+                inputs[p as usize],
+                if p as usize == wrt { 1.0 } else { 0.0 },
+            ),
             Node::Binary(k, l, r) => dual_binary(k, duals[l], duals[r]),
             Node::Math(k, c) => dual_math(k, duals[c]),
         };
@@ -471,7 +522,10 @@ mod tests {
         let (pool, b) = setup();
         let params = vec!["x".to_string(), "y".to_string()];
         // sin(x)*y, gradient at (0, 2): ∂x = cos(0)·2 = 2, ∂y = sin(0) = 0.
-        let expr = pool.mul2(pool.apply(pool.symbol(b.sin), &[p(pool, "x")]), p(pool, "y"));
+        let expr = pool.mul2(
+            pool.apply(pool.symbol(b.sin), &[p(pool, "x")]),
+            p(pool, "y"),
+        );
         let tape = Tape::build(pool, b, expr, &params).expect("compilable");
         let g = tape.grad(&[0.0, 2.0]);
         approx(g[0], 2.0, 1e-9);
@@ -483,7 +537,10 @@ mod tests {
         let (pool, b) = setup();
         let params = vec!["x".to_string()];
         // sin(pi * x) at x = 0.5: ∂x = cos(pi/2)·pi = 0.
-        let expr = pool.apply(pool.symbol(b.sin), &[pool.mul2(pool.symbol(b.pi), p(pool, "x"))]);
+        let expr = pool.apply(
+            pool.symbol(b.sin),
+            &[pool.mul2(pool.symbol(b.pi), p(pool, "x"))],
+        );
         let tape = Tape::build(pool, b, expr, &params).expect("compilable");
         let g = tape.grad(&[0.5]);
         approx(g[0], 0.0, 1e-9);

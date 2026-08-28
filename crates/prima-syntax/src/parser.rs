@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::error::{SyntaxError, SyntaxWarning};
 use crate::lexer::lex;
 use crate::span::Span;
-use crate::token::{describe, Token, TokenKind};
+use crate::token::{Token, TokenKind, describe};
 
 // Unary operator binding power: lower than power `^` (8), higher than mul/div (6/7), implementing `-x^2 == -(x^2)` (same as Julia, spec §2.2).
 const UNARY_BP: u8 = 7;
@@ -10,7 +10,11 @@ const UNARY_BP: u8 = 7;
 /// Hand-written recursive-descent + Pratt climbing parser (implementation plan §2.2), covering all appendix A BNF productions.
 pub fn parse(src: &str) -> Result<Program, Vec<SyntaxError>> {
     let (program, errors, _) = parse_checked(src);
-    if errors.is_empty() { Ok(program) } else { Err(errors) }
+    if errors.is_empty() {
+        Ok(program)
+    } else {
+        Err(errors)
+    }
 }
 
 /// Parse and return the program plus all collected errors and warnings (spec §16.4/§16.5).
@@ -18,14 +22,28 @@ pub fn parse_checked(src: &str) -> (Program, Vec<SyntaxError>, Vec<SyntaxWarning
     let tokens = match lex(src) {
         Ok(t) => t,
         Err(errors) => {
-            return (Program { module_docs: None, config: None, imports: Vec::new(), stmts: Vec::new() }, errors, Vec::new())
+            return (
+                Program {
+                    module_docs: None,
+                    config: None,
+                    imports: Vec::new(),
+                    stmts: Vec::new(),
+                },
+                errors,
+                Vec::new(),
+            );
         }
     };
     let mut parser = Parser::new(tokens);
     match parser.parse_program_inner() {
         Ok(program) => (program, Vec::new(), parser.warnings),
         Err(e) => (
-            Program { module_docs: None, config: None, imports: Vec::new(), stmts: Vec::new() },
+            Program {
+                module_docs: None,
+                config: None,
+                imports: Vec::new(),
+                stmts: Vec::new(),
+            },
             vec![e],
             parser.warnings,
         ),
@@ -44,7 +62,12 @@ pub(crate) struct Parser {
 
 impl Parser {
     pub(crate) fn new(tokens: Vec<Token>) -> Parser {
-        Parser { tokens, pos: 0, warnings: Vec::new(), no_struct_literal: false }
+        Parser {
+            tokens,
+            pos: 0,
+            warnings: Vec::new(),
+            no_struct_literal: false,
+        }
     }
 
     fn peek(&self) -> &TokenKind {
@@ -52,7 +75,10 @@ impl Parser {
     }
 
     fn peek_at(&self, n: usize) -> &TokenKind {
-        self.tokens.get(self.pos + n).map(|t| &t.kind).unwrap_or(&TokenKind::Eof)
+        self.tokens
+            .get(self.pos + n)
+            .map(|t| &t.kind)
+            .unwrap_or(&TokenKind::Eof)
     }
 
     fn span(&self) -> Span {
@@ -90,7 +116,10 @@ impl Parser {
         if self.at(kind) {
             Ok(self.bump())
         } else {
-            Err(SyntaxError { span: self.span(), message: format!("expected {what}, found {}", describe(self.peek())) })
+            Err(SyntaxError {
+                span: self.span(),
+                message: format!("expected {what}, found {}", describe(self.peek())),
+            })
         }
     }
 
@@ -100,7 +129,11 @@ impl Parser {
 
     /// Record a non-fatal warning (spec §16.5), e.g. the `W0006` `format` deprecation hint.
     fn push_warning(&mut self, code: &'static str, span: Span, message: String) {
-        self.warnings.push(SyntaxWarning { span, code, message });
+        self.warnings.push(SyntaxWarning {
+            span,
+            code,
+            message,
+        });
     }
 
     /// Consume a run of consecutive doc-comment tokens (`///` or `//!`, per `module`), merging
@@ -119,7 +152,9 @@ impl Parser {
                 }
                 _ => break,
             }
-            let TokenKind::Doc { text, .. } = self.peek().clone() else { unreachable!() };
+            let TokenKind::Doc { text, .. } = self.peek().clone() else {
+                unreachable!()
+            };
             let span = self.span();
             lines.push((text, span));
             if start.is_none() {
@@ -131,7 +166,10 @@ impl Parser {
         if lines.is_empty() {
             None
         } else {
-            Some(DocComment { lines, span: Span::merge(start.unwrap(), end.unwrap()) })
+            Some(DocComment {
+                lines,
+                span: Span::merge(start.unwrap(), end.unwrap()),
+            })
         }
     }
 
@@ -140,21 +178,81 @@ impl Parser {
     fn attach_docs(&mut self, stmt: Stmt, docs: Option<DocComment>) -> Result<Stmt, SyntaxError> {
         let Some(docs) = docs else { return Ok(stmt) };
         match stmt {
-            Stmt::Let { pat, mut_, type_ann, value, span, .. } => {
-                Ok(Stmt::Let { pat, mut_, type_ann, value, span, docs: Some(docs) })
-            }
-            Stmt::Const { name, type_ann, value, span, .. } => {
-                Ok(Stmt::Const { name, type_ann, value, span, docs: Some(docs) })
-            }
-            Stmt::FnDef { name, params, ret, annotations, body, span, .. } => {
-                Ok(Stmt::FnDef { name, params, ret, annotations, body, span, docs: Some(docs) })
-            }
-            Stmt::MathDef { name, params, ret, annotations, body, span, .. } => {
-                Ok(Stmt::MathDef { name, params, ret, annotations, body, span, docs: Some(docs) })
-            }
-            Stmt::ClassDef { name, annotations, members, span, .. } => {
-                Ok(Stmt::ClassDef { name, annotations, members, span, docs: Some(docs) })
-            }
+            Stmt::Let {
+                pat,
+                mut_,
+                type_ann,
+                value,
+                span,
+                ..
+            } => Ok(Stmt::Let {
+                pat,
+                mut_,
+                type_ann,
+                value,
+                span,
+                docs: Some(docs),
+            }),
+            Stmt::Const {
+                name,
+                type_ann,
+                value,
+                span,
+                ..
+            } => Ok(Stmt::Const {
+                name,
+                type_ann,
+                value,
+                span,
+                docs: Some(docs),
+            }),
+            Stmt::FnDef {
+                name,
+                params,
+                ret,
+                annotations,
+                body,
+                span,
+                ..
+            } => Ok(Stmt::FnDef {
+                name,
+                params,
+                ret,
+                annotations,
+                body,
+                span,
+                docs: Some(docs),
+            }),
+            Stmt::MathDef {
+                name,
+                params,
+                ret,
+                annotations,
+                body,
+                span,
+                ..
+            } => Ok(Stmt::MathDef {
+                name,
+                params,
+                ret,
+                annotations,
+                body,
+                span,
+                docs: Some(docs),
+            }),
+            Stmt::ClassDef {
+                name,
+                annotations,
+                members,
+                span,
+                ..
+            } => Ok(Stmt::ClassDef {
+                name,
+                annotations,
+                members,
+                span,
+                docs: Some(docs),
+            }),
             other => {
                 self.push_warning(
                     "W0007",
@@ -172,7 +270,10 @@ impl Parser {
         while i < self.tokens.len() && matches!(self.tokens[i].kind, TokenKind::Newline) {
             i += 1;
         }
-        self.tokens.get(i).map(|t| &t.kind).unwrap_or(&TokenKind::Eof)
+        self.tokens
+            .get(i)
+            .map(|t| &t.kind)
+            .unwrap_or(&TokenKind::Eof)
     }
 
     /// Statement terminator (spec §4.2): `;` is the only separator; a trailing statement at
@@ -199,8 +300,14 @@ impl Parser {
         self.skip_newlines();
         let t = self.bump();
         match t.kind {
-            TokenKind::Ident(s) => Ok(Spanned { value: s, span: t.span }),
-            _ => Err(SyntaxError { span: t.span, message: format!("expected {what}, found {}", describe(&t.kind)) }),
+            TokenKind::Ident(s) => Ok(Spanned {
+                value: s,
+                span: t.span,
+            }),
+            _ => Err(SyntaxError {
+                span: t.span,
+                message: format!("expected {what}, found {}", describe(&t.kind)),
+            }),
         }
     }
 
@@ -208,8 +315,14 @@ impl Parser {
         self.skip_newlines();
         let t = self.bump();
         match t.kind {
-            TokenKind::Ident(s) | TokenKind::Symbol(s) => Ok(Spanned { value: s, span: t.span }),
-            _ => Err(SyntaxError { span: t.span, message: format!("expected module path segment, found {}", describe(&t.kind)) }),
+            TokenKind::Ident(s) | TokenKind::Symbol(s) => Ok(Spanned {
+                value: s,
+                span: t.span,
+            }),
+            _ => Err(SyntaxError {
+                span: t.span,
+                message: format!("expected module path segment, found {}", describe(&t.kind)),
+            }),
         }
     }
 
@@ -234,7 +347,11 @@ impl Parser {
                     let docs = self.take_docs(module);
                     if module {
                         // `//!` is a module doc (spec §4.1) and is only valid at the very top of the file.
-                        if module_docs.is_none() && config.is_none() && imports.is_empty() && stmts.is_empty() {
+                        if module_docs.is_none()
+                            && config.is_none()
+                            && imports.is_empty()
+                            && stmts.is_empty()
+                        {
                             module_docs = docs;
                         } else if let Some(d) = docs {
                             self.push_warning(
@@ -257,7 +374,10 @@ impl Parser {
                             }
                             TokenKind::KwImport | TokenKind::KwFrom => {
                                 if !stmts.is_empty() {
-                                    return Err(self.err(self.span(), "`import` must appear before statements".into()));
+                                    return Err(self.err(
+                                        self.span(),
+                                        "`import` must appear before statements".into(),
+                                    ));
                                 }
                                 let mut imp = self.parse_import()?;
                                 imp.docs = docs;
@@ -272,13 +392,18 @@ impl Parser {
                         return Err(self.err(self.span(), "duplicate `config` block".into()));
                     }
                     if !imports.is_empty() || !stmts.is_empty() {
-                        return Err(self.err(self.span(), "`config` must appear before `import` and statements".into()));
+                        return Err(self.err(
+                            self.span(),
+                            "`config` must appear before `import` and statements".into(),
+                        ));
                     }
                     config = Some(self.parse_config_block()?);
                 }
                 TokenKind::KwImport | TokenKind::KwFrom => {
                     if !stmts.is_empty() {
-                        return Err(self.err(self.span(), "`import` must appear before statements".into()));
+                        return Err(
+                            self.err(self.span(), "`import` must appear before statements".into())
+                        );
                     }
                     imports.push(self.parse_import()?);
                 }
@@ -287,7 +412,12 @@ impl Parser {
                 }
             }
         }
-        Ok(Program { module_docs, config, imports, stmts })
+        Ok(Program {
+            module_docs,
+            config,
+            imports,
+            stmts,
+        })
     }
 
     fn parse_config_block(&mut self) -> Result<ConfigBlock, SyntaxError> {
@@ -296,7 +426,10 @@ impl Parser {
         self.skip_newlines();
         let entries = self.parse_config_entries()?;
         let end = self.tokens[self.pos.saturating_sub(1)].span;
-        Ok(ConfigBlock { entries, span: Span::merge(start, end) })
+        Ok(ConfigBlock {
+            entries,
+            span: Span::merge(start, end),
+        })
     }
 
     fn parse_config_entries(&mut self) -> Result<Vec<ConfigEntry>, SyntaxError> {
@@ -333,7 +466,12 @@ impl Parser {
         }
         let value = self.parse_config_value()?;
         let span = Span::merge(name.span, value.span);
-        Ok(ConfigEntry { name, type_ann, value, span })
+        Ok(ConfigEntry {
+            name,
+            type_ann,
+            value,
+            span,
+        })
     }
 
     fn parse_config_value(&mut self) -> Result<Expr, SyntaxError> {
@@ -363,7 +501,10 @@ impl Parser {
                 self.eat(&TokenKind::Comma);
             }
             let end = self.tokens[self.pos.saturating_sub(1)].span;
-            Ok(Expr { kind: ExprKind::Custom(items), span: Span::merge(start, end) })
+            Ok(Expr {
+                kind: ExprKind::Custom(items),
+                span: Span::merge(start, end),
+            })
         } else {
             self.parse_expr()
         }
@@ -416,7 +557,11 @@ impl Parser {
         };
         self.end_statement()?;
         let end = self.tokens[self.pos.saturating_sub(1)].span;
-        Ok(Import { kind, docs: None, span: Span::merge(start, end) })
+        Ok(Import {
+            kind,
+            docs: None,
+            span: Span::merge(start, end),
+        })
     }
 
     fn parse_stmt(&mut self, docs: Option<DocComment>) -> Result<Stmt, SyntaxError> {
@@ -499,18 +644,58 @@ impl Parser {
     /// Attach statement-level annotations to the definition they precede (spec §18.4).
     fn apply_annotations(&mut self, stmt: Stmt, anns: &[Annotation]) -> Result<Stmt, SyntaxError> {
         match stmt {
-            Stmt::FnDef { name, params, ret, mut annotations, body, span, docs } => {
+            Stmt::FnDef {
+                name,
+                params,
+                ret,
+                mut annotations,
+                body,
+                span,
+                docs,
+            } => {
                 annotations.extend_from_slice(anns);
-                Ok(Stmt::FnDef { name, params, ret, annotations, body, span, docs })
+                Ok(Stmt::FnDef {
+                    name,
+                    params,
+                    ret,
+                    annotations,
+                    body,
+                    span,
+                    docs,
+                })
             }
-            Stmt::MathDef { name, params, ret, mut annotations, body, span, docs } => {
+            Stmt::MathDef {
+                name,
+                params,
+                ret,
+                mut annotations,
+                body,
+                span,
+                docs,
+            } => {
                 annotations.extend_from_slice(anns);
-                Ok(Stmt::MathDef { name, params, ret, annotations, body, span, docs })
+                Ok(Stmt::MathDef {
+                    name,
+                    params,
+                    ret,
+                    annotations,
+                    body,
+                    span,
+                    docs,
+                })
             }
-            Stmt::ClassDef { name, mut annotations, mut members, span, docs } => {
+            Stmt::ClassDef {
+                name,
+                mut annotations,
+                mut members,
+                span,
+                docs,
+            } => {
                 annotations.extend_from_slice(anns);
                 // A `@builtin` class carries the annotation on every method (signature-only bodies are the builtin form, spec §18.4).
-                if let Some(Annotation::Builtin { opt_level }) = anns.iter().find(|a| a.is_builtin()) {
+                if let Some(Annotation::Builtin { opt_level }) =
+                    anns.iter().find(|a| a.is_builtin())
+                {
                     let level = *opt_level;
                     for m in &mut members {
                         if let ClassMemberKind::Method { annotations, .. } = &mut m.kind {
@@ -518,19 +703,34 @@ impl Parser {
                         }
                     }
                 }
-                Ok(Stmt::ClassDef { name, annotations, members, span, docs })
+                Ok(Stmt::ClassDef {
+                    name,
+                    annotations,
+                    members,
+                    span,
+                    docs,
+                })
             }
-            Stmt::Pub(inner) => self.apply_annotations(*inner, anns).map(Box::new).map(Stmt::Pub),
+            Stmt::Pub(inner) => self
+                .apply_annotations(*inner, anns)
+                .map(Box::new)
+                .map(Stmt::Pub),
             other => {
                 let span = stmt_span_of(&other);
-                Err(self.err(span, "annotations are only allowed on `fn`/`let` definitions and classes".into()))
+                Err(self.err(
+                    span,
+                    "annotations are only allowed on `fn`/`let` definitions and classes".into(),
+                ))
             }
         }
     }
 
     /// Skip tokens up to the next statement boundary, so a removed-construct error still recovers cleanly (spec §2.2 sync tokens).
     fn skip_to_statement_boundary(&mut self) {
-        while !matches!(self.peek(), TokenKind::Semicolon | TokenKind::RBrace | TokenKind::Eof | TokenKind::Newline) {
+        while !matches!(
+            self.peek(),
+            TokenKind::Semicolon | TokenKind::RBrace | TokenKind::Eof | TokenKind::Newline
+        ) {
             self.bump();
         }
         if matches!(self.peek(), TokenKind::Newline) {
@@ -543,7 +743,8 @@ impl Parser {
         self.skip_newlines();
         let mut_ = self.eat(&TokenKind::KwMut).is_some();
         // Math definition `let f(x) = expr` (spec §4.3): an identifier followed by `(`.
-        let is_mathdef = matches!(self.peek(), TokenKind::Ident(_)) && matches!(self.peek_at(1), TokenKind::LParen);
+        let is_mathdef = matches!(self.peek(), TokenKind::Ident(_))
+            && matches!(self.peek_at(1), TokenKind::LParen);
         if is_mathdef {
             let name = self.parse_ident("function name")?;
             let params = self.parse_params()?;
@@ -558,7 +759,15 @@ impl Parser {
             self.skip_newlines();
             let body = self.parse_expr()?;
             let span = Span::merge(start, body.span);
-            return Ok(Stmt::MathDef { name, params, ret, annotations, body, span, docs: None });
+            return Ok(Stmt::MathDef {
+                name,
+                params,
+                ret,
+                annotations,
+                body,
+                span,
+                docs: None,
+            });
         }
         // Destructuring `let (a, b) = t`, `let Point { x, .. } = p`, or plain `let x = v` (spec §4.4).
         let pat = self.parse_pattern()?;
@@ -572,7 +781,14 @@ impl Parser {
         self.skip_newlines();
         let value = self.parse_expr()?;
         let span = Span::merge(start, value.span);
-        Ok(Stmt::Let { pat, mut_, type_ann, value, span, docs: None })
+        Ok(Stmt::Let {
+            pat,
+            mut_,
+            type_ann,
+            value,
+            span,
+            docs: None,
+        })
     }
 
     fn parse_const_stmt(&mut self) -> Result<Stmt, SyntaxError> {
@@ -587,7 +803,13 @@ impl Parser {
         self.skip_newlines();
         let value = self.parse_expr()?;
         let span = Span::merge(start, value.span);
-        Ok(Stmt::Const { name, type_ann, value, span, docs: None })
+        Ok(Stmt::Const {
+            name,
+            type_ann,
+            value,
+            span,
+            docs: None,
+        })
     }
 
     fn parse_fn_stmt(&mut self, stmt_annotations: &[Annotation]) -> Result<Stmt, SyntaxError> {
@@ -597,18 +819,22 @@ impl Parser {
         // A `@builtin` fn carries an optional `::`-joined path name (`Matrix::zeros`, spec §18.4),
         // which is exported under that joined key for module-qualified calls. Only `@builtin` fns
         // accept the path form; a plain `fn a::b() {}` stays an error (`expected `(``).
-        let name = if stmt_annotations.iter().any(|a| a.is_builtin()) && self.at(&TokenKind::ColonColon) {
-            let mut joined = name.value;
-            while self.eat(&TokenKind::ColonColon).is_some() {
-                self.skip_newlines();
-                let seg = self.parse_ident("`@builtin` function name segment")?;
-                joined.push_str("::");
-                joined.push_str(&seg.value);
-            }
-            Spanned { value: joined, span: name.span }
-        } else {
-            name
-        };
+        let name =
+            if stmt_annotations.iter().any(|a| a.is_builtin()) && self.at(&TokenKind::ColonColon) {
+                let mut joined = name.value;
+                while self.eat(&TokenKind::ColonColon).is_some() {
+                    self.skip_newlines();
+                    let seg = self.parse_ident("`@builtin` function name segment")?;
+                    joined.push_str("::");
+                    joined.push_str(&seg.value);
+                }
+                Spanned {
+                    value: joined,
+                    span: name.span,
+                }
+            } else {
+                name
+            };
         let params = self.parse_params()?;
         self.skip_newlines();
         let ret = if self.at(&TokenKind::Arrow) {
@@ -635,12 +861,23 @@ impl Parser {
         let is_builtin = annotations.iter().any(|a| a.is_builtin());
         let body = if is_builtin && !self.at(&TokenKind::LBrace) {
             self.end_statement()?;
-            Block { stmts: Vec::new(), span: start }
+            Block {
+                stmts: Vec::new(),
+                span: start,
+            }
         } else {
             self.parse_block()?
         };
         let span = Span::merge(start, body.span);
-        Ok(Stmt::FnDef { name, params, ret, annotations, body, span, docs: None })
+        Ok(Stmt::FnDef {
+            name,
+            params,
+            ret,
+            annotations,
+            body,
+            span,
+            docs: None,
+        })
     }
 
     fn parse_params(&mut self) -> Result<Vec<Param>, SyntaxError> {
@@ -653,7 +890,14 @@ impl Parser {
                 // `self` receiver of a method (spec §4.5).
                 if self.at(&TokenKind::KwSelf) {
                     let t = self.bump();
-                    params.push(Param { name: Spanned { value: "self".into(), span: t.span }, type_ann: None, is_self: true });
+                    params.push(Param {
+                        name: Spanned {
+                            value: "self".into(),
+                            span: t.span,
+                        },
+                        type_ann: None,
+                        is_self: true,
+                    });
                 } else {
                     let name = self.parse_ident("parameter name")?;
                     self.skip_newlines();
@@ -662,7 +906,11 @@ impl Parser {
                     } else {
                         None
                     };
-                    params.push(Param { name, type_ann, is_self: false });
+                    params.push(Param {
+                        name,
+                        type_ann,
+                        is_self: false,
+                    });
                 }
                 self.skip_newlines();
                 if self.eat(&TokenKind::Comma).is_some() {
@@ -688,38 +936,49 @@ impl Parser {
             self.skip_newlines();
             let t = self.bump();
             let ann = match t.kind {
-                TokenKind::Ident(s) => match s.as_str() {
-                    "parallel" => Annotation::Parallel,
-                    "jit" => Annotation::Jit,
-                    "gpu" => Annotation::Gpu,
-                    "builtin" => {
-                        // `@builtin(O0)`..`@builtin(O3)` (spec §18.4): an optional tier argument;
-                        // bare `@builtin` is tier `O0`. An invalid tier is a compile error (E0057).
-                        let mut opt_level = 0u8;
-                        if self.eat(&TokenKind::LParen).is_some() {
-                            self.skip_newlines();
-                            let seg = self.parse_ident("optimization level")?;
-                            let level_pat: [&str; 4] = ["O0", "O1", "O2", "O3"];
-                            match level_pat.iter().position(|&l| l == seg.value) {
-                                Some(idx) => opt_level = idx as u8,
-                                None => return Err(self.err(seg.span, format!("invalid `@builtin` optimization level `{}` (E0057)", seg.value))),
+                TokenKind::Ident(s) => {
+                    match s.as_str() {
+                        "parallel" => Annotation::Parallel,
+                        "jit" => Annotation::Jit,
+                        "gpu" => Annotation::Gpu,
+                        "builtin" => {
+                            // `@builtin(O0)`..`@builtin(O3)` (spec §18.4): an optional tier argument;
+                            // bare `@builtin` is tier `O0`. An invalid tier is a compile error (E0057).
+                            let mut opt_level = 0u8;
+                            if self.eat(&TokenKind::LParen).is_some() {
+                                self.skip_newlines();
+                                let seg = self.parse_ident("optimization level")?;
+                                let level_pat: [&str; 4] = ["O0", "O1", "O2", "O3"];
+                                match level_pat.iter().position(|&l| l == seg.value) {
+                                    Some(idx) => opt_level = idx as u8,
+                                    None => return Err(self.err(
+                                        seg.span,
+                                        format!(
+                                            "invalid `@builtin` optimization level `{}` (E0057)",
+                                            seg.value
+                                        ),
+                                    )),
+                                }
+                                self.skip_newlines();
+                                self.expect(&TokenKind::RParen, "`)`")?;
                             }
-                            self.skip_newlines();
-                            self.expect(&TokenKind::RParen, "`)`")?;
+                            Annotation::Builtin { opt_level }
                         }
-                        Annotation::Builtin { opt_level }
-                    }
-                    // `@c_api::extern` (spec §18.4).
-                    "c_api" if self.eat(&TokenKind::ColonColon).is_some() => {
-                        let seg = self.parse_ident("annotation segment")?;
-                        if seg.value == "extern" {
-                            Annotation::CApiExtern
-                        } else {
-                            return Err(self.err(seg.span, format!("unknown annotation `@c_api::{}`", seg.value)));
+                        // `@c_api::extern` (spec §18.4).
+                        "c_api" if self.eat(&TokenKind::ColonColon).is_some() => {
+                            let seg = self.parse_ident("annotation segment")?;
+                            if seg.value == "extern" {
+                                Annotation::CApiExtern
+                            } else {
+                                return Err(self.err(
+                                    seg.span,
+                                    format!("unknown annotation `@c_api::{}`", seg.value),
+                                ));
+                            }
                         }
+                        _ => return Err(self.err(t.span, format!("unknown annotation `@{s}`"))),
                     }
-                    _ => return Err(self.err(t.span, format!("unknown annotation `@{s}`"))),
-                },
+                }
                 _ => return Err(self.err(t.span, "expected annotation name after `@`".into())),
             };
             anns.push(ann);
@@ -781,7 +1040,13 @@ impl Parser {
                 let span = Span::merge(member_start, end);
                 members.push(ClassMember {
                     vis,
-                    kind: ClassMemberKind::Method { name: mname, params, ret, annotations, body },
+                    kind: ClassMemberKind::Method {
+                        name: mname,
+                        params,
+                        ret,
+                        annotations,
+                        body,
+                    },
                     span,
                     docs: member_docs,
                 });
@@ -792,13 +1057,24 @@ impl Parser {
                 let ty = self.parse_type()?;
                 let end = self.tokens[self.pos.saturating_sub(1)].span;
                 let span = Span::merge(member_start, end);
-                members.push(ClassMember { vis, kind: ClassMemberKind::Field { name: fname, ty }, span, docs: member_docs });
+                members.push(ClassMember {
+                    vis,
+                    kind: ClassMemberKind::Field { name: fname, ty },
+                    span,
+                    docs: member_docs,
+                });
             }
             self.skip_newlines();
             self.eat(&TokenKind::Comma); // members are comma-separated (spec §4.5)
         }
         let end = self.tokens[self.pos.saturating_sub(1)].span;
-        Ok(Stmt::ClassDef { name, annotations: Vec::new(), members, span: Span::merge(start, end), docs: None })
+        Ok(Stmt::ClassDef {
+            name,
+            annotations: Vec::new(),
+            members,
+            span: Span::merge(start, end),
+            docs: None,
+        })
     }
 
     /// Visibility modifier (spec §15.2): none / `pub` / `pub(mod)`.
@@ -829,7 +1105,10 @@ impl Parser {
         // `impl ops::Add for Vec2 { ... }` (spec §18.5).
         let ns = self.parse_module_segment()?;
         if ns.value != "ops" {
-            return Err(self.err(ns.span, "`impl` must target `ops` (e.g. `impl ops::Add for T`) (spec §18.5)".into()));
+            return Err(self.err(
+                ns.span,
+                "`impl` must target `ops` (e.g. `impl ops::Add for T`) (spec §18.5)".into(),
+            ));
         }
         self.expect(&TokenKind::ColonColon, "`::`")?;
         let op_seg = self.parse_ident("operator name")?;
@@ -843,7 +1122,12 @@ impl Parser {
             "Eq" => ImplOp::Eq,
             "Cmp" => ImplOp::Cmp,
             "Index" => ImplOp::Index,
-            other => return Err(self.err(op_seg.span, format!("unknown operator overload `ops::{other}`"))),
+            other => {
+                return Err(self.err(
+                    op_seg.span,
+                    format!("unknown operator overload `ops::{other}`"),
+                ));
+            }
         };
         self.skip_newlines();
         self.expect(&TokenKind::KwFor, "`for`")?;
@@ -874,10 +1158,23 @@ impl Parser {
             let annotations = self.parse_annotations()?;
             let body = self.parse_block()?;
             let span = Span::merge(name.span, body.span);
-            members.push(Box::new(Stmt::FnDef { name, params, ret, annotations, body, span, docs: None }));
+            members.push(Box::new(Stmt::FnDef {
+                name,
+                params,
+                ret,
+                annotations,
+                body,
+                span,
+                docs: None,
+            }));
         }
         let end = self.tokens[self.pos.saturating_sub(1)].span;
-        Ok(Stmt::Impl { op, target, members, span: Span::merge(start, end) })
+        Ok(Stmt::Impl {
+            op,
+            target,
+            members,
+            span: Span::merge(start, end),
+        })
     }
 
     fn parse_type(&mut self) -> Result<Type, SyntaxError> {
@@ -951,9 +1248,15 @@ impl Parser {
                     self.expect(&TokenKind::Arrow, "`->`")?;
                     let ret = self.parse_type()?;
                     if is_mfn {
-                        Ok(Type::MFn { params, ret: Box::new(ret) })
+                        Ok(Type::MFn {
+                            params,
+                            ret: Box::new(ret),
+                        })
                     } else {
-                        Ok(Type::Fn { params, ret: Box::new(ret) })
+                        Ok(Type::Fn {
+                            params,
+                            ret: Box::new(ret),
+                        })
                     }
                 }
                 _ => {
@@ -962,10 +1265,16 @@ impl Parser {
                         let seg = self.parse_module_segment()?;
                         segs.push(seg.value);
                     }
-                    Ok(Type::User(Spanned { value: segs.join("::"), span: t.span }))
+                    Ok(Type::User(Spanned {
+                        value: segs.join("::"),
+                        span: t.span,
+                    }))
                 }
             },
-            _ => Err(self.err(t.span, format!("expected type, found {}", describe(&t.kind)))),
+            _ => Err(self.err(
+                t.span,
+                format!("expected type, found {}", describe(&t.kind)),
+            )),
         }
     }
 
@@ -994,7 +1303,10 @@ impl Parser {
             self.skip_newlines();
             if self.at(&TokenKind::RBrace) {
                 let end = self.bump().span;
-                return Ok(Block { stmts, span: Span::merge(start, end) });
+                return Ok(Block {
+                    stmts,
+                    span: Span::merge(start, end),
+                });
             }
             match self.peek().clone() {
                 TokenKind::Doc { module, .. } => {
@@ -1008,7 +1320,8 @@ impl Parser {
                                 "module doc comment `//!` is only allowed at the top of a file (W0007); spec §4.1".into(),
                             );
                         }
-                    } else if matches!(self.peek_non_newline(), TokenKind::RBrace | TokenKind::Eof) {
+                    } else if matches!(self.peek_non_newline(), TokenKind::RBrace | TokenKind::Eof)
+                    {
                         // A trailing doc comment before the block closes has no item to document.
                         if let Some(d) = docs {
                             self.push_warning(
@@ -1038,7 +1351,12 @@ impl Parser {
             let value = self.parse_scrutinee()?;
             let body = self.parse_block()?;
             let span = Span::merge(start, body.span);
-            return Ok(Stmt::WhileLet { pat, value, body, span });
+            return Ok(Stmt::WhileLet {
+                pat,
+                value,
+                body,
+                span,
+            });
         }
         let cond = self.parse_scrutinee()?;
         let body = self.parse_block()?;
@@ -1071,7 +1389,13 @@ impl Parser {
             }
             let end = else_.as_ref().map(|b| b.span).unwrap_or(then.span);
             let span = Span::merge(start, end);
-            return Ok(Stmt::IfLet { pat, value, then, else_, span });
+            return Ok(Stmt::IfLet {
+                pat,
+                value,
+                then,
+                else_,
+                span,
+            });
         }
         let cond = self.parse_scrutinee()?;
         let then = self.parse_block()?;
@@ -1094,7 +1418,13 @@ impl Parser {
         }
         let end = else_.as_ref().map(|b| b.span).unwrap_or_else(|| then.span);
         let span = Span::merge(start, end);
-        Ok(Stmt::If { cond, then, elifs, else_, span })
+        Ok(Stmt::If {
+            cond,
+            then,
+            elifs,
+            else_,
+            span,
+        })
     }
 
     /// Parses the body of `else if let` — returns a nested `Stmt::IfLet` wrapped in a single-statement block.
@@ -1118,13 +1448,26 @@ impl Parser {
         }
         let end = else_.as_ref().map(|b| b.span).unwrap_or(then.span);
         let span = Span::merge(start, end);
-        let stmt = Stmt::IfLet { pat, value, then, else_, span };
-        Ok(Block { stmts: vec![stmt.clone()], span: stmt_span_of(&stmt) })
+        let stmt = Stmt::IfLet {
+            pat,
+            value,
+            then,
+            else_,
+            span,
+        };
+        Ok(Block {
+            stmts: vec![stmt.clone()],
+            span: stmt_span_of(&stmt),
+        })
     }
 
     fn parse_return_stmt(&mut self) -> Result<Stmt, SyntaxError> {
         let start = self.bump().span;
-        let value = if matches!(self.peek(), TokenKind::Newline | TokenKind::Semicolon | TokenKind::RBrace) || self.at(&TokenKind::Eof) {
+        let value = if matches!(
+            self.peek(),
+            TokenKind::Newline | TokenKind::Semicolon | TokenKind::RBrace
+        ) || self.at(&TokenKind::Eof)
+        {
             None
         } else {
             Some(self.parse_expr()?)
@@ -1158,9 +1501,21 @@ impl Parser {
         let range = (range_start, range_end);
         let span = Span::merge(start, body.span);
         if is_par {
-            Ok(Stmt::ParFor { var, range, step, body, span })
+            Ok(Stmt::ParFor {
+                var,
+                range,
+                step,
+                body,
+                span,
+            })
         } else {
-            Ok(Stmt::For { var, range, step, body, span })
+            Ok(Stmt::For {
+                var,
+                range,
+                step,
+                body,
+                span,
+            })
         }
     }
 
@@ -1172,10 +1527,18 @@ impl Parser {
         let entries = self.parse_config_entries()?;
         let body = self.parse_block()?;
         let span = Span::merge(start, body.span);
-        Ok(Stmt::WithConfig { entries, body, span })
+        Ok(Stmt::WithConfig {
+            entries,
+            body,
+            span,
+        })
     }
 
-    fn parse_pub_stmt(&mut self, outer_annotations: &[Annotation], docs: &Option<DocComment>) -> Result<Stmt, SyntaxError> {
+    fn parse_pub_stmt(
+        &mut self,
+        outer_annotations: &[Annotation],
+        docs: &Option<DocComment>,
+    ) -> Result<Stmt, SyntaxError> {
         let start = self.bump().span;
         self.skip_newlines();
         // `pub(mod)` at statement level (spec §15.2): consumed and ignored for statements (visibility matters for class members).
@@ -1205,7 +1568,12 @@ impl Parser {
                 };
                 self.attach_docs(stmt, docs.clone())?
             }
-            _ => return Err(self.err(self.span(), "expected `let`, `const`, `fn`, or `class` after `pub`".into())),
+            _ => {
+                return Err(self.err(
+                    self.span(),
+                    "expected `let`, `const`, `fn`, or `class` after `pub`".into(),
+                ));
+            }
         };
         let _ = start;
         Ok(Stmt::Pub(Box::new(inner)))
@@ -1217,7 +1585,11 @@ impl Parser {
         let scrutinee = self.parse_scrutinee()?;
         let arms = self.parse_match_arms()?;
         let end = self.tokens[self.pos.saturating_sub(1)].span;
-        Ok(Stmt::Match { scrutinee, arms, span: Span::merge(start, end) })
+        Ok(Stmt::Match {
+            scrutinee,
+            arms,
+            span: Span::merge(start, end),
+        })
     }
 
     /// `match <expr> {` — parse the scrutinee with struct literals disabled so `match x { ... }` treats `{` as the arms block.
@@ -1244,7 +1616,12 @@ impl Parser {
             self.skip_newlines();
             let value = self.parse_expr()?;
             let span = Span::merge(start, value.span);
-            Ok(Stmt::Assign { target: lhs, op, value, span })
+            Ok(Stmt::Assign {
+                target: lhs,
+                op,
+                value,
+                span,
+            })
         } else {
             Ok(Stmt::Expr(lhs))
         }
@@ -1268,14 +1645,23 @@ impl Parser {
                     "`|>` pipeline was removed in v2.3 (E0010); use class methods or a direct function call (spec §9.7)".into(),
                 ));
             }
-            let Some((op, lbp, rbp)) = binop_bp(self.peek()) else { break };
+            let Some((op, lbp, rbp)) = binop_bp(self.peek()) else {
+                break;
+            };
             if lbp < min_bp {
                 break;
             }
             self.bump();
             let rhs = self.parse_expr_bp(rbp)?;
             let span = Span::merge(lhs.span, rhs.span);
-            lhs = Expr { kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span };
+            lhs = Expr {
+                kind: ExprKind::Binary {
+                    op,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                },
+                span,
+            };
         }
         Ok(lhs)
     }
@@ -1287,20 +1673,41 @@ impl Parser {
             TokenKind::Minus => {
                 let operand = self.parse_expr_bp(UNARY_BP)?;
                 let span = Span::merge(tok.span, operand.span);
-                Ok(Expr { kind: ExprKind::Unary { op: UnOp::Neg, operand: Box::new(operand) }, span })
+                Ok(Expr {
+                    kind: ExprKind::Unary {
+                        op: UnOp::Neg,
+                        operand: Box::new(operand),
+                    },
+                    span,
+                })
             }
             TokenKind::Bang => {
                 let operand = self.parse_expr_bp(UNARY_BP)?;
                 let span = Span::merge(tok.span, operand.span);
-                Ok(Expr { kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(operand) }, span })
+                Ok(Expr {
+                    kind: ExprKind::Unary {
+                        op: UnOp::Not,
+                        operand: Box::new(operand),
+                    },
+                    span,
+                })
             }
             TokenKind::Plus => {
                 let operand = self.parse_expr_bp(UNARY_BP)?;
                 let span = Span::merge(tok.span, operand.span);
-                Ok(Expr { kind: ExprKind::Unary { op: UnOp::Pos, operand: Box::new(operand) }, span })
+                Ok(Expr {
+                    kind: ExprKind::Unary {
+                        op: UnOp::Pos,
+                        operand: Box::new(operand),
+                    },
+                    span,
+                })
             }
             TokenKind::KwSelf => {
-                let e = Expr { kind: ExprKind::Self_, span: tok.span };
+                let e = Expr {
+                    kind: ExprKind::Self_,
+                    span: tok.span,
+                };
                 self.parse_postfix(e)
             }
             _ => {
@@ -1319,7 +1726,11 @@ impl Parser {
             TokenKind::Binary(s) => ExprKind::Literal(Literal::Binary(s)),
             TokenKind::Str { value, raw, single } => ExprKind::Literal(Literal::String {
                 value,
-                quote: if single { StringQuote::Single } else { StringQuote::Double },
+                quote: if single {
+                    StringQuote::Single
+                } else {
+                    StringQuote::Double
+                },
                 raw,
             }),
             TokenKind::Char(c) => ExprKind::Literal(Literal::Char(c)),
@@ -1331,7 +1742,10 @@ impl Parser {
                         crate::token::FStringToken::Lit(s) => out.push(FStringPart::Literal(s)),
                         crate::token::FStringToken::Interp { expr, spec } => {
                             let e = self.parse_fstring_interp(&expr, span)?;
-                            out.push(FStringPart::Interp { expr: Box::new(e), spec });
+                            out.push(FStringPart::Interp {
+                                expr: Box::new(e),
+                                spec,
+                            });
                         }
                     }
                 }
@@ -1355,19 +1769,31 @@ impl Parser {
             TokenKind::LBrace => return self.parse_brace_literal(span),
             TokenKind::Pipe => return self.parse_lambda(span),
             TokenKind::KwMatch => return self.parse_match_expr(span),
-            _ => return Err(SyntaxError { span, message: format!("expected expression, found {}", describe(&tok.kind)) }),
+            _ => {
+                return Err(SyntaxError {
+                    span,
+                    message: format!("expected expression, found {}", describe(&tok.kind)),
+                });
+            }
         };
         Ok(Expr { kind, span })
     }
 
     /// Parse the already-lexed body of an f-string interpolation into an `Expr` (spec §18.1).
     /// The body is a normal Prima expression; a leftover token is a parse error.
-    fn parse_fstring_interp(&mut self, tokens: &[Token], fstring_span: Span) -> Result<Expr, SyntaxError> {
+    fn parse_fstring_interp(
+        &mut self,
+        tokens: &[Token],
+        fstring_span: Span,
+    ) -> Result<Expr, SyntaxError> {
         let mut sub = Parser::new(tokens.to_vec());
         let e = sub.parse_expr()?;
         sub.skip_newlines();
         if !sub.at(&TokenKind::Eof) {
-            return Err(self.err(fstring_span, "invalid expression in f-string interpolation".into()));
+            return Err(self.err(
+                fstring_span,
+                "invalid expression in f-string interpolation".into(),
+            ));
         }
         self.warnings.extend(sub.warnings);
         Ok(e)
@@ -1394,14 +1820,26 @@ impl Parser {
                             "`format` was removed in v2.2 (W0006); use an f-string `f\"...{expr}...\"` instead (spec §18.1)".into(),
                         );
                     }
-                    e = Expr { kind: ExprKind::Call { callee: Box::new(e), args }, span };
+                    e = Expr {
+                        kind: ExprKind::Call {
+                            callee: Box::new(e),
+                            args,
+                        },
+                        span,
+                    };
                 }
                 TokenKind::LBracket => {
                     self.bump();
                     let index = self.parse_index()?;
                     let end = self.tokens[self.pos.saturating_sub(1)].span;
                     let span = Span::merge(e.span, end);
-                    e = Expr { kind: ExprKind::Index { base: Box::new(e), index }, span };
+                    e = Expr {
+                        kind: ExprKind::Index {
+                            base: Box::new(e),
+                            index,
+                        },
+                        span,
+                    };
                 }
                 TokenKind::Dot => {
                     // Method call `obj.method(...)` / field access `obj.field` (spec §4.5).
@@ -1414,17 +1852,33 @@ impl Parser {
                         let args = self.parse_args()?;
                         let end = self.tokens[self.pos.saturating_sub(1)].span;
                         let span = Span::merge(e.span, end);
-                        e = Expr { kind: ExprKind::MethodCall { receiver: Box::new(e), name, args }, span };
+                        e = Expr {
+                            kind: ExprKind::MethodCall {
+                                receiver: Box::new(e),
+                                name,
+                                args,
+                            },
+                            span,
+                        };
                     } else {
                         let span = Span::merge(e.span, name.span);
-                        e = Expr { kind: ExprKind::Field { receiver: Box::new(e), name }, span };
+                        e = Expr {
+                            kind: ExprKind::Field {
+                                receiver: Box::new(e),
+                                name,
+                            },
+                            span,
+                        };
                     }
                 }
                 TokenKind::Question => {
                     // `expr?` try operator (spec §16.3).
                     let q = self.bump();
                     let span = Span::merge(e.span, q.span);
-                    e = Expr { kind: ExprKind::Try(Box::new(e)), span };
+                    e = Expr {
+                        kind: ExprKind::Try(Box::new(e)),
+                        span,
+                    };
                 }
                 _ => break,
             }
@@ -1442,7 +1896,11 @@ impl Parser {
     }
 
     /// `T { a, b, ..base }` struct literal (spec §4.5); field shorthand `a` ≡ `a: a`.
-    fn parse_struct_literal(&mut self, name: Spanned<String>, path: Expr) -> Result<Expr, SyntaxError> {
+    fn parse_struct_literal(
+        &mut self,
+        name: Spanned<String>,
+        path: Expr,
+    ) -> Result<Expr, SyntaxError> {
         self.expect(&TokenKind::LBrace, "`{`")?;
         let mut fields = Vec::new();
         let mut base = None;
@@ -1458,7 +1916,10 @@ impl Parser {
                 base = Some(Box::new(self.parse_expr()?));
                 self.skip_newlines();
                 if self.eat(&TokenKind::RBrace).is_none() {
-                    return Err(self.err(self.span(), "expected `}` after the struct update base".into()));
+                    return Err(self.err(
+                        self.span(),
+                        "expected `}` after the struct update base".into(),
+                    ));
                 }
                 break;
             }
@@ -1481,7 +1942,10 @@ impl Parser {
         }
         let end = self.tokens[self.pos.saturating_sub(1)].span;
         let span = Span::merge(path.span, end);
-        Ok(Expr { kind: ExprKind::StructLiteral { name, fields, base }, span })
+        Ok(Expr {
+            kind: ExprKind::StructLiteral { name, fields, base },
+            span,
+        })
     }
 
     fn parse_args(&mut self) -> Result<Vec<Expr>, SyntaxError> {
@@ -1506,7 +1970,10 @@ impl Parser {
         self.skip_newlines();
         if self.at(&TokenKind::RParen) {
             let end = self.bump().span;
-            return Ok(Expr { kind: ExprKind::Tuple(vec![]), span: Span::merge(start, end) });
+            return Ok(Expr {
+                kind: ExprKind::Tuple(vec![]),
+                span: Span::merge(start, end),
+            });
         }
         let first = self.parse_expr()?;
         self.skip_newlines();
@@ -1525,19 +1992,29 @@ impl Parser {
                 }
             }
             let end = self.expect(&TokenKind::RParen, "`)`")?.span;
-            Ok(Expr { kind: ExprKind::Tuple(items), span: Span::merge(start, end) })
+            Ok(Expr {
+                kind: ExprKind::Tuple(items),
+                span: Span::merge(start, end),
+            })
         } else {
             // Tuple comprehension `(output for var in iter [if cond])` (spec §4.6): a single output with no trailing comma.
             if self.at(&TokenKind::KwFor) {
                 let clauses = self.parse_comprehension_clauses()?;
                 let end = self.expect(&TokenKind::RParen, "`)`")?.span;
                 return Ok(Expr {
-                    kind: ExprKind::Comprehension { kind: CompKind::Tuple, output: Box::new(first), clauses },
+                    kind: ExprKind::Comprehension {
+                        kind: CompKind::Tuple,
+                        output: Box::new(first),
+                        clauses,
+                    },
                     span: Span::merge(start, end),
                 });
             }
             let end = self.expect(&TokenKind::RParen, "`)`")?.span;
-            Ok(Expr { kind: first.kind, span: Span::merge(start, end) })
+            Ok(Expr {
+                kind: first.kind,
+                span: Span::merge(start, end),
+            })
         }
     }
 
@@ -1558,15 +2035,28 @@ impl Parser {
         // Array comprehension `[output for var in iter [if cond]]` (spec §4.6/§11.7): a single output expression.
         if self.at(&TokenKind::KwFor) {
             if items.len() != 1 {
-                return Err(self.err(self.span(), "comprehension output must be a single expression".into()));
+                return Err(self.err(
+                    self.span(),
+                    "comprehension output must be a single expression".into(),
+                ));
             }
             let output = items.pop().unwrap();
             let clauses = self.parse_comprehension_clauses()?;
             let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
-            return Ok(Expr { kind: ExprKind::Comprehension { kind: CompKind::Array, output: Box::new(output), clauses }, span: Span::merge(start, end) });
+            return Ok(Expr {
+                kind: ExprKind::Comprehension {
+                    kind: CompKind::Array,
+                    output: Box::new(output),
+                    clauses,
+                },
+                span: Span::merge(start, end),
+            });
         }
         let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
-        Ok(Expr { kind: ExprKind::Array(items), span: Span::merge(start, end) })
+        Ok(Expr {
+            kind: ExprKind::Array(items),
+            span: Span::merge(start, end),
+        })
     }
 
     /// `{ ... }` dict/set literal or comprehension (spec §4.6): `{}` is an empty Dict; a trailing `for` after the
@@ -1575,7 +2065,10 @@ impl Parser {
         self.skip_newlines();
         if self.at(&TokenKind::RBrace) {
             let end = self.bump().span;
-            return Ok(Expr { kind: ExprKind::Dict(vec![]), span: Span::merge(start, end) });
+            return Ok(Expr {
+                kind: ExprKind::Dict(vec![]),
+                span: Span::merge(start, end),
+            });
         }
         let first = self.parse_expr()?;
         self.skip_newlines();
@@ -1584,7 +2077,11 @@ impl Parser {
             let clauses = self.parse_comprehension_clauses()?;
             let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
             return Ok(Expr {
-                kind: ExprKind::Comprehension { kind: CompKind::Set, output: Box::new(first), clauses },
+                kind: ExprKind::Comprehension {
+                    kind: CompKind::Set,
+                    output: Box::new(first),
+                    clauses,
+                },
                 span: Span::merge(start, end),
             });
         }
@@ -1596,12 +2093,22 @@ impl Parser {
                 // Dict comprehension `{ key: value for var in iter [if cond] }` (spec §4.6).
                 let kv_span = Span::merge(first.span, value.span);
                 let output = Expr {
-                    kind: ExprKind::KeyValue { key: Box::new(first), value: Box::new(value) },
+                    kind: ExprKind::KeyValue {
+                        key: Box::new(first),
+                        value: Box::new(value),
+                    },
                     span: kv_span,
                 };
                 let clauses = self.parse_comprehension_clauses()?;
                 let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
-                return Ok(Expr { kind: ExprKind::Comprehension { kind: CompKind::Dict, output: Box::new(output), clauses }, span: Span::merge(start, end) });
+                return Ok(Expr {
+                    kind: ExprKind::Comprehension {
+                        kind: CompKind::Dict,
+                        output: Box::new(output),
+                        clauses,
+                    },
+                    span: Span::merge(start, end),
+                });
             }
             let mut entries = vec![(first, value)];
             loop {
@@ -1615,13 +2122,18 @@ impl Parser {
                 let key = self.parse_expr()?;
                 self.skip_newlines();
                 if self.eat(&TokenKind::Colon).is_none() {
-                    return Err(self.err(self.span(), "expected `:` in a Dict literal entry".into()));
+                    return Err(
+                        self.err(self.span(), "expected `:` in a Dict literal entry".into())
+                    );
                 }
                 let value = self.parse_expr()?;
                 entries.push((key, value));
             }
             let end = self.tokens[self.pos.saturating_sub(1)].span;
-            return Ok(Expr { kind: ExprKind::Dict(entries), span: Span::merge(start, end) });
+            return Ok(Expr {
+                kind: ExprKind::Dict(entries),
+                span: Span::merge(start, end),
+            });
         }
         // Set literal: comma-separated elements; a top-level `:` would mean a Dict entry, which is invalid here.
         let mut elems = vec![first];
@@ -1632,19 +2144,30 @@ impl Parser {
                 break;
             }
             if self.at(&TokenKind::Colon) {
-                return Err(self.err(self.span(), "expected `}` or `,` in a Set literal; `key: value` requires a Dict literal".into()));
+                return Err(self.err(
+                    self.span(),
+                    "expected `}` or `,` in a Set literal; `key: value` requires a Dict literal"
+                        .into(),
+                ));
             }
             self.expect(&TokenKind::Comma, "`,` or `}`")?;
             self.skip_newlines();
             let elem = self.parse_expr()?;
             self.skip_newlines();
             if self.at(&TokenKind::Colon) {
-                return Err(self.err(self.span(), "expected `}` or `,` in a Set literal; `key: value` requires a Dict literal".into()));
+                return Err(self.err(
+                    self.span(),
+                    "expected `}` or `,` in a Set literal; `key: value` requires a Dict literal"
+                        .into(),
+                ));
             }
             elems.push(elem);
         }
         let end = self.tokens[self.pos.saturating_sub(1)].span;
-        Ok(Expr { kind: ExprKind::Set(elems), span: Span::merge(start, end) })
+        Ok(Expr {
+            kind: ExprKind::Set(elems),
+            span: Span::merge(start, end),
+        })
     }
 
     /// Comprehension clauses after the output: any sequence of `for <var> in <iter>` / `if <cond>` (spec §11.7).
@@ -1696,7 +2219,10 @@ impl Parser {
                     } else {
                         Some(self.parse_expr()?)
                     };
-                    IndexItem::Slice { start: Some(start), end }
+                    IndexItem::Slice {
+                        start: Some(start),
+                        end,
+                    }
                 } else {
                     IndexItem::Elem(start)
                 }
@@ -1725,7 +2251,11 @@ impl Parser {
                 } else {
                     None
                 };
-                params.push(Param { name, type_ann, is_self: false });
+                params.push(Param {
+                    name,
+                    type_ann,
+                    is_self: false,
+                });
                 self.skip_newlines();
                 if self.eat(&TokenKind::Comma).is_some() {
                     self.skip_newlines();
@@ -1739,7 +2269,13 @@ impl Parser {
         self.skip_newlines();
         let body = self.parse_expr()?;
         let span = Span::merge(start, body.span);
-        Ok(Expr { kind: ExprKind::Lambda { params, body: Box::new(body) }, span })
+        Ok(Expr {
+            kind: ExprKind::Lambda {
+                params,
+                body: Box::new(body),
+            },
+            span,
+        })
     }
 
     fn parse_match_expr(&mut self, start: Span) -> Result<Expr, SyntaxError> {
@@ -1747,7 +2283,13 @@ impl Parser {
         let scrutinee = self.parse_scrutinee()?;
         let arms = self.parse_match_arms()?;
         let end = self.tokens[self.pos.saturating_sub(1)].span;
-        Ok(Expr { kind: ExprKind::Match { scrutinee: Box::new(scrutinee), arms }, span: Span::merge(start, end) })
+        Ok(Expr {
+            kind: ExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms,
+            },
+            span: Span::merge(start, end),
+        })
     }
 
     /// `{ pattern [if guard] => expr, ... }` (spec §4.4).
@@ -1773,7 +2315,11 @@ impl Parser {
             self.expect(&TokenKind::FatArrow, "`=>`")?;
             self.skip_newlines();
             let body = self.parse_expr()?;
-            arms.push(MatchArm { pattern, guard, body });
+            arms.push(MatchArm {
+                pattern,
+                guard,
+                body,
+            });
             self.skip_newlines();
             self.eat(&TokenKind::Comma);
             self.eat(&TokenKind::Semicolon);
@@ -1810,7 +2356,12 @@ impl Parser {
             let lit = match t.kind {
                 TokenKind::Integer(s) => Literal::Integer(format!("-{s}")),
                 TokenKind::Float(s) => Literal::Float(format!("-{s}")),
-                _ => return Err(self.err(t.span, "expected a numeric literal after `-` in a pattern".into())),
+                _ => {
+                    return Err(self.err(
+                        t.span,
+                        "expected a numeric literal after `-` in a pattern".into(),
+                    ));
+                }
             };
             let _ = m;
             return Ok(Pattern::Literal(lit));
@@ -1818,22 +2369,38 @@ impl Parser {
         let tok = self.bump();
         match tok.kind {
             TokenKind::Underscore => Ok(Pattern::Wildcard(tok.span)),
-            TokenKind::Integer(s) => self.parse_pattern_range(Pattern::Literal(Literal::Integer(s)), tok.span),
-            TokenKind::Float(s) => self.parse_pattern_range(Pattern::Literal(Literal::Float(s)), tok.span),
+            TokenKind::Integer(s) => {
+                self.parse_pattern_range(Pattern::Literal(Literal::Integer(s)), tok.span)
+            }
+            TokenKind::Float(s) => {
+                self.parse_pattern_range(Pattern::Literal(Literal::Float(s)), tok.span)
+            }
             TokenKind::Str { value, raw, single } => Ok(Pattern::Literal(Literal::String {
                 value,
-                quote: if single { StringQuote::Single } else { StringQuote::Double },
+                quote: if single {
+                    StringQuote::Single
+                } else {
+                    StringQuote::Double
+                },
                 raw,
             })),
-            TokenKind::Char(c) => self.parse_pattern_range(Pattern::Literal(Literal::Char(c)), tok.span),
+            TokenKind::Char(c) => {
+                self.parse_pattern_range(Pattern::Literal(Literal::Char(c)), tok.span)
+            }
             TokenKind::KwTrue => Ok(Pattern::Literal(Literal::Bool(true))),
             TokenKind::KwFalse => Ok(Pattern::Literal(Literal::Bool(false))),
-            TokenKind::Symbol(s) => Ok(Pattern::Binding(Spanned { value: s, span: tok.span })),
+            TokenKind::Symbol(s) => Ok(Pattern::Binding(Spanned {
+                value: s,
+                span: tok.span,
+            })),
             TokenKind::LParen => self.parse_tuple_pattern(tok.span),
             TokenKind::LBracket => self.parse_array_pattern(tok.span),
             TokenKind::Ident(s) => {
                 // `Some(x)`/`Ok(v)` constructor pattern or `Type { ... }` struct pattern (spec §4.4).
-                let name = Spanned { value: s, span: tok.span };
+                let name = Spanned {
+                    value: s,
+                    span: tok.span,
+                };
                 self.skip_newlines();
                 if self.at(&TokenKind::LParen) {
                     self.bump();
@@ -1851,7 +2418,11 @@ impl Parser {
                         }
                     }
                     let end = self.expect(&TokenKind::RParen, "`)`")?.span;
-                    return Ok(Pattern::Variant { name, args, span: Span::merge(tok.span, end) });
+                    return Ok(Pattern::Variant {
+                        name,
+                        args,
+                        span: Span::merge(tok.span, end),
+                    });
                 }
                 if self.at(&TokenKind::LBrace) {
                     self.bump();
@@ -1867,7 +2438,10 @@ impl Parser {
                             rest = true;
                             self.skip_newlines();
                             if self.eat(&TokenKind::RBrace).is_none() {
-                                return Err(self.err(self.span(), "expected `}` after `..` in a struct pattern".into()));
+                                return Err(self.err(
+                                    self.span(),
+                                    "expected `}` after `..` in a struct pattern".into(),
+                                ));
                             }
                             break;
                         }
@@ -1891,7 +2465,10 @@ impl Parser {
                 }
                 Ok(Pattern::Binding(name))
             }
-            _ => Err(self.err(tok.span, format!("expected pattern, found {}", describe(&tok.kind)))),
+            _ => Err(self.err(
+                tok.span,
+                format!("expected pattern, found {}", describe(&tok.kind)),
+            )),
         }
     }
 
@@ -1931,7 +2508,10 @@ impl Parser {
                     rest = true;
                     self.skip_newlines();
                     if self.eat(&TokenKind::RParen).is_none() {
-                        return Err(self.err(self.span(), "expected `)` after `..` in a tuple pattern".into()));
+                        return Err(self.err(
+                            self.span(),
+                            "expected `)` after `..` in a tuple pattern".into(),
+                        ));
                     }
                     closed = true;
                     break;
@@ -1963,7 +2543,10 @@ impl Parser {
                     rest = true;
                     self.skip_newlines();
                     if self.eat(&TokenKind::RBracket).is_none() {
-                        return Err(self.err(self.span(), "expected `]` after `..` in an array pattern".into()));
+                        return Err(self.err(
+                            self.span(),
+                            "expected `]` after `..` in an array pattern".into(),
+                        ));
                     }
                     closed = true;
                     break;
@@ -2040,7 +2623,11 @@ mod tests {
 
     fn parse_first(src: &str) -> Expr {
         let program = crate::parse(src).expect("parse failed");
-        let stmt = program.stmts.into_iter().next().expect("expected a statement");
+        let stmt = program
+            .stmts
+            .into_iter()
+            .next()
+            .expect("expected a statement");
         match stmt {
             Stmt::Expr(e) => e,
             Stmt::Let { value, .. } => value,
@@ -2061,7 +2648,11 @@ mod tests {
 
     fn comp(src: &str) -> (CompKind, Expr, Vec<ComprehensionClause>) {
         match parse_first(src).kind {
-            ExprKind::Comprehension { kind, output, clauses } => (kind, *output, clauses),
+            ExprKind::Comprehension {
+                kind,
+                output,
+                clauses,
+            } => (kind, *output, clauses),
             other => panic!("expected comprehension, got {other:?}"),
         }
     }
@@ -2080,8 +2671,15 @@ mod tests {
     fn set_literal() {
         match parse_first("{1, 2, 3, 2}").kind {
             ExprKind::Set(elems) => {
-                assert_eq!(elems.len(), 4, "parser keeps duplicates; dedup is a runtime concern");
-                assert!(matches!(elems[0].kind, ExprKind::Literal(Literal::Integer(_))));
+                assert_eq!(
+                    elems.len(),
+                    4,
+                    "parser keeps duplicates; dedup is a runtime concern"
+                );
+                assert!(matches!(
+                    elems[0].kind,
+                    ExprKind::Literal(Literal::Integer(_))
+                ));
             }
             other => panic!("expected Set, got {other:?}"),
         }
@@ -2092,9 +2690,16 @@ mod tests {
         match parse_first("{ \"a\": 1, \"b\": 2 }").kind {
             ExprKind::Dict(entries) => {
                 assert_eq!(entries.len(), 2);
-                assert!(matches!(entries[0].0.kind, ExprKind::Literal(Literal::String { ref value, .. }) if value == "a"));
-                assert!(matches!(entries[1].0.kind, ExprKind::Literal(Literal::String { ref value, .. }) if value == "b"));
-                assert!(matches!(entries[0].1.kind, ExprKind::Literal(Literal::Integer(_))));
+                assert!(
+                    matches!(entries[0].0.kind, ExprKind::Literal(Literal::String { ref value, .. }) if value == "a")
+                );
+                assert!(
+                    matches!(entries[1].0.kind, ExprKind::Literal(Literal::String { ref value, .. }) if value == "b")
+                );
+                assert!(matches!(
+                    entries[0].1.kind,
+                    ExprKind::Literal(Literal::Integer(_))
+                ));
             }
             other => panic!("expected Dict, got {other:?}"),
         }
@@ -2112,7 +2717,10 @@ mod tests {
     fn array_comprehension() {
         let (kind, output, clauses) = comp("[x^2 for x in range(0, 10)]");
         assert_eq!(kind, CompKind::Array);
-        assert!(matches!(output.kind, ExprKind::Binary { op: BinOp::Pow, .. }));
+        assert!(matches!(
+            output.kind,
+            ExprKind::Binary { op: BinOp::Pow, .. }
+        ));
         assert_eq!(clause_names(&clauses), vec!["for x"]);
     }
 
@@ -2151,7 +2759,10 @@ mod tests {
         match output.kind {
             ExprKind::KeyValue { key, value } => {
                 assert!(matches!(key.kind, ExprKind::Path { .. }));
-                assert!(matches!(value.kind, ExprKind::Binary { op: BinOp::Pow, .. }));
+                assert!(matches!(
+                    value.kind,
+                    ExprKind::Binary { op: BinOp::Pow, .. }
+                ));
             }
             other => panic!("expected KeyValue output, got {other:?}"),
         }
@@ -2196,10 +2807,16 @@ mod tests {
     #[test]
     fn if_cond_with_set_literal() {
         let program = crate::parse("if x in {1, 2} { }").expect("parse failed");
-        let stmt = program.stmts.into_iter().next().expect("expected an if statement");
+        let stmt = program
+            .stmts
+            .into_iter()
+            .next()
+            .expect("expected an if statement");
         match stmt {
             Stmt::If { cond, .. } => match cond.kind {
-                ExprKind::Binary { op: BinOp::In, rhs, .. } => {
+                ExprKind::Binary {
+                    op: BinOp::In, rhs, ..
+                } => {
                     assert!(matches!(rhs.kind, ExprKind::Set(_)));
                 }
                 other => panic!("expected `x in {{{{1, 2}}}}` condition, got {other:?}"),
@@ -2250,9 +2867,16 @@ mod tests {
     #[test]
     fn negative_newline_separated_statements() {
         // Spec §4.2: statements must be separated by `;`; a bare newline separator is E0011.
-        assert!(parse_err("x = 1\ny = 2"), "newline-separated statements must be a parse error");
+        assert!(
+            parse_err("x = 1\ny = 2"),
+            "newline-separated statements must be a parse error"
+        );
         let errs = crate::parse("x = 1\ny = 2").unwrap_err();
-        assert!(errs.iter().any(|e| e.message.contains("E0011") && e.message.contains("newline statement separation was removed")));
+        assert!(errs.iter().any(|e| {
+            e.message.contains("E0011")
+                && e.message
+                    .contains("newline statement separation was removed")
+        }));
         let errs = crate::parse("1\n2\n").unwrap_err();
         assert!(errs.iter().any(|e| e.message.contains("E0011")));
     }
@@ -2262,7 +2886,10 @@ mod tests {
         // Spec §9.7: `|>` was removed in v2.3; its use is E0010.
         assert!(parse_err("a |> f"), "`|>` must be a parse error");
         let errs = crate::parse("a |> f").unwrap_err();
-        assert!(errs.iter().any(|e| e.message.contains("E0010") && e.message.contains("pipeline was removed")));
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("E0010") && e.message.contains("pipeline was removed"))
+        );
         assert!(parse_err("let x = a |> f;"));
     }
 
@@ -2270,17 +2897,33 @@ mod tests {
     fn builtin_fn_accepts_path_name() {
         // Spec §18.4: a signature-only `@builtin pub fn` may carry a `::`-joined name, exported
         // under that joined key for module-qualified calls (`linalg::Matrix::zeros`).
-        let program = crate::parse("@builtin pub fn Matrix::zeros(rows: Integer, cols: Integer) -> Matrix<F64>;")
-            .expect("parse failed");
-        let stmt = program.stmts.into_iter().next().expect("expected a statement");
+        let program = crate::parse(
+            "@builtin pub fn Matrix::zeros(rows: Integer, cols: Integer) -> Matrix<F64>;",
+        )
+        .expect("parse failed");
+        let stmt = program
+            .stmts
+            .into_iter()
+            .next()
+            .expect("expected a statement");
         match stmt {
             Stmt::Pub(inner) => match *inner {
-                Stmt::FnDef { name, params, annotations, body, ret, .. } => {
+                Stmt::FnDef {
+                    name,
+                    params,
+                    annotations,
+                    body,
+                    ret,
+                    ..
+                } => {
                     assert_eq!(name.value, "Matrix::zeros");
                     assert!(annotations.iter().any(|a| a.is_builtin()));
                     assert_eq!(params.len(), 2);
                     assert!(matches!(ret, Some(Type::Matrix(_))));
-                    assert!(body.stmts.is_empty(), "signature-only builtin must have an empty body");
+                    assert!(
+                        body.stmts.is_empty(),
+                        "signature-only builtin must have an empty body"
+                    );
                 }
                 other => panic!("expected FnDef, got {other:?}"),
             },
@@ -2290,10 +2933,20 @@ mod tests {
 
     #[test]
     fn builtin_fn_accepts_path_name_without_pub() {
-        let program = crate::parse("@builtin fn Util::twice(x: Integer) -> Integer;").expect("parse failed");
-        let stmt = program.stmts.into_iter().next().expect("expected a statement");
+        let program =
+            crate::parse("@builtin fn Util::twice(x: Integer) -> Integer;").expect("parse failed");
+        let stmt = program
+            .stmts
+            .into_iter()
+            .next()
+            .expect("expected a statement");
         match stmt {
-            Stmt::FnDef { name, annotations, body, .. } => {
+            Stmt::FnDef {
+                name,
+                annotations,
+                body,
+                ..
+            } => {
                 assert_eq!(name.value, "Util::twice");
                 assert!(annotations.iter().any(|a| a.is_builtin()));
                 assert!(body.stmts.is_empty());
@@ -2304,26 +2957,45 @@ mod tests {
 
     #[test]
     fn non_builtin_fn_rejects_path_name() {
-        assert!(parse_err("fn a::b() {}"), "path names are only allowed on `@builtin` fns");
+        assert!(
+            parse_err("fn a::b() {}"),
+            "path names are only allowed on `@builtin` fns"
+        );
     }
 
     #[test]
     fn builtin_tier_annotation_parses() {
         // `@builtin(O2)` carries its tier (spec §18.4); bare `@builtin` is tier `O0`.
-        let p1 = crate::parse("@builtin(O2)\npub fn scale(a: Integer) -> Integer;").expect("parse failed");
+        let p1 = crate::parse("@builtin(O2)\npub fn scale(a: Integer) -> Integer;")
+            .expect("parse failed");
         let mut stmt = p1.stmts.into_iter().next().unwrap();
-        if let Stmt::Pub(inner) = stmt { stmt = *inner; }
-        let Stmt::FnDef { annotations, body, .. } = stmt else { panic!("expected FnDef") };
+        if let Stmt::Pub(inner) = stmt {
+            stmt = *inner;
+        }
+        let Stmt::FnDef {
+            annotations, body, ..
+        } = stmt
+        else {
+            panic!("expected FnDef")
+        };
         assert_eq!(annotations.iter().map(|a| a.builtin_level()).max(), Some(2));
         assert!(body.stmts.is_empty());
 
-        let p0 = crate::parse("@builtin\npub fn identity(a: Integer) -> Integer;").expect("parse failed");
+        let p0 = crate::parse("@builtin\npub fn identity(a: Integer) -> Integer;")
+            .expect("parse failed");
         let mut stmt0 = p0.stmts.into_iter().next().unwrap();
-        if let Stmt::Pub(inner) = stmt0 { stmt0 = *inner; }
-        let Stmt::FnDef { annotations, .. } = stmt0 else { panic!("expected FnDef") };
+        if let Stmt::Pub(inner) = stmt0 {
+            stmt0 = *inner;
+        }
+        let Stmt::FnDef { annotations, .. } = stmt0 else {
+            panic!("expected FnDef")
+        };
         assert_eq!(annotations.iter().map(|a| a.builtin_level()).max(), Some(0));
 
-        assert!(parse_err("@builtin(O9) pub fn f() -> Integer;"), "invalid tier is E0057");
+        assert!(
+            parse_err("@builtin(O9) pub fn f() -> Integer;"),
+            "invalid tier is E0057"
+        );
     }
 
     #[test]
@@ -2362,7 +3034,9 @@ mod tests {
         match e.kind {
             ExprKind::FString(parts) => {
                 assert_eq!(parts.len(), 4);
-                let FStringPart::Interp { expr, .. } = &parts[1] else { panic!("expected interpolation") };
+                let FStringPart::Interp { expr, .. } = &parts[1] else {
+                    panic!("expected interpolation")
+                };
                 assert!(matches!(expr.kind, ExprKind::Index { .. }));
             }
             other => panic!("expected FString, got {other:?}"),
@@ -2371,7 +3045,10 @@ mod tests {
 
     #[test]
     fn fstring_empty_interpolation_is_error() {
-        assert!(parse_err(r#"f"a {} b""#), "empty interpolation must be a parse error");
+        assert!(
+            parse_err(r#"f"a {} b""#),
+            "empty interpolation must be a parse error"
+        );
     }
 
     #[test]
@@ -2379,7 +3056,9 @@ mod tests {
         let (_, errors, warnings) = crate::parse_checked(r#"print(format("x = {}", 1));"#);
         assert!(errors.is_empty(), "errors = {errors:?}");
         assert!(
-            warnings.iter().any(|w| w.code == "W0006" && w.message.contains("f-string")),
+            warnings
+                .iter()
+                .any(|w| w.code == "W0006" && w.message.contains("f-string")),
             "warnings = {warnings:?}"
         );
     }
@@ -2389,7 +3068,10 @@ mod tests {
         // `time::format` is a module function (spec §18.1), not the removed core `format`.
         let (_, errors, warnings) = crate::parse_checked(r#"time::format(0, "%Y");"#);
         assert!(errors.is_empty(), "errors = {errors:?}");
-        assert!(!warnings.iter().any(|w| w.code == "W0006"), "warnings = {warnings:?}");
+        assert!(
+            !warnings.iter().any(|w| w.code == "W0006"),
+            "warnings = {warnings:?}"
+        );
     }
 
     #[test]
@@ -2402,9 +3084,19 @@ mod tests {
     fn builtin_pub_fn_signature_only_without_path() {
         // `@builtin pub fn` (annotation before `pub`) must also parse the signature-only form.
         let program = crate::parse("@builtin pub fn answer() -> Integer;").expect("parse failed");
-        match program.stmts.into_iter().next().expect("expected a statement") {
+        match program
+            .stmts
+            .into_iter()
+            .next()
+            .expect("expected a statement")
+        {
             Stmt::Pub(inner) => match *inner {
-                Stmt::FnDef { name, annotations, body, .. } => {
+                Stmt::FnDef {
+                    name,
+                    annotations,
+                    body,
+                    ..
+                } => {
                     assert_eq!(name.value, "answer");
                     assert!(annotations.iter().any(|a| a.is_builtin()));
                     assert!(body.stmts.is_empty());

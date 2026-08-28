@@ -5,7 +5,7 @@
 //! class-level `String` key) so diagnostics can attach a signature, definition location, and doc
 //! note to a failed call (spec §16.4) and `prima doc` lists them offline (spec §20).
 
-use prima_runtime::docs::{register_doc, MethodDoc};
+use prima_runtime::docs::{MethodDoc, register_doc};
 use prima_syntax::ast::{ClassMemberKind, Stmt, Type};
 use prima_syntax::parse;
 
@@ -20,26 +20,45 @@ pub fn register() {
     let src = include_str!("modules/string.pra");
     let Ok(program) = parse(src) else { return };
     for stmt in &program.stmts {
-        let Stmt::ClassDef { name, members, docs, .. } = stmt else { continue };
+        let Stmt::ClassDef {
+            name,
+            members,
+            docs,
+            ..
+        } = stmt
+        else {
+            continue;
+        };
         if name.value != "String" {
             continue;
         }
         // Class-level doc (spec §4.1): the `///` above `class String`.
-        register_doc("String", MethodDoc {
-            name: "String".into(),
-            sig: "String".into(),
-            doc: docs.as_ref().map(|d| d.text()),
-            defined_at: format!("{DISPLAY_PATH}:1:1"),
-        });
+        register_doc(
+            "String",
+            MethodDoc {
+                name: "String".into(),
+                sig: "String".into(),
+                doc: docs.as_ref().map(|d| d.text()),
+                defined_at: format!("{DISPLAY_PATH}:1:1"),
+            },
+        );
         for member in members {
-            let ClassMemberKind::Method { name, params, ret, .. } = &member.kind else { continue };
+            let ClassMemberKind::Method {
+                name, params, ret, ..
+            } = &member.kind
+            else {
+                continue;
+            };
             let key = format!("String::{}", name.value);
-            register_doc(key, MethodDoc {
-                name: name.value.clone(),
-                sig: render_sig(&name.value, params, ret),
-                doc: member.docs.as_ref().map(|d| d.text()),
-                defined_at: line_col(src, member.span.start),
-            });
+            register_doc(
+                key,
+                MethodDoc {
+                    name: name.value.clone(),
+                    sig: render_sig(&name.value, params, ret),
+                    doc: member.docs.as_ref().map(|d| d.text()),
+                    defined_at: line_col(src, member.span.start),
+                },
+            );
         }
     }
 }
@@ -161,6 +180,9 @@ fn line_col(src: &str, offset: u32) -> String {
     let offset = (offset as usize).min(src.len());
     let before = &src[..offset];
     let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
-    let col = before.rfind('\n').map(|i| before[i + 1..].chars().count() + 1).unwrap_or(before.chars().count() + 1);
+    let col = before
+        .rfind('\n')
+        .map(|i| before[i + 1..].chars().count() + 1)
+        .unwrap_or(before.chars().count() + 1);
     format!("{DISPLAY_PATH}:{line}:{col}")
 }

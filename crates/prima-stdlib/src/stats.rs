@@ -19,7 +19,10 @@ fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
     if args.len() == n {
         Ok(())
     } else {
-        Err(RuntimeError::Message(format!("`{fname}` expects {n} argument(s), got {}", args.len())))
+        Err(RuntimeError::Message(format!(
+            "`{fname}` expects {n} argument(s), got {}",
+            args.len()
+        )))
     }
 }
 
@@ -30,7 +33,9 @@ fn f64_arg(args: &[Value], i: usize, fname: &str) -> Result<f64, RuntimeError> {
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a number, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!("`{fname}` missing argument {i}"))),
+        None => Err(RuntimeError::Message(format!(
+            "`{fname}` missing argument {i}"
+        ))),
     }
 }
 
@@ -45,7 +50,7 @@ fn data_arg(args: &[Value], i: usize, fname: &str) -> Result<Vec<f64>, RuntimeEr
                     other => {
                         return Err(RuntimeError::Type(format!(
                             "`{fname}` data element {j} must be a number, got {other:?}"
-                        )))
+                        )));
                     }
                 }
             }
@@ -54,7 +59,9 @@ fn data_arg(args: &[Value], i: usize, fname: &str) -> Result<Vec<f64>, RuntimeEr
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be an array of numbers, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!("`{fname}` missing argument {i}"))),
+        None => Err(RuntimeError::Message(format!(
+            "`{fname}` missing argument {i}"
+        ))),
     }
 }
 
@@ -75,7 +82,9 @@ fn sorted(d: &[f64]) -> Vec<f64> {
 
 fn nonempty(d: &[f64], fname: &str) -> Result<(), RuntimeError> {
     if d.is_empty() {
-        Err(RuntimeError::Type(format!("`{fname}` expects non-empty data")))
+        Err(RuntimeError::Type(format!(
+            "`{fname}` expects non-empty data"
+        )))
     } else {
         Ok(())
     }
@@ -193,7 +202,9 @@ fn variance(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> 
     arity(args, 1, "stats::variance")?;
     let d = data_arg(args, 0, "stats::variance")?;
     if d.len() < 2 {
-        return Err(RuntimeError::Type("`stats::variance` needs at least 2 data points".into()));
+        return Err(RuntimeError::Type(
+            "`stats::variance` needs at least 2 data points".into(),
+        ));
     }
     Ok(num(sample_variance(&d)))
 }
@@ -202,7 +213,9 @@ fn std_dev(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "stats::std")?;
     let d = data_arg(args, 0, "stats::std")?;
     if d.len() < 2 {
-        return Err(RuntimeError::Type("`stats::std` needs at least 2 data points".into()));
+        return Err(RuntimeError::Type(
+            "`stats::std` needs at least 2 data points".into(),
+        ));
     }
     Ok(num(sample_variance(&d).sqrt()))
 }
@@ -215,7 +228,8 @@ fn quantile(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> 
         Some(Value::Array(_)) => quantile_data(args),
         Some(Value::Dict(_)) => quantile_dist(args),
         _ => Err(RuntimeError::Type(
-            "`stats::quantile` first argument must be a data array or a distribution descriptor".into(),
+            "`stats::quantile` first argument must be a data array or a distribution descriptor"
+                .into(),
         )),
     }
 }
@@ -225,7 +239,9 @@ fn quantile_data(args: &[Value]) -> Result<Value, RuntimeError> {
     nonempty(&d, "stats::quantile")?;
     let q = f64_arg(args, 1, "stats::quantile")?;
     if !(0.0..=1.0).contains(&q) {
-        return Err(RuntimeError::Domain(format!("`stats::quantile` q must be in [0, 1], got {q}")));
+        return Err(RuntimeError::Domain(format!(
+            "`stats::quantile` q must be in [0, 1], got {q}"
+        )));
     }
     Ok(num(data_quantile(&d, q)))
 }
@@ -236,7 +252,9 @@ fn percentile(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError
     nonempty(&d, "stats::percentile")?;
     let p = f64_arg(args, 1, "stats::percentile")?;
     if !(0.0..=100.0).contains(&p) {
-        return Err(RuntimeError::Domain(format!("`stats::percentile` p must be in [0, 100], got {p}")));
+        return Err(RuntimeError::Domain(format!(
+            "`stats::percentile` p must be in [0, 100], got {p}"
+        )));
     }
     Ok(num(data_quantile(&d, p / 100.0)))
 }
@@ -275,10 +293,14 @@ fn pair_arg(args: &[Value], fname: &str) -> Result<(Vec<f64>, Vec<f64>), Runtime
     let x = data_arg(args, 0, fname)?;
     let y = data_arg(args, 1, fname)?;
     if x.len() != y.len() {
-        return Err(RuntimeError::Type(format!("`{fname}` expects equally sized arrays")));
+        return Err(RuntimeError::Type(format!(
+            "`{fname}` expects equally sized arrays"
+        )));
     }
     if x.len() < 2 {
-        return Err(RuntimeError::Type(format!("`{fname}` needs at least 2 data points")));
+        return Err(RuntimeError::Type(format!(
+            "`{fname}` needs at least 2 data points"
+        )));
     }
     Ok((x, y))
 }
@@ -287,7 +309,12 @@ fn pair_arg(args: &[Value], fname: &str) -> Result<(Vec<f64>, Vec<f64>), Runtime
 fn pearson(x: &[f64], y: &[f64]) -> f64 {
     let mx = mean_of(x);
     let my = mean_of(y);
-    let cov: f64 = x.iter().zip(y).map(|(a, b)| (a - mx) * (b - my)).sum::<f64>() / (x.len() - 1) as f64;
+    let cov: f64 = x
+        .iter()
+        .zip(y)
+        .map(|(a, b)| (a - mx) * (b - my))
+        .sum::<f64>()
+        / (x.len() - 1) as f64;
     let sx = sample_variance(x).sqrt();
     let sy = sample_variance(y).sqrt();
     cov / (sx * sy)
@@ -327,12 +354,20 @@ fn dist_dict(kind: &str, params: &[(&str, f64)]) -> Value {
 }
 
 /// Parse a distribution descriptor back into `(kind, params)`.
-fn dist_arg(args: &[Value], i: usize, fname: &str) -> Result<(String, HashMap<String, f64>), RuntimeError> {
+fn dist_arg(
+    args: &[Value],
+    i: usize,
+    fname: &str,
+) -> Result<(String, HashMap<String, f64>), RuntimeError> {
     match args.get(i) {
         Some(Value::Dict(m)) => {
             let kind = match m.get(&ValueKey::Str("kind".into())) {
                 Some(Value::String(s)) => s.clone(),
-                _ => return Err(RuntimeError::Type(format!("`{fname}` descriptor lacks a `\"kind\"` string"))),
+                _ => {
+                    return Err(RuntimeError::Type(format!(
+                        "`{fname}` descriptor lacks a `\"kind\"` string"
+                    )));
+                }
             };
             let mut params = HashMap::new();
             for (k, v) in m {
@@ -345,7 +380,9 @@ fn dist_arg(args: &[Value], i: usize, fname: &str) -> Result<(String, HashMap<St
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a distribution descriptor, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!("`{fname}` missing argument {i}"))),
+        None => Err(RuntimeError::Message(format!(
+            "`{fname}` missing argument {i}"
+        ))),
     }
 }
 
@@ -358,7 +395,9 @@ fn normal_dist(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErro
     let mu = f64_arg(args, 0, "stats::Normal")?;
     let sigma = f64_arg(args, 1, "stats::Normal")?;
     if sigma <= 0.0 {
-        return Err(RuntimeError::Domain(format!("`stats::Normal` sigma must be > 0, got {sigma}")));
+        return Err(RuntimeError::Domain(format!(
+            "`stats::Normal` sigma must be > 0, got {sigma}"
+        )));
     }
     Ok(dist_dict("normal", &[("mu", mu), ("sigma", sigma)]))
 }
@@ -368,7 +407,9 @@ fn uniform_dist(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErr
     let a = f64_arg(args, 0, "stats::Uniform")?;
     let b = f64_arg(args, 1, "stats::Uniform")?;
     if a >= b {
-        return Err(RuntimeError::Domain(format!("`stats::Uniform` requires a < b, got a={a}, b={b}")));
+        return Err(RuntimeError::Domain(format!(
+            "`stats::Uniform` requires a < b, got a={a}, b={b}"
+        )));
     }
     Ok(dist_dict("uniform", &[("a", a), ("b", b)]))
 }
@@ -377,7 +418,9 @@ fn exponential_dist(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, Runtim
     arity(args, 1, "stats::Exponential")?;
     let lambda = f64_arg(args, 0, "stats::Exponential")?;
     if lambda <= 0.0 {
-        return Err(RuntimeError::Domain(format!("`stats::Exponential` lambda must be > 0, got {lambda}")));
+        return Err(RuntimeError::Domain(format!(
+            "`stats::Exponential` lambda must be > 0, got {lambda}"
+        )));
     }
     Ok(dist_dict("exponential", &[("lambda", lambda)]))
 }
@@ -387,10 +430,14 @@ fn binomial_dist(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeEr
     let n = f64_arg(args, 0, "stats::Binomial")?;
     let p = f64_arg(args, 1, "stats::Binomial")?;
     if n <= 0.0 || n != n.floor() {
-        return Err(RuntimeError::Domain(format!("`stats::Binomial` n must be a positive integer, got {n}")));
+        return Err(RuntimeError::Domain(format!(
+            "`stats::Binomial` n must be a positive integer, got {n}"
+        )));
     }
     if !(0.0..=1.0).contains(&p) {
-        return Err(RuntimeError::Domain(format!("`stats::Binomial` p must be in [0, 1], got {p}")));
+        return Err(RuntimeError::Domain(format!(
+            "`stats::Binomial` p must be in [0, 1], got {p}"
+        )));
     }
     Ok(dist_dict("binomial", &[("n", n), ("p", p)]))
 }
@@ -399,7 +446,9 @@ fn poisson_dist(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErr
     arity(args, 1, "stats::Poisson")?;
     let lambda = f64_arg(args, 0, "stats::Poisson")?;
     if lambda <= 0.0 {
-        return Err(RuntimeError::Domain(format!("`stats::Poisson` lambda must be > 0, got {lambda}")));
+        return Err(RuntimeError::Domain(format!(
+            "`stats::Poisson` lambda must be > 0, got {lambda}"
+        )));
     }
     Ok(dist_dict("poisson", &[("lambda", lambda)]))
 }
@@ -416,11 +465,7 @@ fn pdf(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
         }
         "uniform" => {
             let (a, b) = (param(&params, "a"), param(&params, "b"));
-            if x >= a && x <= b {
-                1.0 / (b - a)
-            } else {
-                0.0
-            }
+            if x >= a && x <= b { 1.0 / (b - a) } else { 0.0 }
         }
         "exponential" => {
             let lambda = param(&params, "lambda");
@@ -438,7 +483,11 @@ fn pdf(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
             let lambda = param(&params, "lambda");
             poisson_pmf(x, lambda)
         }
-        other => return Err(RuntimeError::Type(format!("unknown distribution kind `{other}`"))),
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "unknown distribution kind `{other}`"
+            )));
+        }
     };
     Ok(num(v))
 }
@@ -478,7 +527,11 @@ fn cdf(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
             let lambda = param(&params, "lambda");
             poisson_cdf(x, lambda)
         }
-        other => return Err(RuntimeError::Type(format!("unknown distribution kind `{other}`"))),
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "unknown distribution kind `{other}`"
+            )));
+        }
     };
     Ok(num(v))
 }
@@ -488,7 +541,9 @@ fn quantile_dist(args: &[Value]) -> Result<Value, RuntimeError> {
     let (kind, params) = dist_arg(args, 0, "stats::quantile")?;
     let p = f64_arg(args, 1, "stats::quantile")?;
     if !(0.0..=1.0).contains(&p) {
-        return Err(RuntimeError::Domain(format!("`stats::quantile` p must be in [0, 1], got {p}")));
+        return Err(RuntimeError::Domain(format!(
+            "`stats::quantile` p must be in [0, 1], got {p}"
+        )));
     }
     let v = match kind.as_str() {
         "normal" => {
@@ -512,7 +567,9 @@ fn quantile_dist(args: &[Value]) -> Result<Value, RuntimeError> {
         "binomial" => {
             let (n, p0) = (param(&params, "n"), param(&params, "p"));
             if n > usize::MAX as f64 {
-                return Err(RuntimeError::Domain(format!("`stats::quantile` Binomial n too large: {n}")));
+                return Err(RuntimeError::Domain(format!(
+                    "`stats::quantile` Binomial n too large: {n}"
+                )));
             }
             binomial_quantile(p, n, p0)
         }
@@ -520,7 +577,11 @@ fn quantile_dist(args: &[Value]) -> Result<Value, RuntimeError> {
             let lambda = param(&params, "lambda");
             poisson_quantile(p, lambda)
         }
-        other => return Err(RuntimeError::Type(format!("unknown distribution kind `{other}`"))),
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "unknown distribution kind `{other}`"
+            )));
+        }
     };
     Ok(num(v))
 }
@@ -535,7 +596,9 @@ fn sample(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
         )));
     }
     if n > usize::MAX as f64 {
-        return Err(RuntimeError::Domain(format!("`stats::sample` n too large: {n}")));
+        return Err(RuntimeError::Domain(format!(
+            "`stats::sample` n too large: {n}"
+        )));
     }
     let count = n as usize;
     let mut out = Vec::with_capacity(count);
@@ -556,7 +619,9 @@ fn sample(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
             "binomial" => {
                 let (n0, p0) = (param(&params, "n"), param(&params, "p"));
                 if n0 > usize::MAX as f64 {
-                    return Err(RuntimeError::Domain(format!("`stats::sample` Binomial n too large: {n0}")));
+                    return Err(RuntimeError::Domain(format!(
+                        "`stats::sample` Binomial n too large: {n0}"
+                    )));
                 }
                 binomial_quantile(next_f64(), n0, p0)
             }
@@ -564,7 +629,11 @@ fn sample(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
                 let lambda = param(&params, "lambda");
                 poisson_quantile(next_f64(), lambda)
             }
-            other => return Err(RuntimeError::Type(format!("unknown distribution kind `{other}`"))),
+            other => {
+                return Err(RuntimeError::Type(format!(
+                    "unknown distribution kind `{other}`"
+                )));
+            }
         };
         out.push(num(v));
     }
@@ -603,7 +672,11 @@ fn erf(x: f64) -> f64 {
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
     let x = x.abs();
     let t = 1.0 / (1.0 + 0.3275911 * x);
-    let y = 1.0 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * (-x * x).exp();
+    let y = 1.0
+        - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t
+            + 0.254829592)
+            * t
+            * (-x * x).exp();
     sign * y
 }
 
@@ -621,7 +694,9 @@ fn binomial_pmf(x: f64, n: f64, p: f64) -> f64 {
     if p == 1.0 {
         return if k == n { 1.0 } else { 0.0 };
     }
-    let lnf = gammln(n + 1.0) - gammln(k + 1.0) - gammln(n - k + 1.0) + k * p.ln() + (n - k) * (1.0 - p).ln();
+    let lnf = gammln(n + 1.0) - gammln(k + 1.0) - gammln(n - k + 1.0)
+        + k * p.ln()
+        + (n - k) * (1.0 - p).ln();
     lnf.exp()
 }
 
@@ -725,7 +800,11 @@ fn next_u64() -> u64 {
             .unwrap_or(0x9E37_79B9_7F4A_7C15)
             ^ ((std::process::id() as u64) << 32)
             ^ PRNG_SEED_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
-        x = if seed == 0 { 0x9E37_79B9_7F4A_7C15 } else { seed };
+        x = if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        };
     }
     x ^= x << 13;
     x ^= x >> 7;
@@ -760,7 +839,11 @@ fn gammln(xx: f64) -> f64 {
     let y = x;
     let tmp = x + 5.5;
     let tmp = tmp - (x + 0.5) * tmp.ln();
-    let ser = 1.000000000190015 + COF.iter().enumerate().fold(0.0, |acc, (i, c)| acc + c / (y + i as f64 + 1.0));
+    let ser = 1.000000000190015
+        + COF
+            .iter()
+            .enumerate()
+            .fold(0.0, |acc, (i, c)| acc + c / (y + i as f64 + 1.0));
     -tmp + (2.5066282746310005 * ser / x).ln()
 }
 

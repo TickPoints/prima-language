@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use prima_core::expr_pool::ExprId;
 use prima_core::number::{Number, Real};
-use prima_core::{simplify::simplify, Value};
+use prima_core::{Value, simplify::simplify};
 use prima_syntax::ast::{Expr, Param};
 
 use crate::ad::Tape;
@@ -41,7 +41,14 @@ impl JitCallable {
         compiled: Option<Arc<prima_jit::CompiledScalar>>,
         fallback: Option<(Vec<Param>, Expr, EnvRef)>,
     ) -> JitCallable {
-        JitCallable { params, n_out: 1, compiled, tape: None, fallback, expressions: None }
+        JitCallable {
+            params,
+            n_out: 1,
+            compiled,
+            tape: None,
+            fallback,
+            expressions: None,
+        }
     }
 }
 
@@ -109,9 +116,11 @@ fn number_result(x: f64) -> Value {
 /// Call a registered `JitFunction` handle with already-evaluated numeric arguments. Dispatch order:
 /// compiled native function → reverse-mode tape → symbolic `expressions` → interpreted `fallback`.
 pub fn call(ev: &mut Evaluator, id: u32, args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let callable = lookup(id).ok_or_else(|| RuntimeError::Message(format!("unknown JIT function handle `{id}`")))?;
-    let inputs = numeric_inputs(&args)
-        .ok_or_else(|| RuntimeError::Message("JIT function arguments must be numeric (non-complex) values".into()))?;
+    let callable = lookup(id)
+        .ok_or_else(|| RuntimeError::Message(format!("unknown JIT function handle `{id}`")))?;
+    let inputs = numeric_inputs(&args).ok_or_else(|| {
+        RuntimeError::Message("JIT function arguments must be numeric (non-complex) values".into())
+    })?;
     if inputs.len() != callable.params.len() {
         return crate::error::err(format!(
             "expected {} arguments, got {}",
@@ -121,7 +130,11 @@ pub fn call(ev: &mut Evaluator, id: u32, args: Vec<Value>) -> Result<Value, Runt
     }
     if let Some(f) = &callable.compiled {
         let out = f.call(&inputs);
-        return Ok(if callable.n_out == 1 { number_result(out) } else { Value::Array(vec![number_result(out)]) });
+        return Ok(if callable.n_out == 1 {
+            number_result(out)
+        } else {
+            Value::Array(vec![number_result(out)])
+        });
     }
     if let Some(tape) = &callable.tape {
         let grad = tape.grad(&inputs);
@@ -151,7 +164,12 @@ pub fn call(ev: &mut Evaluator, id: u32, args: Vec<Value>) -> Result<Value, Runt
 
 /// Evaluate a symbolic gradient/expression DAG numerically at `inputs` by substituting each parameter
 /// symbol with its input value and collapsing the simplified result (spec §19.4).
-fn eval_symbolic(ev: &Evaluator, id: ExprId, params: &[String], inputs: &[f64]) -> Result<f64, RuntimeError> {
+fn eval_symbolic(
+    ev: &Evaluator,
+    id: ExprId,
+    params: &[String],
+    inputs: &[f64],
+) -> Result<f64, RuntimeError> {
     let pool = ev.pool();
     let builtins = ev.builtins();
     let symbols = ev.symbols();

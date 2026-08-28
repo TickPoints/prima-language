@@ -22,7 +22,10 @@ fn eval(src: &str) -> Value {
 /// Assert that evaluating `src` produces a runtime error.
 fn eval_err(src: &str) {
     prima_stdlib::init();
-    assert!(Evaluator::new().eval_value(src).is_err(), "expected error for: {src}");
+    assert!(
+        Evaluator::new().eval_value(src).is_err(),
+        "expected error for: {src}"
+    );
 }
 
 /// Assert a matrix value is close to the expected rows (elementwise tolerance).
@@ -50,10 +53,22 @@ fn assert_mat_close(actual: &Value, expected: &[&[f64]], tol: f64) {
 
 #[test]
 fn matrix_constructors() {
-    assert_eq!(eval("import linalg;\nlinalg::Matrix::zeros(2, 2)"), mat(&[&[0.0, 0.0], &[0.0, 0.0]]));
-    assert_eq!(eval("import linalg;\nlinalg::Matrix::ones(1, 3)"), mat(&[&[1.0, 1.0, 1.0]]));
-    assert_eq!(eval("import linalg;\nlinalg::Matrix::identity(3)"), mat(&[&[1.0, 0.0, 0.0], &[0.0, 1.0, 0.0], &[0.0, 0.0, 1.0]]));
-    assert_eq!(eval("import linalg;\nlinalg::Matrix::diagonal([1.0, 2.0])"), mat(&[&[1.0, 0.0], &[0.0, 2.0]]));
+    assert_eq!(
+        eval("import linalg;\nlinalg::Matrix::zeros(2, 2)"),
+        mat(&[&[0.0, 0.0], &[0.0, 0.0]])
+    );
+    assert_eq!(
+        eval("import linalg;\nlinalg::Matrix::ones(1, 3)"),
+        mat(&[&[1.0, 1.0, 1.0]])
+    );
+    assert_eq!(
+        eval("import linalg;\nlinalg::Matrix::identity(3)"),
+        mat(&[&[1.0, 0.0, 0.0], &[0.0, 1.0, 0.0], &[0.0, 0.0, 1.0]])
+    );
+    assert_eq!(
+        eval("import linalg;\nlinalg::Matrix::diagonal([1.0, 2.0])"),
+        mat(&[&[1.0, 0.0], &[0.0, 2.0]])
+    );
 }
 
 #[test]
@@ -79,10 +94,22 @@ fn transpose() {
 
 #[test]
 fn determinant_and_trace() {
-    assert_eq!(eval("import linalg;\nlinalg::determinant([[1.0, 2.0], [3.0, 4.0]])"), f(-2.0));
-    assert_eq!(eval("import linalg;\nlinalg::determinant([[2.0, 0.0], [0.0, 4.0]])"), f(8.0));
-    assert_eq!(eval("import linalg;\nlinalg::trace(linalg::Matrix::identity(3))"), f(3.0));
-    assert_eq!(eval("import linalg;\nlinalg::trace([[1.0, 2.0], [3.0, 4.0]])"), f(5.0));
+    assert_eq!(
+        eval("import linalg;\nlinalg::determinant([[1.0, 2.0], [3.0, 4.0]])"),
+        f(-2.0)
+    );
+    assert_eq!(
+        eval("import linalg;\nlinalg::determinant([[2.0, 0.0], [0.0, 4.0]])"),
+        f(8.0)
+    );
+    assert_eq!(
+        eval("import linalg;\nlinalg::trace(linalg::Matrix::identity(3))"),
+        f(3.0)
+    );
+    assert_eq!(
+        eval("import linalg;\nlinalg::trace([[1.0, 2.0], [3.0, 4.0]])"),
+        f(5.0)
+    );
 }
 
 #[test]
@@ -101,25 +128,52 @@ fn inverse() {
 
 #[test]
 fn rank_and_cond() {
-    assert_eq!(eval("import linalg;\nlinalg::rank([[1.0, 2.0], [3.0, 4.0]])"), f(2.0));
-    assert_eq!(eval("import linalg;\nlinalg::rank([[1.0, 2.0], [2.0, 4.0]])"), f(1.0));
-    assert_eq!(eval("import linalg;\nlinalg::rank([[0.0, 0.0], [0.0, 0.0]])"), f(0.0));
-    assert_eq!(eval("import linalg;\nlinalg::cond([[1.0, 0.0], [0.0, 2.0]])"), f(2.0));
+    assert_eq!(
+        eval("import linalg;\nlinalg::rank([[1.0, 2.0], [3.0, 4.0]])"),
+        f(2.0)
+    );
+    assert_eq!(
+        eval("import linalg;\nlinalg::rank([[1.0, 2.0], [2.0, 4.0]])"),
+        f(1.0)
+    );
+    assert_eq!(
+        eval("import linalg;\nlinalg::rank([[0.0, 0.0], [0.0, 0.0]])"),
+        f(0.0)
+    );
+    assert_eq!(
+        eval("import linalg;\nlinalg::cond([[1.0, 0.0], [0.0, 2.0]])"),
+        f(2.0)
+    );
 }
 
 #[test]
 fn norm_matrix_and_vector() {
     assert_eq!(eval("import linalg;\nlinalg::norm([3.0, 4.0])"), f(5.0));
     assert_eq!(eval("import linalg;\nlinalg::norm([3.0, 4.0], 1)"), f(7.0));
-    assert_eq!(eval("import linalg;\nlinalg::norm([[3.0, 0.0], [0.0, 4.0]])"), f(5.0));
-    assert_eq!(eval("import linalg;\nlinalg::norm([[3.0, 0.0], [0.0, 4.0]], 1)"), f(4.0));
-    assert_eq!(eval("import linalg;\nlinalg::norm([[3.0, 0.0], [0.0, 4.0]], 1e999)"), f(4.0));
+    assert_eq!(
+        eval("import linalg;\nlinalg::norm([[3.0, 0.0], [0.0, 4.0]])"),
+        f(5.0)
+    );
+    assert_eq!(
+        eval("import linalg;\nlinalg::norm([[3.0, 0.0], [0.0, 4.0]], 1)"),
+        f(4.0)
+    );
+    assert_eq!(
+        eval("import linalg;\nlinalg::norm([[3.0, 0.0], [0.0, 4.0]], 1e999)"),
+        f(4.0)
+    );
 }
 
 #[test]
 fn dot_product() {
-    assert_eq!(eval("import linalg;\nlinalg::dot([1.0, 2.0], [3.0, 4.0])"), f(11.0));
-    assert_eq!(eval("import linalg;\nlinalg::dot([1.0, 0.0], [0.0, 1.0])"), f(0.0));
+    assert_eq!(
+        eval("import linalg;\nlinalg::dot([1.0, 2.0], [3.0, 4.0])"),
+        f(11.0)
+    );
+    assert_eq!(
+        eval("import linalg;\nlinalg::dot([1.0, 0.0], [0.0, 1.0])"),
+        f(0.0)
+    );
     eval_err("import linalg;\nlinalg::dot([1.0, 2.0], [1.0, 2.0, 3.0])");
 }
 
@@ -157,15 +211,19 @@ fn qr_decomposition_reconstructs() {
     let q: Vec<Vec<f64>> = qrows
         .iter()
         .map(|r| {
-            let Value::Array(c) = r else { panic!("expected Q row") };
-            c.iter().map(|x| number(x)).collect()
+            let Value::Array(c) = r else {
+                panic!("expected Q row")
+            };
+            c.iter().map(number).collect()
         })
         .collect();
     let r: Vec<Vec<f64>> = rrows
         .iter()
         .map(|r| {
-            let Value::Array(c) = r else { panic!("expected R row") };
-            c.iter().map(|x| number(x)).collect()
+            let Value::Array(c) = r else {
+                panic!("expected R row")
+            };
+            c.iter().map(number).collect()
         })
         .collect();
     for i in 0..3 {
@@ -175,7 +233,10 @@ fn qr_decomposition_reconstructs() {
                 s += q[i][k] * r[k][j];
             }
             let expected = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0][i * 2 + j];
-            assert!((s - expected).abs() < 1e-9, "Q*R[{i},{j}] = {s}, expected {expected}");
+            assert!(
+                (s - expected).abs() < 1e-9,
+                "Q*R[{i},{j}] = {s}, expected {expected}"
+            );
         }
     }
 }
@@ -190,20 +251,28 @@ fn svd_decomposition() {
     // Singular values are sorted in descending order (flat vector).
     assert_eq!(items[1], vec(&[2.0, 1.0]));
     // U * diag(S) * Vt reconstructs the input.
-    let Value::Array(rows) = &items[0] else { panic!("expected U") };
+    let Value::Array(rows) = &items[0] else {
+        panic!("expected U")
+    };
     let u: Vec<Vec<f64>> = rows
         .iter()
         .map(|r| {
-            let Value::Array(c) = r else { panic!("expected U row") };
-            c.iter().map(|x| number(x)).collect()
+            let Value::Array(c) = r else {
+                panic!("expected U row")
+            };
+            c.iter().map(number).collect()
         })
         .collect();
-    let Value::Array(vtrows) = &items[2] else { panic!("expected Vt") };
+    let Value::Array(vtrows) = &items[2] else {
+        panic!("expected Vt")
+    };
     let vt: Vec<Vec<f64>> = vtrows
         .iter()
         .map(|r| {
-            let Value::Array(c) = r else { panic!("expected Vt row") };
-            c.iter().map(|x| number(x)).collect()
+            let Value::Array(c) = r else {
+                panic!("expected Vt row")
+            };
+            c.iter().map(number).collect()
         })
         .collect();
     for i in 0..2 {
@@ -213,7 +282,10 @@ fn svd_decomposition() {
                 s += u[i][k] * [2.0, 1.0][k] * vt[k][j];
             }
             let expected = [1.0, 0.0, 0.0, 2.0][i * 2 + j];
-            assert!((s - expected).abs() < 1e-9, "U*S*Vt[{i},{j}] = {s}, expected {expected}");
+            assert!(
+                (s - expected).abs() < 1e-9,
+                "U*S*Vt[{i},{j}] = {s}, expected {expected}"
+            );
         }
     }
 }
@@ -229,9 +301,12 @@ fn eigen_decomposition() {
     let Value::Array(values) = &items[0] else {
         panic!("expected an eigenvalues vector");
     };
-    let mut vals: Vec<f64> = values.iter().map(|x| number(x)).collect();
+    let mut vals: Vec<f64> = values.iter().map(number).collect();
     vals.sort_by(f64::total_cmp);
-    assert!((vals[0] - 2.0).abs() < 1e-9 && (vals[1] - 3.0).abs() < 1e-9, "eigenvalues: {vals:?}");
+    assert!(
+        (vals[0] - 2.0).abs() < 1e-9 && (vals[1] - 3.0).abs() < 1e-9,
+        "eigenvalues: {vals:?}"
+    );
     eval_err("import linalg;\nlinalg::eigen([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])");
 }
 

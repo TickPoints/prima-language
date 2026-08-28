@@ -1,4 +1,4 @@
-use prima_core::{Number, Value};
+use prima_core::Value;
 use prima_runtime::Evaluator;
 
 /// Evaluate an in-memory program that imports the `physics` stdlib namespace (spec §7.3).
