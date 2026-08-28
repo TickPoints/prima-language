@@ -6,7 +6,7 @@
 # Usage (PowerShell):
 #   irm https://raw.githubusercontent.com/TickPoints/prima-language/main/install.ps1 | iex
 #   .\install.ps1                       # install latest release to ~\.local\bin
-#   .\install.ps1 -Version v0.2.3-beta  # pin a version
+#   .\install.ps1 -Version v0.2.4-beta  # pin a version
 #   .\install.ps1 -Dir $HOME\bin        # override the install directory
 #
 # Overridable via environment variables:

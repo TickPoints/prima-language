@@ -8,7 +8,7 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/TickPoints/prima-language/main/install.sh | bash
 #   bash install.sh                       # install latest release to ~/.local/bin
-#   bash install.sh --version v0.2.3-beta # pin a version
+#   bash install.sh --version v0.2.4-beta # pin a version
 #   bash install.sh --dir ~/bin           # override the install directory
 #
 # Overridable via environment variables:
