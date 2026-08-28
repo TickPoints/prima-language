@@ -127,24 +127,34 @@ impl Config {
                         "positive" => Domain::Positive,
                         "nonnegative" => Domain::NonNegative,
                         "nonzero" => Domain::NonZero,
-                        _ => return Err(RuntimeError::Message(format!("unknown `domain` value `{v}`"))),
+                        _ => {
+                            return Err(RuntimeError::Message(format!(
+                                "unknown `domain` value `{v}`"
+                            )));
+                        }
                     };
                 }
-                "undefined_handling" => {
-                    match &e.value.kind {
-                        ExprKind::Path { segments } if segments.len() == 1 && segments[0].value == "strict" => {
-                            self.undefined_handling = UndefinedHandling::Strict;
-                        }
-                        ExprKind::Custom(items) => {
-                            self.undefined_handling = UndefinedHandling::Custom;
-                            self.custom_rules = items.clone();
-                        }
-                        _ => return Err(RuntimeError::Message("invalid value for `undefined_handling`".into())),
+                "undefined_handling" => match &e.value.kind {
+                    ExprKind::Path { segments }
+                        if segments.len() == 1 && segments[0].value == "strict" =>
+                    {
+                        self.undefined_handling = UndefinedHandling::Strict;
                     }
-                }
+                    ExprKind::Custom(items) => {
+                        self.undefined_handling = UndefinedHandling::Custom;
+                        self.custom_rules = items.clone();
+                    }
+                    _ => {
+                        return Err(RuntimeError::Message(
+                            "invalid value for `undefined_handling`".into(),
+                        ));
+                    }
+                },
                 "fraction" => self.fraction = parse_bool(&e.value, "fraction")?,
                 "broadcast" => self.broadcast = parse_bool(&e.value, "broadcast")?,
-                "loop_optimization" => self.loop_optimization = parse_bool(&e.value, "loop_optimization")?,
+                "loop_optimization" => {
+                    self.loop_optimization = parse_bool(&e.value, "loop_optimization")?
+                }
                 "simplify_level" => self.simplify_level = parse_int(&e.value, "simplify_level")?,
                 "opt_level" => self.opt_level = parse_opt_level(&e.value)?,
                 "num_to_big" => self.num_to_big = parse_bool(&e.value, "num_to_big")?,
@@ -154,7 +164,11 @@ impl Config {
                         "latex" => PrintFormat::Latex,
                         "unicode" => PrintFormat::Unicode,
                         "ascii" => PrintFormat::Ascii,
-                        _ => return Err(RuntimeError::Message(format!("unknown `print_format` value `{v}`"))),
+                        _ => {
+                            return Err(RuntimeError::Message(format!(
+                                "unknown `print_format` value `{v}`"
+                            )));
+                        }
                     };
                 }
                 "overload_policy" => {
@@ -163,10 +177,18 @@ impl Config {
                         "warn" => OverloadPolicy::Warn,
                         "allow" => OverloadPolicy::Allow,
                         "deny" => OverloadPolicy::Deny,
-                        _ => return Err(RuntimeError::Message(format!("unknown `overload_policy` value `{v}`"))),
+                        _ => {
+                            return Err(RuntimeError::Message(format!(
+                                "unknown `overload_policy` value `{v}`"
+                            )));
+                        }
                     };
                 }
-                other => return Err(RuntimeError::Message(format!("unknown config key `{other}`"))),
+                other => {
+                    return Err(RuntimeError::Message(format!(
+                        "unknown config key `{other}`"
+                    )));
+                }
             }
         }
         Ok(())
@@ -176,7 +198,9 @@ impl Config {
 fn parse_bool(e: &Expr, key: &str) -> Result<bool, RuntimeError> {
     match &e.kind {
         ExprKind::Literal(Literal::Bool(b)) => Ok(*b),
-        _ => Err(RuntimeError::Message(format!("config `{key}` expects a bool"))),
+        _ => Err(RuntimeError::Message(format!(
+            "config `{key}` expects a bool"
+        ))),
     }
 }
 
@@ -185,7 +209,9 @@ fn parse_int(e: &Expr, key: &str) -> Result<u8, RuntimeError> {
         ExprKind::Literal(Literal::Integer(s)) => s
             .parse::<u8>()
             .map_err(|_| RuntimeError::Message(format!("config `{key}` expects an integer 0..=3"))),
-        _ => Err(RuntimeError::Message(format!("config `{key}` expects an integer"))),
+        _ => Err(RuntimeError::Message(format!(
+            "config `{key}` expects an integer"
+        ))),
     }
 }
 
@@ -193,7 +219,9 @@ fn parse_enum(e: &Expr, key: &str) -> Result<String, RuntimeError> {
     match &e.kind {
         ExprKind::Path { segments } if segments.len() == 1 => Ok(segments[0].value.clone()),
         ExprKind::Symbol(s) => Ok(s.value.clone()),
-        _ => Err(RuntimeError::Message(format!("config `{key}` expects an enum value"))),
+        _ => Err(RuntimeError::Message(format!(
+            "config `{key}` expects an enum value"
+        ))),
     }
 }
 
@@ -205,6 +233,8 @@ fn parse_opt_level(e: &Expr) -> Result<OptLevel, RuntimeError> {
         "O1" => Ok(OptLevel::O1),
         "O2" => Ok(OptLevel::O2),
         "O3" => Ok(OptLevel::O3),
-        _ => Err(RuntimeError::Message(format!("unknown `opt_level` value `{v}` (expected O0..=O3)"))),
+        _ => Err(RuntimeError::Message(format!(
+            "unknown `opt_level` value `{v}` (expected O0..=O3)"
+        ))),
     }
 }

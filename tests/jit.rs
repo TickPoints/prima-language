@@ -20,7 +20,8 @@ fn as_f64(v: &Value) -> f64 {
 fn hot_path_stays_correct_past_threshold() {
     // More than `JIT_CALL_THRESHOLD` (100) numeric calls to the same MFn: the hot path (native or the
     // cached fallback) must stay correct.
-    let src = "let f(x) = x^2 + 1;\nlet r = to_f64(0);\nfor i in 0..150 {\n    r = f(to_f64(3));\n}\nr";
+    let src =
+        "let f(x) = x^2 + 1;\nlet r = to_f64(0);\nfor i in 0..150 {\n    r = f(to_f64(3));\n}\nr";
     let v = eval(src);
     assert!((as_f64(&v) - 10.0).abs() < 1e-9, "expected 10.0, got {v:?}");
 }
@@ -61,8 +62,16 @@ fn jit_grad_multi_var_returns_array() {
         panic!("expected an array, got {v:?}");
     };
     assert_eq!(items.len(), 2);
-    assert!((as_f64(&items[0]) - 4.0).abs() < 1e-9, "∂x = 4, got {}", as_f64(&items[0]));
-    assert!((as_f64(&items[1]) - 13.0).abs() < 1e-9, "∂y = 13, got {}", as_f64(&items[1]));
+    assert!(
+        (as_f64(&items[0]) - 4.0).abs() < 1e-9,
+        "∂x = 4, got {}",
+        as_f64(&items[0])
+    );
+    assert!(
+        (as_f64(&items[1]) - 13.0).abs() < 1e-9,
+        "∂y = 13, got {}",
+        as_f64(&items[1])
+    );
 }
 
 #[test]
@@ -77,20 +86,28 @@ fn jit_value_is_a_callable_handle() {
     // The `jit` result is a value handle, not a named function (spec §19.2).
     let mut ev = Evaluator::new();
     let v = ev.eval_value("jit(x^2 + 1)").expect("jit failed");
-    assert!(matches!(v, Value::JitFunction(_)), "expected a JitFunction handle, got {v:?}");
+    assert!(
+        matches!(v, Value::JitFunction(_)),
+        "expected a JitFunction handle, got {v:?}"
+    );
 }
 
 #[test]
 fn jit_rejects_non_function_argument() {
     let err = Evaluator::new().eval_value("jit(42)").unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("`jit` argument must be a function"), "got: {msg}");
+    assert!(
+        msg.contains("`jit` argument must be a function"),
+        "got: {msg}"
+    );
 }
 
 #[test]
 fn jit_function_requires_numeric_args() {
     // A JitFunction only accepts numeric (non-complex) arguments.
-    let err = Evaluator::new().eval_value("let h = jit(x^2 + 1);\nh(\"nope\")").unwrap_err();
+    let err = Evaluator::new()
+        .eval_value("let h = jit(x^2 + 1);\nh(\"nope\")")
+        .unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("numeric"), "got: {msg}");
 }

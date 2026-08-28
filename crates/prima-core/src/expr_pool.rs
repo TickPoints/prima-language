@@ -3,8 +3,8 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::One;
 use std::cell::RefCell;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock, RwLock};
 
@@ -133,7 +133,9 @@ impl ExprPool {
                 }
             }
             Number::Real(r) => self.intern(ExprData::Real(*r)),
-            Number::Complex { .. } => panic!("complex numbers cannot be interned as expression nodes yet"),
+            Number::Complex { .. } => {
+                panic!("complex numbers cannot be interned as expression nodes yet")
+            }
             // Fixed-width collapsed layer interns to the exact/`Real` node (spec §6.1).
             Number::I8(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
             Number::I16(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
@@ -195,7 +197,10 @@ impl ExprPool {
     }
 
     pub fn apply(&self, f: ExprId, args: &[ExprId]) -> ExprId {
-        self.intern(ExprData::Apply { f, args: args.to_vec().into_boxed_slice() })
+        self.intern(ExprData::Apply {
+            f,
+            args: args.to_vec().into_boxed_slice(),
+        })
     }
 
     /// Level 0/1 addition simplification (spec §8.3): `Add` flattening, constant merging, `x+0→x`;

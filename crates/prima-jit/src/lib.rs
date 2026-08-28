@@ -12,4 +12,4 @@ pub mod engine;
 
 pub use bytecode::{Bytecode, Op};
 pub use compiler::{compile_scalar, dag_to_bytecode};
-pub use engine::{compile_bytecode, CompiledScalar};
+pub use engine::{CompiledScalar, compile_bytecode};

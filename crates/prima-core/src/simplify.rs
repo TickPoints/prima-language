@@ -55,7 +55,9 @@ pub fn simplify_at(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId, level
                 {
                     return simplify_at(pool, builtins, args[0], level);
                 }
-                if b == pool.symbol(builtins.e) && let Some(r) = euler(pool, builtins, e) {
+                if b == pool.symbol(builtins.e)
+                    && let Some(r) = euler(pool, builtins, e)
+                {
                     return r;
                 }
             }
@@ -77,13 +79,20 @@ pub fn simplify_at(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId, level
     }
 }
 
-fn apply_rule(pool: &ExprPool, builtins: &BuiltinSymbols, f: ExprId, args: &[ExprId]) -> Option<ExprId> {
+fn apply_rule(
+    pool: &ExprPool,
+    builtins: &BuiltinSymbols,
+    f: ExprId,
+    args: &[ExprId],
+) -> Option<ExprId> {
     if args.len() != 1 {
         return None;
     }
     let arg = args[0];
     if f == pool.symbol(builtins.sqrt) {
-        if let Some(n) = pool.const_number(arg) && let Some(s) = n.sqrt() {
+        if let Some(n) = pool.const_number(arg)
+            && let Some(s) = n.sqrt()
+        {
             return Some(pool.number(&s));
         }
         return None;
@@ -130,15 +139,25 @@ fn apply_rule(pool: &ExprPool, builtins: &BuiltinSymbols, f: ExprId, args: &[Exp
 }
 
 /// An angle of the form `k·\pi`: extract the rational coefficient k, then consult the exact trig table (spec §7 built-in symbol simplification).
-fn trig_of_angle(pool: &ExprPool, builtins: &BuiltinSymbols, expr: ExprId) -> Option<(Number, Number)> {
+fn trig_of_angle(
+    pool: &ExprPool,
+    builtins: &BuiltinSymbols,
+    expr: ExprId,
+) -> Option<(Number, Number)> {
     let c = rational_pi_coefficient(pool, builtins, expr)?;
     exact_trig(&c)
 }
 
-fn rational_pi_coefficient(pool: &ExprPool, builtins: &BuiltinSymbols, expr: ExprId) -> Option<BigRational> {
+fn rational_pi_coefficient(
+    pool: &ExprPool,
+    builtins: &BuiltinSymbols,
+    expr: ExprId,
+) -> Option<BigRational> {
     let node = pool.get(expr)?;
     match node {
-        ExprData::Symbol(s) if s == builtins.pi => Some(BigRational::new(BigInt::from(1), BigInt::from(1))),
+        ExprData::Symbol(s) if s == builtins.pi => {
+            Some(BigRational::new(BigInt::from(1), BigInt::from(1)))
+        }
         ExprData::Integer(_) | ExprData::Rational(_) | ExprData::Real(_) => {
             let n = pool.const_number(expr)?;
             if n.is_zero() {

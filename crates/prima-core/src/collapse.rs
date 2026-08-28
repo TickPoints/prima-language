@@ -25,14 +25,28 @@ pub fn numeric_value(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId) -> 
     match pool.get(id)? {
         ExprData::Symbol(s) => symbol_value(builtins, s),
         ExprData::Integer(_) | ExprData::Rational(_) | ExprData::Real(_) => pool.const_number(id),
-        ExprData::Add(items) => fold(items.iter().copied(), Number::from(0), |a, b| a + b, pool, builtins),
-        ExprData::Mul(items) => fold(items.iter().copied(), Number::from(1), |a, b| a * b, pool, builtins),
+        ExprData::Add(items) => fold(
+            items.iter().copied(),
+            Number::from(0),
+            |a, b| a + b,
+            pool,
+            builtins,
+        ),
+        ExprData::Mul(items) => fold(
+            items.iter().copied(),
+            Number::from(1),
+            |a, b| a * b,
+            pool,
+            builtins,
+        ),
         ExprData::Pow { base, exp } => {
             let b = numeric_value(pool, builtins, base)?;
             let e = numeric_value(pool, builtins, exp)?;
             match b.pow(&e) {
                 Some(r) => Some(r),
-                None => Some(Number::Real(Real::F64(b.to_f64_lossy().powf(e.to_f64_lossy())))),
+                None => Some(Number::Real(Real::F64(
+                    b.to_f64_lossy().powf(e.to_f64_lossy()),
+                ))),
             }
         }
         ExprData::Apply { f, args } => apply_value(pool, builtins, f, &args),
@@ -64,7 +78,12 @@ fn symbol_value(builtins: &BuiltinSymbols, s: crate::symbol::SymbolId) -> Option
     }
 }
 
-fn apply_value(pool: &ExprPool, builtins: &BuiltinSymbols, f: ExprId, args: &[ExprId]) -> Option<Number> {
+fn apply_value(
+    pool: &ExprPool,
+    builtins: &BuiltinSymbols,
+    f: ExprId,
+    args: &[ExprId],
+) -> Option<Number> {
     if args.len() != 1 {
         return None;
     }

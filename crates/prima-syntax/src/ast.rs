@@ -21,7 +21,11 @@ pub struct DocComment {
 impl DocComment {
     /// The concatenated doc text, one line per `///` line (spec §4.1).
     pub fn text(&self) -> String {
-        self.lines.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join("\n")
+        self.lines
+            .iter()
+            .map(|(t, _)| t.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -60,14 +64,23 @@ pub struct Import {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportKind {
-    Namespace { path: Vec<Spanned<String>>, alias: Option<Spanned<String>> },
-    From { path: Vec<Spanned<String>>, items: Vec<ImportItem> },
+    Namespace {
+        path: Vec<Spanned<String>>,
+        alias: Option<Spanned<String>>,
+    },
+    From {
+        path: Vec<Spanned<String>>,
+        items: Vec<ImportItem>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportItem {
     Star,
-    Name { name: Spanned<String>, alias: Option<Spanned<String>> },
+    Name {
+        name: Spanned<String>,
+        alias: Option<Spanned<String>>,
+    },
 }
 
 /// Visibility modifier (spec §15.2): default private / `pub(mod)` / `pub`.
@@ -208,9 +221,18 @@ pub struct ClassMember {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClassMemberKind {
-    Field { name: Spanned<String>, ty: Type },
+    Field {
+        name: Spanned<String>,
+        ty: Type,
+    },
     /// Method with an optional body: `@builtin` classes declare signature-only methods (spec §18.4).
-    Method { name: Spanned<String>, params: Vec<Param>, ret: Option<Type>, annotations: Vec<Annotation>, body: Option<Block> },
+    Method {
+        name: Spanned<String>,
+        params: Vec<Param>,
+        ret: Option<Type>,
+        annotations: Vec<Annotation>,
+        body: Option<Block>,
+    },
 }
 
 /// Operator overload target of `impl ops::X for T` (spec §18.5).
@@ -243,7 +265,9 @@ pub enum Annotation {
     /// `@builtin(ON)` (spec §18.4): implementation provided by the Rust host. `opt_level` is the
     /// layered-optimization tier `O0..=O3` (default `O0`, equivalent to bare `@builtin`); `O1..=O3`
     /// functions carry a `.pra` fallback body plus an optional Rust implementation.
-    Builtin { opt_level: u8 },
+    Builtin {
+        opt_level: u8,
+    },
     /// `@c_api::extern`: export a C ABI interface (spec §18.4).
     CApiExtern,
 }
@@ -306,8 +330,14 @@ pub enum Type {
     Tuple(Vec<Type>),
     Option(Box<Type>),
     Result(Box<Type>, Box<Type>),
-    Fn { params: Vec<Type>, ret: Box<Type> },
-    MFn { params: Vec<Type>, ret: Box<Type> },
+    Fn {
+        params: Vec<Type>,
+        ret: Box<Type>,
+    },
+    MFn {
+        params: Vec<Type>,
+        ret: Box<Type>,
+    },
     /// `Self` inside a class body (spec §4.5).
     SelfType,
     User(Spanned<String>),
@@ -338,9 +368,17 @@ pub enum Pattern {
         rest: bool,
     },
     /// `Some(x)` / `Ok(v)` / `Err(e)` / `None`.
-    Variant { name: Spanned<String>, args: Vec<Pattern>, span: Span },
+    Variant {
+        name: Spanned<String>,
+        args: Vec<Pattern>,
+        span: Span,
+    },
     /// `0..9` / `1..=5` (inclusive range).
-    Range { lo: Literal, hi: Literal, inclusive: bool },
+    Range {
+        lo: Literal,
+        hi: Literal,
+        inclusive: bool,
+    },
     /// `pat1 | pat2` (or-pattern).
     Or(Vec<Pattern>),
     /// `(pat)`.
@@ -369,19 +407,45 @@ pub enum ExprKind {
     /// so parts only ever carry the final text and a parsed interpolation expression.
     FString(Vec<FStringPart>),
     Symbol(Spanned<String>),
-    Path { segments: Vec<Spanned<String>> },
+    Path {
+        segments: Vec<Spanned<String>>,
+    },
     /// `self` expression (spec §4.5).
     Self_,
-    Call { callee: Box<Expr>, args: Vec<Expr> },
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
     /// `obj.method(args)` (spec §4.5).
-    MethodCall { receiver: Box<Expr>, name: Spanned<String>, args: Vec<Expr> },
+    MethodCall {
+        receiver: Box<Expr>,
+        name: Spanned<String>,
+        args: Vec<Expr>,
+    },
     /// `obj.field` (spec §4.5 field access).
-    Field { receiver: Box<Expr>, name: Spanned<String> },
+    Field {
+        receiver: Box<Expr>,
+        name: Spanned<String>,
+    },
     /// `T { a, b, ..base }` struct literal (spec §4.5).
-    StructLiteral { name: Spanned<String>, fields: Vec<FieldValue>, base: Option<Box<Expr>> },
-    Index { base: Box<Expr>, index: Index },
-    Binary { op: BinOp, lhs: Box<Expr>, rhs: Box<Expr> },
-    Unary { op: UnOp, operand: Box<Expr> },
+    StructLiteral {
+        name: Spanned<String>,
+        fields: Vec<FieldValue>,
+        base: Option<Box<Expr>>,
+    },
+    Index {
+        base: Box<Expr>,
+        index: Index,
+    },
+    Binary {
+        op: BinOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    Unary {
+        op: UnOp,
+        operand: Box<Expr>,
+    },
     /// `expr?` try operator (spec §16.3): propagates `Err`/`None` in a `Result`/`Option`-returning function.
     Try(Box<Expr>),
     Array(Vec<Expr>),
@@ -391,11 +455,24 @@ pub enum ExprKind {
     /// `{ a, b, ... }` set literal (spec §4.6). Duplicate elements are kept by the parser; dedup happens at runtime.
     Set(Vec<Expr>),
     /// Comprehension `[...]`/`{...}`/`(...)` (spec §4.6/§11.7): the frame kind + output expression + `for`/`if` clauses.
-    Comprehension { kind: CompKind, output: Box<Expr>, clauses: Vec<ComprehensionClause> },
+    Comprehension {
+        kind: CompKind,
+        output: Box<Expr>,
+        clauses: Vec<ComprehensionClause>,
+    },
     /// `key: value` — internal node used only as the `output` of a Dict comprehension; never appears in normal expressions.
-    KeyValue { key: Box<Expr>, value: Box<Expr> },
-    Lambda { params: Vec<Param>, body: Box<Expr> },
-    Match { scrutinee: Box<Expr>, arms: Vec<MatchArm> },
+    KeyValue {
+        key: Box<Expr>,
+        value: Box<Expr>,
+    },
+    Lambda {
+        params: Vec<Param>,
+        body: Box<Expr>,
+    },
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
     Custom(Vec<(Expr, Expr)>),
 }
 
@@ -429,7 +506,11 @@ pub enum Literal {
     Binary(String),
     /// String literal (spec §3/§18.1): the `quote`/`raw` markers record the source form
     /// (`'...'` vs `"..."`, `r"..."` raw) so the formatter can re-emit it losslessly.
-    String { value: String, quote: StringQuote, raw: bool },
+    String {
+        value: String,
+        quote: StringQuote,
+        raw: bool,
+    },
     Char(char),
     Bool(bool),
     Tex(String),
@@ -448,7 +529,10 @@ pub enum StringQuote {
 #[derive(Debug, Clone, PartialEq)]
 pub enum FStringPart {
     Literal(String),
-    Interp { expr: Box<Expr>, spec: Option<String> },
+    Interp {
+        expr: Box<Expr>,
+        spec: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -459,7 +543,10 @@ pub struct Index {
 #[derive(Debug, Clone, PartialEq)]
 pub enum IndexItem {
     Elem(Expr),
-    Slice { start: Option<Expr>, end: Option<Expr> },
+    Slice {
+        start: Option<Expr>,
+        end: Option<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

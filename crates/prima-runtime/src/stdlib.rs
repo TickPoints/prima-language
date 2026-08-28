@@ -54,8 +54,12 @@ pub fn register_namespace(name: impl Into<String>, items: Namespace) {
 /// Look up a registered stdlib namespace (full module path), cloning its items.
 pub fn get_namespace(name: &str) -> Option<Namespace> {
     let map = registry().lock().unwrap_or_else(|e| e.into_inner());
-    map.get(name)
-        .map(|items| items.iter().map(|(k, v)| (k.clone(), v.0.clone())).collect())
+    map.get(name).map(|items| {
+        items
+            .iter()
+            .map(|(k, v)| (k.clone(), v.0.clone()))
+            .collect()
+    })
 }
 
 /// Whether a module path is a registered stdlib namespace.
@@ -120,11 +124,21 @@ pub fn get_impl_level(key: &str) -> u8 {
 /// - `builtin!("num::fibonacci", fibonacci_impl, O1)`
 #[macro_export]
 macro_rules! builtin {
-    ($key:expr, $func:expr) => { $crate::stdlib::register_impl($key, $func); };
-    ($key:expr, $func:expr, O0) => { $crate::stdlib::register_impl($key, $func); };
-    ($key:expr, $func:expr, O1) => { $crate::stdlib::register_impl_level($key, $func, 1); };
-    ($key:expr, $func:expr, O2) => { $crate::stdlib::register_impl_level($key, $func, 2); };
-    ($key:expr, $func:expr, O3) => { $crate::stdlib::register_impl_level($key, $func, 3); };
+    ($key:expr, $func:expr) => {
+        $crate::stdlib::register_impl($key, $func);
+    };
+    ($key:expr, $func:expr, O0) => {
+        $crate::stdlib::register_impl($key, $func);
+    };
+    ($key:expr, $func:expr, O1) => {
+        $crate::stdlib::register_impl_level($key, $func, 1);
+    };
+    ($key:expr, $func:expr, O2) => {
+        $crate::stdlib::register_impl_level($key, $func, 2);
+    };
+    ($key:expr, $func:expr, O3) => {
+        $crate::stdlib::register_impl_level($key, $func, 3);
+    };
 }
 
 /// Embedded stdlib module source (the `.pra` signature file), keyed by module path
@@ -153,8 +167,7 @@ pub fn get_module_source(path: &str) -> Option<&'static str> {
 /// (spec §20) lists exactly these, so the docs are available offline (spec §16.4).
 pub fn all_module_sources() -> Vec<(String, &'static str)> {
     let map = sources().lock().unwrap_or_else(|e| e.into_inner());
-    let mut out: Vec<(String, &'static str)> =
-        map.iter().map(|(k, v)| (k.clone(), *v)).collect();
+    let mut out: Vec<(String, &'static str)> = map.iter().map(|(k, v)| (k.clone(), *v)).collect();
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }

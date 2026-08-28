@@ -12,7 +12,10 @@ fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
     if args.len() == n {
         Ok(())
     } else {
-        Err(RuntimeError::Message(format!("`{fname}` expects {n} argument(s), got {}", args.len())))
+        Err(RuntimeError::Message(format!(
+            "`{fname}` expects {n} argument(s), got {}",
+            args.len()
+        )))
     }
 }
 
@@ -22,7 +25,9 @@ fn number_arg(args: &[Value], i: usize, fname: &str) -> Result<Number, RuntimeEr
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a number, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!("`{fname}` missing argument {i}"))),
+        None => Err(RuntimeError::Message(format!(
+            "`{fname}` missing argument {i}"
+        ))),
     }
 }
 
@@ -32,7 +37,9 @@ fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeEr
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a string, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!("`{fname}` missing argument {i}"))),
+        None => Err(RuntimeError::Message(format!(
+            "`{fname}` missing argument {i}"
+        ))),
     }
 }
 
@@ -69,28 +76,33 @@ fn time_sleep(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError
 fn time_unix_timestamp(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "time::unix_timestamp")?;
     let n = number_arg(args, 0, "time::unix_timestamp")?;
-    let secs = n
-        .as_i64()
-        .filter(|v| *v >= 0)
-        .ok_or_else(|| RuntimeError::Type(format!("`time::unix_timestamp` expects a non-negative integral timestamp, got {n}")))?;
+    let secs = n.as_i64().filter(|v| *v >= 0).ok_or_else(|| {
+        RuntimeError::Type(format!(
+            "`time::unix_timestamp` expects a non-negative integral timestamp, got {n}"
+        ))
+    })?;
     Ok(Value::Number(Number::I64(secs)))
 }
 
 fn duration_from_secs(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "time::Duration::from_secs")?;
     let n = number_arg(args, 0, "time::Duration::from_secs")?;
-    let secs = n
-        .as_i64()
-        .ok_or_else(|| RuntimeError::Type(format!("`time::Duration::from_secs` expects an integer, got {n}")))?;
+    let secs = n.as_i64().ok_or_else(|| {
+        RuntimeError::Type(format!(
+            "`time::Duration::from_secs` expects an integer, got {n}"
+        ))
+    })?;
     Ok(Value::Number(Number::from(secs)))
 }
 
 fn duration_from_millis(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "time::Duration::from_millis")?;
     let n = number_arg(args, 0, "time::Duration::from_millis")?;
-    let ms = n
-        .as_i64()
-        .ok_or_else(|| RuntimeError::Type(format!("`time::Duration::from_millis` expects an integer, got {n}")))?;
+    let ms = n.as_i64().ok_or_else(|| {
+        RuntimeError::Type(format!(
+            "`time::Duration::from_millis` expects an integer, got {n}"
+        ))
+    })?;
     if ms % 1000 == 0 {
         Ok(Value::Number(Number::from(ms / 1000)))
     } else {
@@ -147,7 +159,10 @@ fn time_parse(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError
 /// returning unix seconds.
 fn parse_dt(s: &str, fmt: &str) -> Result<Number, String> {
     if fmt == "%s" {
-        let secs: i64 = s.trim().parse().map_err(|_| format!("cannot parse `{s}` as unix seconds"))?;
+        let secs: i64 = s
+            .trim()
+            .parse()
+            .map_err(|_| format!("cannot parse `{s}` as unix seconds"))?;
         return Ok(Number::I64(secs));
     }
     let (mut year, mut month, mut day) = (1970i64, 1u32, 1u32);
@@ -203,7 +218,12 @@ fn parse_dt(s: &str, fmt: &str) -> Result<Number, String> {
     if i != s_chars.len() {
         return Err(format!("cannot parse `{s}` with format `{fmt}`"));
     }
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
         return Err(format!("invalid date/time fields in `{s}`"));
     }
     let days = days_from_civil(year, month, day);

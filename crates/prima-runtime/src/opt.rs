@@ -19,7 +19,13 @@ pub fn is_effect_free_stmt(stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Let { value, .. } | Stmt::Const { value, .. } => is_pure_expr(value),
         Stmt::Expr(e) => is_pure_expr(e),
-        Stmt::If { cond, then, elifs, else_, .. } => {
+        Stmt::If {
+            cond,
+            then,
+            elifs,
+            else_,
+            ..
+        } => {
             is_pure_expr(cond)
                 && elifs.iter().all(|(c, _)| is_pure_expr(c))
                 && is_effect_free_or_return(then)
@@ -50,15 +56,15 @@ fn is_pure_expr(e: &Expr) -> bool {
         ExprKind::Array(items) | ExprKind::Tuple(items) | ExprKind::Set(items) => {
             items.iter().all(is_pure_expr)
         }
-        ExprKind::Dict(pairs) => pairs.iter().all(|(k, v)| is_pure_expr(k) && is_pure_expr(v)),
+        ExprKind::Dict(pairs) => pairs
+            .iter()
+            .all(|(k, v)| is_pure_expr(k) && is_pure_expr(v)),
         ExprKind::Call { callee, args } => {
             // Only direct named calls to a known-pure builtin; `obj.method(...)` and any unknown
             // callee (including user functions and the function under TCO itself) are rejected.
             match &callee.kind {
                 ExprKind::Path { segments } => {
-                    segments
-                        .last()
-                        .is_some_and(|s| is_pure_builtin(&s.value))
+                    segments.last().is_some_and(|s| is_pure_builtin(&s.value))
                         && args.iter().all(is_pure_expr)
                 }
                 _ => false,
@@ -71,7 +77,9 @@ fn is_pure_expr(e: &Expr) -> bool {
                 })
         }
         ExprKind::Lambda { body, .. } => is_pure_expr(body),
-        ExprKind::Comprehension { output, clauses, .. } => {
+        ExprKind::Comprehension {
+            output, clauses, ..
+        } => {
             is_pure_expr(output)
                 && clauses.iter().all(|c| match c {
                     prima_syntax::ast::ComprehensionClause::For { iter, .. } => is_pure_expr(iter),
@@ -93,9 +101,25 @@ fn is_pure_builtin(name: &str) -> bool {
     }
     matches!(
         name,
-        "sqrt" | "exp" | "log" | "ln" | "sin" | "cos" | "tan" | "abs" | "simplify"
-            | "derivative" | "partial" | "grad" | "limit" | "len" | "sum" | "min" | "max"
-            | "concat" | "to_string"
+        "sqrt"
+            | "exp"
+            | "log"
+            | "ln"
+            | "sin"
+            | "cos"
+            | "tan"
+            | "abs"
+            | "simplify"
+            | "derivative"
+            | "partial"
+            | "grad"
+            | "limit"
+            | "len"
+            | "sum"
+            | "min"
+            | "max"
+            | "concat"
+            | "to_string"
     )
 }
 
@@ -121,7 +145,10 @@ pub fn tail_call_of(block: &Block) -> Option<TailCall> {
     if !matches!(callee.kind, ExprKind::Path { .. }) {
         return None;
     }
-    Some(TailCall { callee: (**callee).clone(), args: args.clone() })
+    Some(TailCall {
+        callee: (**callee).clone(),
+        args: args.clone(),
+    })
 }
 
 #[cfg(test)]

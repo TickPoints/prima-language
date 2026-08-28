@@ -45,7 +45,11 @@ pub fn derivative(pool: &ExprPool, builtins: &BuiltinSymbols, expr: ExprId, x: S
                     .filter(|(j, _)| *j != i)
                     .map(|(_, e)| *e)
                     .collect();
-                let rest_id = if rest.is_empty() { one } else { pool.mul_n(&rest) };
+                let rest_id = if rest.is_empty() {
+                    one
+                } else {
+                    pool.mul_n(&rest)
+                };
                 let term = pool.mul2(rest_id, derivative(pool, builtins, it, x));
                 acc = pool.add2(acc, term);
             }
@@ -55,7 +59,11 @@ pub fn derivative(pool: &ExprPool, builtins: &BuiltinSymbols, expr: ExprId, x: S
             if !contains_symbol(pool, exp, x) {
                 // Power rule: n·u^(n-1)·u'
                 let n_minus_1 = pool.sub2(exp, one);
-                let factors = [exp, pool.pow2(base, n_minus_1), derivative(pool, builtins, base, x)];
+                let factors = [
+                    exp,
+                    pool.pow2(base, n_minus_1),
+                    derivative(pool, builtins, base, x),
+                ];
                 pool.mul_n(&factors)
             } else if !contains_symbol(pool, base, x) {
                 // a^u → a^u·ln(a)·u'
@@ -137,7 +145,13 @@ pub fn free_symbols(pool: &ExprPool, builtins: &BuiltinSymbols, expr: ExprId) ->
 /// Limit (spec §19.4 MVP): substitute `x = at`; if both numerator and denominator of a `f/g` ratio
 /// vanish, apply L'Hôpital's rule up to `L_HOPITAL_MAX_ITER` times. Falls back to the substituted
 /// (simplified) expression when no numeric limit can be determined.
-pub fn limit(pool: &ExprPool, builtins: &BuiltinSymbols, expr: ExprId, x: SymbolId, at: ExprId) -> ExprId {
+pub fn limit(
+    pool: &ExprPool,
+    builtins: &BuiltinSymbols,
+    expr: ExprId,
+    x: SymbolId,
+    at: ExprId,
+) -> ExprId {
     let (mut num, mut den) = split_ratio(pool, expr);
     for _ in 0..=L_HOPITAL_MAX_ITER {
         let sub_num = simplify(pool, builtins, substitute(pool, num, x, at));
@@ -169,11 +183,17 @@ pub fn substitute(pool: &ExprPool, id: ExprId, x: SymbolId, value: ExprId) -> Ex
             }
         }
         Some(ExprData::Add(items)) => {
-            let new_items: Vec<ExprId> = items.iter().map(|&it| substitute(pool, it, x, value)).collect();
+            let new_items: Vec<ExprId> = items
+                .iter()
+                .map(|&it| substitute(pool, it, x, value))
+                .collect();
             pool.add_n(&new_items)
         }
         Some(ExprData::Mul(items)) => {
-            let new_items: Vec<ExprId> = items.iter().map(|&it| substitute(pool, it, x, value)).collect();
+            let new_items: Vec<ExprId> = items
+                .iter()
+                .map(|&it| substitute(pool, it, x, value))
+                .collect();
             pool.mul_n(&new_items)
         }
         Some(ExprData::Pow { base, exp }) => {
@@ -182,7 +202,10 @@ pub fn substitute(pool: &ExprPool, id: ExprId, x: SymbolId, value: ExprId) -> Ex
             pool.pow2(b, e)
         }
         Some(ExprData::Apply { f, args }) => {
-            let new_args: Vec<ExprId> = args.iter().map(|&a| substitute(pool, a, x, value)).collect();
+            let new_args: Vec<ExprId> = args
+                .iter()
+                .map(|&a| substitute(pool, a, x, value))
+                .collect();
             pool.apply(f, &new_args)
         }
         _ => id,
@@ -194,15 +217,24 @@ fn contains_symbol(pool: &ExprPool, id: ExprId, x: SymbolId) -> bool {
     match pool.get(id) {
         None => false,
         Some(ExprData::Symbol(s)) => s == x,
-        Some(ExprData::Add(items)) | Some(ExprData::Mul(items)) => items.iter().any(|&it| contains_symbol(pool, it, x)),
-        Some(ExprData::Pow { base, exp }) => contains_symbol(pool, base, x) || contains_symbol(pool, exp, x),
+        Some(ExprData::Add(items)) | Some(ExprData::Mul(items)) => {
+            items.iter().any(|&it| contains_symbol(pool, it, x))
+        }
+        Some(ExprData::Pow { base, exp }) => {
+            contains_symbol(pool, base, x) || contains_symbol(pool, exp, x)
+        }
         Some(ExprData::Apply { args, .. }) => args.iter().any(|&a| contains_symbol(pool, a, x)),
         _ => false,
     }
 }
 
 /// Derivative of a built-in function applied to `arg` (spec §7.2), i.e. `f'(arg)`.
-fn function_derivative(pool: &ExprPool, builtins: &BuiltinSymbols, f: ExprId, arg: ExprId) -> ExprId {
+fn function_derivative(
+    pool: &ExprPool,
+    builtins: &BuiltinSymbols,
+    f: ExprId,
+    arg: ExprId,
+) -> ExprId {
     let one = pool.integer(1);
     let two = pool.integer(2);
     let sin = pool.symbol(builtins.sin);
@@ -264,11 +296,19 @@ fn split_ratio(pool: &ExprPool, expr: ExprId) -> (ExprId, ExprId) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prima_core::number::Number;
     use prima_core::SymbolTable;
+    use prima_core::number::Number;
 
-    fn setup() -> (&'static ExprPool, &'static BuiltinSymbols, &'static SymbolTable) {
-        (ExprPool::global(), BuiltinSymbols::global(), SymbolTable::global())
+    fn setup() -> (
+        &'static ExprPool,
+        &'static BuiltinSymbols,
+        &'static SymbolTable,
+    ) {
+        (
+            ExprPool::global(),
+            BuiltinSymbols::global(),
+            SymbolTable::global(),
+        )
     }
 
     fn renders(pool: &ExprPool, symbols: &SymbolTable, id: ExprId) -> String {
@@ -319,7 +359,10 @@ mod tests {
         let (pool, b, sym) = setup();
         let x = sym.intern("x");
         let y = sym.intern("y");
-        let expr = pool.add2(pool.pow2(pool.symbol(x), pool.integer(2)), pool.pow2(pool.symbol(y), pool.integer(2)));
+        let expr = pool.add2(
+            pool.pow2(pool.symbol(x), pool.integer(2)),
+            pool.pow2(pool.symbol(y), pool.integer(2)),
+        );
         let g = grad(pool, b, expr);
         assert_eq!(g.len(), 2);
         let d = simplify(pool, b, g[0]);
@@ -332,7 +375,10 @@ mod tests {
     fn limit_sin_over_x() {
         let (pool, b, sym) = setup();
         let x = sym.intern("x");
-        let expr = pool.div2(pool.apply(pool.symbol(b.sin), &[pool.symbol(x)]), pool.symbol(x));
+        let expr = pool.div2(
+            pool.apply(pool.symbol(b.sin), &[pool.symbol(x)]),
+            pool.symbol(x),
+        );
         let lim = limit(pool, b, expr, x, pool.integer(0));
         let n = pool.const_number(lim);
         assert_eq!(n, Some(Number::from(1)));

@@ -19,7 +19,10 @@ fn sys_path_join_uses_separator() {
 #[test]
 fn sys_path_file_name_and_parent() {
     let v = eval("import sys::path;\nsys::path::file_name(\"a/b/c.txt\")");
-    assert_eq!(v, Value::Option(Some(Box::new(Value::String("c.txt".into())))));
+    assert_eq!(
+        v,
+        Value::Option(Some(Box::new(Value::String("c.txt".into()))))
+    );
     // `a/..` terminates in a parent traversal: no file name (spec §18.2).
     let v = eval("import sys::path;\nsys::path::file_name(\"a/..\")");
     assert_eq!(v, Value::Option(None));
@@ -54,13 +57,18 @@ fn time_unix_timestamp_of_now_is_positive() {
 
 #[test]
 fn time_format_epoch_year() {
-    assert_eq!(eval("import time;\ntime::format(0, \"%Y\")"), Value::String("1970".into()));
+    assert_eq!(
+        eval("import time;\ntime::format(0, \"%Y\")"),
+        Value::String("1970".into())
+    );
 }
 
 #[test]
 fn time_format_and_parse_roundtrip() {
-    let v = eval(r#"import time;
-time::parse("2024-01-15", "%Y-%m-%d")"#);
+    let v = eval(
+        r#"import time;
+time::parse("2024-01-15", "%Y-%m-%d")"#,
+    );
     match v {
         Value::Result(Ok(n)) => {
             let secs = match *n {
@@ -76,9 +84,18 @@ time::parse("2024-01-15", "%Y-%m-%d")"#);
 
 #[test]
 fn num_gcd_lcm() {
-    assert_eq!(eval("import num;\nnum::gcd(12, 18)"), Value::Number(Number::from(6)));
-    assert_eq!(eval("import num;\nnum::gcd(0, 5)"), Value::Number(Number::from(5)));
-    assert_eq!(eval("import num;\nnum::lcm(4, 6)"), Value::Number(Number::from(12)));
+    assert_eq!(
+        eval("import num;\nnum::gcd(12, 18)"),
+        Value::Number(Number::from(6))
+    );
+    assert_eq!(
+        eval("import num;\nnum::gcd(0, 5)"),
+        Value::Number(Number::from(5))
+    );
+    assert_eq!(
+        eval("import num;\nnum::lcm(4, 6)"),
+        Value::Number(Number::from(12))
+    );
 }
 
 #[test]
@@ -90,14 +107,26 @@ fn num_primality() {
 
 #[test]
 fn num_next_prime() {
-    assert_eq!(eval("import num;\nnum::next_prime(10)"), Value::Number(Number::from(11)));
-    assert_eq!(eval("import num;\nnum::next_prime(13)"), Value::Number(Number::from(13)));
+    assert_eq!(
+        eval("import num;\nnum::next_prime(10)"),
+        Value::Number(Number::from(11))
+    );
+    assert_eq!(
+        eval("import num;\nnum::next_prime(13)"),
+        Value::Number(Number::from(13))
+    );
 }
 
 #[test]
 fn num_base_conversion() {
-    assert_eq!(eval("import num;\nnum::to_base(255, 16)"), Value::String("ff".into()));
-    assert_eq!(eval("import num;\nnum::to_base(8, 2)"), Value::String("1000".into()));
+    assert_eq!(
+        eval("import num;\nnum::to_base(255, 16)"),
+        Value::String("ff".into())
+    );
+    assert_eq!(
+        eval("import num;\nnum::to_base(8, 2)"),
+        Value::String("1000".into())
+    );
     match eval("import num;\nnum::from_base(\"ff\", 16)") {
         Value::Result(Ok(n)) => assert_eq!(*n, Value::Number(Number::from(255))),
         other => panic!("expected Result<Ok>, got {other:?}"),

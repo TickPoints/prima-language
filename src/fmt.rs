@@ -12,8 +12,8 @@ use std::process::ExitCode;
 
 use prima_syntax::ast::{
     Annotation, AssignOp, BinOp, Block, ClassMember, ClassMemberKind, CompKind,
-    ComprehensionClause, ConfigBlock, ConfigEntry, Expr, ExprKind, FStringPart, Import, ImportItem,
-    ImportKind, ImplOp, Index, IndexItem, Literal, MatchArm, Param, Pattern, Program, Stmt,
+    ComprehensionClause, ConfigBlock, ConfigEntry, Expr, ExprKind, FStringPart, ImplOp, Import,
+    ImportItem, ImportKind, Index, IndexItem, Literal, MatchArm, Param, Pattern, Program, Stmt,
     StringQuote, Type, UnOp, Visibility,
 };
 use prima_syntax::parse;
@@ -43,7 +43,10 @@ pub fn run(path: &Path, write: bool, check: bool) -> ExitCode {
         if formatted == source {
             return ExitCode::SUCCESS;
         }
-        diagnostics::print_colored_error(&format!("{} is not formatted (spec §20 `fmt --check`)", path.display()));
+        diagnostics::print_colored_error(&format!(
+            "{} is not formatted (spec §20 `fmt --check`)",
+            path.display()
+        ));
         return ExitCode::FAILURE;
     }
     if write {
@@ -98,7 +101,12 @@ pub fn format_program(program: &Program) -> String {
 
 /// Emit the doc lines of a `///`/`//!` comment (spec §4.1) as `///` comment lines at `indent`.
 /// Leaves the output at the start of a new line (no trailing indent).
-fn format_doc_lines(docs: &prima_syntax::ast::DocComment, indent: usize, out: &mut String, module: bool) {
+fn format_doc_lines(
+    docs: &prima_syntax::ast::DocComment,
+    indent: usize,
+    out: &mut String,
+    module: bool,
+) {
     let marker = if module { "//! " } else { "/// " };
     for (line, _) in &docs.lines {
         push_indent(indent, out);
@@ -228,7 +236,13 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
         other => (false, other),
     };
     match inner {
-        Stmt::Let { pat, mut_, type_ann, value, .. } => {
+        Stmt::Let {
+            pat,
+            mut_,
+            type_ann,
+            value,
+            ..
+        } => {
             if is_pub {
                 out.push_str("pub ");
             }
@@ -244,7 +258,12 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             out.push_str(" = ");
             format_expr(value, 0, out);
         }
-        Stmt::Const { name, type_ann, value, .. } => {
+        Stmt::Const {
+            name,
+            type_ann,
+            value,
+            ..
+        } => {
             if is_pub {
                 out.push_str("pub ");
             }
@@ -255,7 +274,14 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             out.push_str(" = ");
             format_expr(value, 0, out);
         }
-        Stmt::FnDef { name, params, ret, annotations, body, .. } => {
+        Stmt::FnDef {
+            name,
+            params,
+            ret,
+            annotations,
+            body,
+            ..
+        } => {
             format_annotations(annotations, out);
             if is_pub {
                 out.push_str("pub ");
@@ -267,7 +293,14 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             out.push(' ');
             format_block(body, indent, out);
         }
-        Stmt::MathDef { name, params, ret, annotations, body, .. } => {
+        Stmt::MathDef {
+            name,
+            params,
+            ret,
+            annotations,
+            body,
+            ..
+        } => {
             if is_pub {
                 out.push_str("pub ");
             }
@@ -279,7 +312,12 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             out.push_str(" = ");
             format_expr(body, 0, out);
         }
-        Stmt::ClassDef { name, annotations, members, .. } => {
+        Stmt::ClassDef {
+            name,
+            annotations,
+            members,
+            ..
+        } => {
             format_annotations(annotations, out);
             if is_pub {
                 out.push_str("pub ");
@@ -293,7 +331,12 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             push_indent(indent, out);
             out.push('}');
         }
-        Stmt::Impl { op, target, members, .. } => {
+        Stmt::Impl {
+            op,
+            target,
+            members,
+            ..
+        } => {
             if is_pub {
                 out.push_str("pub ");
             }
@@ -309,7 +352,9 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             push_indent(indent, out);
             out.push('}');
         }
-        Stmt::Assign { target, op, value, .. } => {
+        Stmt::Assign {
+            target, op, value, ..
+        } => {
             format_expr(target, ATOM_BP, out);
             out.push(' ');
             out.push_str(assign_op_name(*op));
@@ -317,7 +362,13 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             format_expr(value, 0, out);
         }
         Stmt::Expr(e) => format_expr(e, 0, out),
-        Stmt::For { var, range, step, body, .. } => {
+        Stmt::For {
+            var,
+            range,
+            step,
+            body,
+            ..
+        } => {
             out.push_str("for ");
             out.push_str(&var.value);
             out.push_str(" in ");
@@ -328,7 +379,13 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             out.push(' ');
             format_block(body, indent, out);
         }
-        Stmt::ParFor { var, range, step, body, .. } => {
+        Stmt::ParFor {
+            var,
+            range,
+            step,
+            body,
+            ..
+        } => {
             out.push_str("parfor ");
             out.push_str(&var.value);
             out.push_str(" in ");
@@ -345,7 +402,13 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             out.push(' ');
             format_block(body, indent, out);
         }
-        Stmt::If { cond, then, elifs, else_, .. } => {
+        Stmt::If {
+            cond,
+            then,
+            elifs,
+            else_,
+            ..
+        } => {
             out.push_str("if ");
             format_expr(cond, 0, out);
             out.push(' ');
@@ -361,7 +424,13 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
                 format_block(body, indent, out);
             }
         }
-        Stmt::IfLet { pat, value, then, else_, .. } => {
+        Stmt::IfLet {
+            pat,
+            value,
+            then,
+            else_,
+            ..
+        } => {
             out.push_str("if let ");
             format_pattern(pat, out);
             out.push_str(" = ");
@@ -373,7 +442,9 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
                 format_block(body, indent, out);
             }
         }
-        Stmt::WhileLet { pat, value, body, .. } => {
+        Stmt::WhileLet {
+            pat, value, body, ..
+        } => {
             out.push_str("while let ");
             format_pattern(pat, out);
             out.push_str(" = ");
@@ -381,7 +452,9 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             out.push(' ');
             format_block(body, indent, out);
         }
-        Stmt::Match { scrutinee, arms, .. } => {
+        Stmt::Match {
+            scrutinee, arms, ..
+        } => {
             out.push_str("match ");
             format_expr(scrutinee, 0, out);
             out.push_str(" {\n");
@@ -462,7 +535,13 @@ fn format_class_member(member: &ClassMember, indent: usize, out: &mut String) {
             // Fields are comma-terminated in the class body (spec appendix A `field_decl`).
             out.push_str(",\n");
         }
-        ClassMemberKind::Method { name, params, ret, annotations, body } => {
+        ClassMemberKind::Method {
+            name,
+            params,
+            ret,
+            annotations,
+            body,
+        } => {
             format_annotations(annotations, out);
             out.push_str("fn ");
             out.push_str(&name.value);
@@ -737,7 +816,12 @@ fn binop_lbp(op: BinOp) -> u8 {
         BinOp::And => 3,
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In => 4,
         BinOp::Add | BinOp::Sub | BinOp::Union | BinOp::Difference => 5,
-        BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::MatMul | BinOp::Broadcast | BinOp::Intersect => 6,
+        BinOp::Mul
+        | BinOp::Div
+        | BinOp::Mod
+        | BinOp::MatMul
+        | BinOp::Broadcast
+        | BinOp::Intersect => 6,
         BinOp::Pow => 8,
     }
 }
@@ -749,7 +833,12 @@ fn binop_rbp(op: BinOp) -> u8 {
         BinOp::And => 4,
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In => 5,
         BinOp::Add | BinOp::Sub | BinOp::Union | BinOp::Difference => 6,
-        BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::MatMul | BinOp::Broadcast | BinOp::Intersect => 7,
+        BinOp::Mul
+        | BinOp::Div
+        | BinOp::Mod
+        | BinOp::MatMul
+        | BinOp::Broadcast
+        | BinOp::Intersect => 7,
         BinOp::Pow => 8,
     }
 }
@@ -813,7 +902,11 @@ fn format_expr(e: &Expr, min_bp: u8, out: &mut String) {
             format_expr(callee, ATOM_BP, out);
             format_args(args, out);
         }
-        ExprKind::MethodCall { receiver, name, args } => {
+        ExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+        } => {
             format_expr(receiver, ATOM_BP, out);
             out.push('.');
             out.push_str(&name.value);
@@ -914,7 +1007,11 @@ fn format_expr(e: &Expr, min_bp: u8, out: &mut String) {
                 out.push_str(" }");
             }
         }
-        ExprKind::Comprehension { kind, output, clauses } => {
+        ExprKind::Comprehension {
+            kind,
+            output,
+            clauses,
+        } => {
             format_comp_frame(*kind, out);
             format_expr(output, 0, out);
             for clause in clauses {
@@ -1059,7 +1156,9 @@ fn escape_char(c: char) -> String {
 fn format_literal(lit: &Literal, out: &mut String) {
     match lit {
         // Numeric literals keep their raw source text (impl §3): re-emitting it is lossless.
-        Literal::Integer(s) | Literal::Float(s) | Literal::Hex(s) | Literal::Binary(s) => out.push_str(s),
+        Literal::Integer(s) | Literal::Float(s) | Literal::Hex(s) | Literal::Binary(s) => {
+            out.push_str(s)
+        }
         Literal::String { value, quote, raw } => {
             let delim = match quote {
                 StringQuote::Double => '"',
@@ -1247,7 +1346,10 @@ mod tests {
     #[test]
     fn fmt_covers_pub_definitions() {
         assert_idempotent("pub let square(x) = x^2;\nlet helper(x) = x + 1;");
-        assert_eq!(fmt_of("pub let square(x) = x^2;"), "pub let square(x) = x^2;\n");
+        assert_eq!(
+            fmt_of("pub let square(x) = x^2;"),
+            "pub let square(x) = x^2;\n"
+        );
         assert_idempotent("pub fn f(a: Integer) -> Integer { a }\npub class C { pub x: Integer }");
     }
 

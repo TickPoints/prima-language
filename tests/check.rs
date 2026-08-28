@@ -4,15 +4,27 @@ use prima_runtime::check::check_src;
 fn type_mismatch_f64_expr() {
     let errs = check_src("let x: F64 = sqrt(2)");
     assert_eq!(errs.len(), 1);
-    assert!(errs[0].message.contains("F64"), "message = {}", errs[0].message);
-    assert!(errs[0].message.contains("Expr"), "message = {}", errs[0].message);
+    assert!(
+        errs[0].message.contains("F64"),
+        "message = {}",
+        errs[0].message
+    );
+    assert!(
+        errs[0].message.contains("Expr"),
+        "message = {}",
+        errs[0].message
+    );
 }
 
 #[test]
 fn type_mismatch_integer_from_float() {
     let errs = check_src("let z: Integer = 3.14");
     assert_eq!(errs.len(), 1);
-    assert!(errs[0].message.contains("Integer"), "message = {}", errs[0].message);
+    assert!(
+        errs[0].message.contains("Integer"),
+        "message = {}",
+        errs[0].message
+    );
 }
 
 #[test]

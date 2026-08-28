@@ -1,7 +1,7 @@
 //! `@builtin` and `@c_api::extern` interop validation (spec §18.4): static checks E0055/E0056/
 //! E0071/E0072 plus the C ABI export list and header rendering.
 
-use prima_runtime::capi::{collect_exports, render_header, CExtern};
+use prima_runtime::capi::{CExtern, collect_exports, render_header};
 use prima_runtime::check::check_src;
 use prima_syntax::parse;
 
@@ -12,7 +12,11 @@ fn messages(src: &str) -> Vec<String> {
 #[test]
 fn c_api_extern_pub_export_passes_validation_and_collects() {
     let src = "@c_api::extern\npub fn add(a: c_api::double, b: c_api::double) -> c_api::double { return a + b; }";
-    assert!(check_src(src).is_empty(), "expected no errors, got {:?}", messages(src));
+    assert!(
+        check_src(src).is_empty(),
+        "expected no errors, got {:?}",
+        messages(src)
+    );
     let exports = collect_exports(&parse(src).unwrap());
     assert_eq!(
         exports,
@@ -57,7 +61,10 @@ fn c_api_unit_as_parameter_is_e0071() {
 
 #[test]
 fn c_api_unit_return_is_allowed() {
-    assert!(check_src("@c_api::extern\npub fn hello(a: c_api::int) -> c_api::unit { return; }").is_empty());
+    assert!(
+        check_src("@c_api::extern\npub fn hello(a: c_api::int) -> c_api::unit { return; }")
+            .is_empty()
+    );
 }
 
 #[test]

@@ -34,9 +34,18 @@ pub enum Number {
     Real(Real),
     Complex { re: Box<Number>, im: Box<Number> },
     // —— fixed-width collapsed layer (spec §6.1, maps 1:1 to Rust primitives) ——
-    I8(i8), I16(i16), I32(i32), I64(i64), I128(i128),
-    U8(u8), U16(u16), U32(u32), U64(u64), U128(u128),
-    Isize(isize), Usize(usize),
+    I8(i8),
+    I16(i16),
+    I32(i32),
+    I64(i64),
+    I128(i128),
+    U8(u8),
+    U16(u16),
+    U32(u32),
+    U64(u64),
+    U128(u128),
+    Isize(isize),
+    Usize(usize),
     BigFloat(f64),
 }
 
@@ -207,8 +216,12 @@ impl Number {
         match self {
             Number::Integer(i) => i.to_i64(),
             Number::Rational(r) if *r.denom() == BigInt::one() => r.numer().to_i64(),
-            Number::Real(Real::F64(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f => Some(*f as i64),
-            Number::Real(Real::F32(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f as f64 => Some(*f as i64),
+            Number::Real(Real::F64(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f => {
+                Some(*f as i64)
+            }
+            Number::Real(Real::F32(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f as f64 => {
+                Some(*f as i64)
+            }
             Number::I8(v) => Some(*v as i64),
             Number::I16(v) => Some(*v as i64),
             Number::I32(v) => Some(*v as i64),
@@ -236,10 +249,14 @@ impl Number {
         match self {
             Number::Integer(i) => i.to_u64(),
             Number::Rational(r) if *r.denom() == BigInt::one() => r.numer().to_u64(),
-            Number::Real(Real::F64(f)) if f.fract() == 0.0 && f.is_sign_positive() && (*f as u64) as f64 == *f => {
+            Number::Real(Real::F64(f))
+                if f.fract() == 0.0 && f.is_sign_positive() && (*f as u64) as f64 == *f =>
+            {
                 Some(*f as u64)
             }
-            Number::Real(Real::F32(f)) if f.fract() == 0.0 && f.is_sign_positive() && (*f as u64) as f64 == *f as f64 => {
+            Number::Real(Real::F32(f))
+                if f.fract() == 0.0 && f.is_sign_positive() && (*f as u64) as f64 == *f as f64 =>
+            {
                 Some(*f as u64)
             }
             Number::I8(v) if *v >= 0 => Some(*v as u64),
@@ -254,7 +271,9 @@ impl Number {
             Number::U128(v) => u64::try_from(*v).ok(),
             Number::Isize(v) if *v >= 0 => Some(*v as u64),
             Number::Usize(v) => u64::try_from(*v).ok(),
-            Number::BigFloat(f) if f.fract() == 0.0 && f.is_sign_positive() && (*f as u64) as f64 == *f => {
+            Number::BigFloat(f)
+                if f.fract() == 0.0 && f.is_sign_positive() && (*f as u64) as f64 == *f =>
+            {
                 Some(*f as u64)
             }
             _ => None,
@@ -290,8 +309,12 @@ impl Number {
         match self {
             Number::Integer(i) => Some(BigRational::from_integer(i.clone())),
             Number::Rational(r) => Some(r.clone()),
-            Number::Real(Real::F64(f)) if f.fract() == 0.0 => Some(BigRational::from_integer(BigInt::from(*f as i64))),
-            Number::Real(Real::F32(f)) if f.fract() == 0.0 => Some(BigRational::from_integer(BigInt::from(*f as i64))),
+            Number::Real(Real::F64(f)) if f.fract() == 0.0 => {
+                Some(BigRational::from_integer(BigInt::from(*f as i64)))
+            }
+            Number::Real(Real::F32(f)) if f.fract() == 0.0 => {
+                Some(BigRational::from_integer(BigInt::from(*f as i64)))
+            }
             Number::I8(v) => Some(BigRational::from_integer(BigInt::from(*v))),
             Number::I16(v) => Some(BigRational::from_integer(BigInt::from(*v))),
             Number::I32(v) => Some(BigRational::from_integer(BigInt::from(*v))),
@@ -304,7 +327,9 @@ impl Number {
             Number::U128(v) => Some(BigRational::from_integer(BigInt::from(*v))),
             Number::Isize(v) => Some(BigRational::from_integer(BigInt::from(*v))),
             Number::Usize(v) => Some(BigRational::from_integer(BigInt::from(*v))),
-            Number::BigFloat(f) if f.fract() == 0.0 => Some(BigRational::from_integer(BigInt::from(*f as i64))),
+            Number::BigFloat(f) if f.fract() == 0.0 => {
+                Some(BigRational::from_integer(BigInt::from(*f as i64)))
+            }
             _ => None,
         }
     }
@@ -427,11 +452,7 @@ fn isqrt(n: &BigInt) -> Option<BigInt> {
         }
         x = y;
     }
-    if &x * &x == *n {
-        Some(x)
-    } else {
-        None
-    }
+    if &x * &x == *n { Some(x) } else { None }
 }
 
 impl From<i32> for Number {
@@ -507,7 +528,10 @@ fn zero_like(like: &Number) -> Number {
         Number::Rational(_) => Number::Rational(BigRational::new(BigInt::zero(), BigInt::one())),
         Number::Real(Real::F32(_)) => Number::Real(Real::F32(0.0)),
         Number::Real(Real::F64(_)) => Number::Real(Real::F64(0.0)),
-        Number::Complex { re, im } => Number::Complex { re: Box::new(zero_like(re)), im: Box::new(zero_like(im)) },
+        Number::Complex { re, im } => Number::Complex {
+            re: Box::new(zero_like(re)),
+            im: Box::new(zero_like(im)),
+        },
         // Fixed-width collapsed variants normalize to the zero of the exact/`Real` layer (spec §6.1).
         other => zero_like(&normalize(other.clone())),
     }
@@ -541,8 +565,12 @@ fn exact_integer(n: &Number) -> Option<BigInt> {
     match n {
         Number::Integer(i) => Some(i.clone()),
         Number::Rational(r) if *r.denom() == BigInt::one() => Some(r.numer().clone()),
-        Number::Real(Real::F64(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f => Some(BigInt::from(*f as i64)),
-        Number::Real(Real::F32(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f as f64 => Some(BigInt::from(*f as i64)),
+        Number::Real(Real::F64(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f => {
+            Some(BigInt::from(*f as i64))
+        }
+        Number::Real(Real::F32(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f as f64 => {
+            Some(BigInt::from(*f as i64))
+        }
         Number::I8(v) => Some(BigInt::from(*v)),
         Number::I16(v) => Some(BigInt::from(*v)),
         Number::I32(v) => Some(BigInt::from(*v)),
@@ -555,7 +583,9 @@ fn exact_integer(n: &Number) -> Option<BigInt> {
         Number::U128(v) => Some(BigInt::from(*v)),
         Number::Isize(v) => Some(BigInt::from(*v)),
         Number::Usize(v) => Some(BigInt::from(*v)),
-        Number::BigFloat(f) if f.fract() == 0.0 && (*f as i64) as f64 == *f => Some(BigInt::from(*f as i64)),
+        Number::BigFloat(f) if f.fract() == 0.0 && (*f as i64) as f64 == *f => {
+            Some(BigInt::from(*f as i64))
+        }
         _ => None,
     }
 }
@@ -571,16 +601,17 @@ fn promote_real(a: &Number, b: &Number) -> (Number, Number) {
         }
         (Number::Real(Real::F32(_)), Number::Real(Real::F32(_))) => (a.clone(), b.clone()),
         (Number::Real(Real::F64(_)), Number::Real(Real::F64(_))) => (a.clone(), b.clone()),
-        (Number::Real(Real::F64(_)), Number::Real(Real::F32(_))) | (Number::Real(Real::F32(_)), Number::Real(Real::F64(_))) => {
-            (to_f64(&a), to_f64(&b))
-        }
+        (Number::Real(Real::F64(_)), Number::Real(Real::F32(_)))
+        | (Number::Real(Real::F32(_)), Number::Real(Real::F64(_))) => (to_f64(&a), to_f64(&b)),
         (Number::Real(x), Number::Integer(_)) | (Number::Real(x), Number::Rational(_)) => {
             (a.clone(), to_real(&b, x))
         }
         (Number::Integer(_), Number::Real(x)) | (Number::Rational(_), Number::Real(x)) => {
             (to_real(&a, x), b.clone())
         }
-        (Number::Complex { .. }, _) | (_, Number::Complex { .. }) => unreachable!("complex promoted by caller"),
+        (Number::Complex { .. }, _) | (_, Number::Complex { .. }) => {
+            unreachable!("complex promoted by caller")
+        }
         // Fixed-width variants are normalized before promotion (spec §6.1); never reached.
         _ => unreachable!("fixed-width variants must be normalized before promote_real"),
     }
@@ -605,23 +636,51 @@ pub fn promote(a: &Number, b: &Number) -> (Number, Number) {
             let (nrea, nreb) = promote_real(&rea, &reb);
             let (nima, nimb) = promote_real(&ima, &imb);
             (
-                Complex { re: Box::new(nrea), im: Box::new(nima) },
-                Complex { re: Box::new(nreb), im: Box::new(nimb) },
+                Complex {
+                    re: Box::new(nrea),
+                    im: Box::new(nima),
+                },
+                Complex {
+                    re: Box::new(nreb),
+                    im: Box::new(nimb),
+                },
             )
         }
         (true, false) => {
-            let Complex { re, im } = a else { unreachable!() };
+            let Complex { re, im } = a else {
+                unreachable!()
+            };
             let (nre, nb) = promote_real(&re, &b);
             let nima = convert_to(&im, &nre);
-            let nb_c = Complex { re: Box::new(nb), im: Box::new(zero_like(&nima)) };
-            (Complex { re: Box::new(nre), im: Box::new(nima) }, nb_c)
+            let nb_c = Complex {
+                re: Box::new(nb),
+                im: Box::new(zero_like(&nima)),
+            };
+            (
+                Complex {
+                    re: Box::new(nre),
+                    im: Box::new(nima),
+                },
+                nb_c,
+            )
         }
         (false, true) => {
-            let Complex { re, im } = b else { unreachable!() };
+            let Complex { re, im } = b else {
+                unreachable!()
+            };
             let (na, nre) = promote_real(&a, &re);
             let nima = convert_to(&im, &nre);
-            let na_c = Complex { re: Box::new(na), im: Box::new(zero_like(&nima)) };
-            (na_c, Complex { re: Box::new(nre), im: Box::new(nima) })
+            let na_c = Complex {
+                re: Box::new(na),
+                im: Box::new(zero_like(&nima)),
+            };
+            (
+                na_c,
+                Complex {
+                    re: Box::new(nre),
+                    im: Box::new(nima),
+                },
+            )
         }
     }
 }
@@ -692,7 +751,10 @@ fn complex_div(a: Number, b: Number, c: Number, d: Number) -> Number {
     checked_denominator(&denom).expect("division by zero");
     let re = (a.clone() * c.clone() + b.clone() * d.clone()) / denom.clone();
     let im = (b * c - a * d) / denom;
-    Number::Complex { re: Box::new(re), im: Box::new(im) }
+    Number::Complex {
+        re: Box::new(re),
+        im: Box::new(im),
+    }
 }
 
 impl std::ops::Add for Number {
@@ -702,9 +764,15 @@ impl std::ops::Add for Number {
         use Number::*;
         match (a, b) {
             (Integer(x), Integer(y)) => Integer(x + y),
-            (Rational(x), Rational(y)) => { let r = x + y; normalized(r.numer().clone(), r.denom().clone()) },
+            (Rational(x), Rational(y)) => {
+                let r = x + y;
+                normalized(r.numer().clone(), r.denom().clone())
+            }
             (Real(x), Real(y)) => Real(add_real(x, y)),
-            (Complex { re, im }, Complex { re: u, im: v }) => Complex { re: Box::new(*re + *u), im: Box::new(*im + *v) },
+            (Complex { re, im }, Complex { re: u, im: v }) => Complex {
+                re: Box::new(*re + *u),
+                im: Box::new(*im + *v),
+            },
             _ => unreachable!("promote must align operands"),
         }
     }
@@ -734,9 +802,10 @@ impl std::ops::Sub for Number {
                     Number::Real(Real::F64(x - y))
                 }
             },
-            (Number::Complex { re, im }, Number::Complex { re: u, im: v }) => {
-                Number::Complex { re: Box::new(*re - *u), im: Box::new(*im - *v) }
-            }
+            (Number::Complex { re, im }, Number::Complex { re: u, im: v }) => Number::Complex {
+                re: Box::new(*re - *u),
+                im: Box::new(*im - *v),
+            },
             _ => unreachable!("promote must align operands"),
         }
     }
@@ -749,12 +818,18 @@ impl std::ops::Mul for Number {
         use Number::*;
         match (a, b) {
             (Integer(x), Integer(y)) => Integer(x * y),
-            (Rational(x), Rational(y)) => { let r = x * y; normalized(r.numer().clone(), r.denom().clone()) },
+            (Rational(x), Rational(y)) => {
+                let r = x * y;
+                normalized(r.numer().clone(), r.denom().clone())
+            }
             (Real(x), Real(y)) => Real(mul_real(x, y)),
             (Complex { re, im }, Complex { re: u, im: v }) => {
                 let re_new = *re.clone() * *u.clone() - *im.clone() * *v.clone();
                 let im_new = *re * *v + *im * *u;
-                Complex { re: Box::new(re_new), im: Box::new(im_new) }
+                Complex {
+                    re: Box::new(re_new),
+                    im: Box::new(im_new),
+                }
             }
             _ => unreachable!("promote must align operands"),
         }
@@ -795,7 +870,10 @@ impl std::ops::Neg for Number {
             Number::Rational(r) => Number::Rational(-r),
             Number::Real(Real::F32(f)) => Number::Real(Real::F32(-f)),
             Number::Real(Real::F64(f)) => Number::Real(Real::F64(-f)),
-            Number::Complex { re, im } => Number::Complex { re: Box::new(-*re), im: Box::new(-*im) },
+            Number::Complex { re, im } => Number::Complex {
+                re: Box::new(-*re),
+                im: Box::new(-*im),
+            },
             _ => unreachable!("normalize returns only the exact/Real/complex layer"),
         }
     }

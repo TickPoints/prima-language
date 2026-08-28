@@ -43,7 +43,11 @@ pub fn run() -> ExitCode {
     let mut prev_output = String::new();
     let mut buffer = String::new();
     loop {
-        let prompt = if buffer.is_empty() { PROMPT } else { CONTINUATION };
+        let prompt = if buffer.is_empty() {
+            PROMPT
+        } else {
+            CONTINUATION
+        };
         match editor.readline(prompt) {
             Ok(line) => {
                 let _ = editor.add_history_entry(line.as_str());
@@ -59,7 +63,14 @@ pub fn run() -> ExitCode {
                 if balanced_delimiters(&buffer) {
                     let mut candidate = session.clone();
                     candidate.push_str(&buffer);
-                    eval_candidate(&mut ev, &printed, &candidate, &buffer, &mut session, &mut prev_output);
+                    eval_candidate(
+                        &mut ev,
+                        &printed,
+                        &candidate,
+                        &buffer,
+                        &mut session,
+                        &mut prev_output,
+                    );
                     buffer.clear();
                 }
             }
@@ -122,8 +133,13 @@ fn eval_candidate(
 /// Whether the entry's trailing statement yields a value (an expression or a `match`,
 /// per `Evaluator::eval_value`, spec §4.4); a `let`/`class`/control-flow entry does not.
 fn yields_value(buffer: &str) -> bool {
-    let Ok(program) = prima_syntax::parse(buffer) else { return false };
-    matches!(program.stmts.last(), Some(Stmt::Expr(_)) | Some(Stmt::Match { .. }))
+    let Ok(program) = prima_syntax::parse(buffer) else {
+        return false;
+    };
+    matches!(
+        program.stmts.last(),
+        Some(Stmt::Expr(_)) | Some(Stmt::Match { .. })
+    )
 }
 
 /// The committed session replays as a single program (session + next entry), so each entry

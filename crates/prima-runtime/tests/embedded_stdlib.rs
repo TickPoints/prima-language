@@ -22,12 +22,17 @@ fn int_arg(args: &[Value], fname: &str) -> Result<i64, RuntimeError> {
 }
 
 fn eval(src: &str) -> Value {
-    Evaluator::new().eval_value(src).unwrap_or_else(|e| panic!("eval failed: {e}"))
+    Evaluator::new()
+        .eval_value(src)
+        .unwrap_or_else(|e| panic!("eval failed: {e}"))
 }
 
 #[test]
 fn embedded_builtin_module_qualified_call() {
-    register_module_source("testembed", "@builtin pub fn triple(x: Integer) -> Integer;");
+    register_module_source(
+        "testembed",
+        "@builtin pub fn triple(x: Integer) -> Integer;",
+    );
     register_impl("testembed::triple", |_ev, args| {
         let x = int_arg(args, "testembed::triple")?;
         Ok(Value::Number(Number::from(3 * x)))
@@ -42,7 +47,10 @@ fn embedded_builtin_module_qualified_call() {
 
 #[test]
 fn embedded_builtin_from_import() {
-    register_module_source("testembed", "@builtin pub fn triple(x: Integer) -> Integer;");
+    register_module_source(
+        "testembed",
+        "@builtin pub fn triple(x: Integer) -> Integer;",
+    );
     register_impl("testembed::triple", |_ev, args| {
         let x = int_arg(args, "testembed::triple")?;
         Ok(Value::Number(Number::from(3 * x)))
@@ -58,7 +66,10 @@ fn embedded_builtin_from_import() {
 fn embedded_builtin_path_name() {
     // A `::`-joined `@builtin` name is exported under the joined key, so `testembed2::Util::twice`
     // resolves via the flattened module-item lookup (spec §18.4 / §18.3).
-    register_module_source("testembed2", "@builtin pub fn Util::twice(x: Integer) -> Integer;");
+    register_module_source(
+        "testembed2",
+        "@builtin pub fn Util::twice(x: Integer) -> Integer;",
+    );
     register_impl("testembed2::Util::twice", |_ev, args| {
         let x = int_arg(args, "testembed2::Util::twice")?;
         Ok(Value::Number(Number::from(2 * x)))
@@ -80,5 +91,8 @@ fn unregistered_embedded_builtin_errors_e0055() {
         .unwrap_err();
     let msg = format!("{err}");
     assert!(msg.contains("E0055"), "expected E0055, got: {msg}");
-    assert!(msg.contains("nope"), "expected the builtin name in the error, got: {msg}");
+    assert!(
+        msg.contains("nope"),
+        "expected the builtin name in the error, got: {msg}"
+    );
 }

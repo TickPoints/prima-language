@@ -17,7 +17,10 @@ fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
     if args.len() == n {
         Ok(())
     } else {
-        Err(RuntimeError::Message(format!("`{fname}` expects {n} argument(s), got {}", args.len())))
+        Err(RuntimeError::Message(format!(
+            "`{fname}` expects {n} argument(s), got {}",
+            args.len()
+        )))
     }
 }
 
@@ -27,7 +30,9 @@ fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeEr
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a string, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!("`{fname}` missing argument {i}"))),
+        None => Err(RuntimeError::Message(format!(
+            "`{fname}` missing argument {i}"
+        ))),
     }
 }
 
@@ -108,12 +113,15 @@ fn read_lines(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError
                 .map(|l| l.trim_end_matches('\r').to_string())
                 .collect();
             // A trailing newline does not produce a final empty line (spec §18 io).
-            let lines = if content.ends_with('\n') && lines.last().map(String::is_empty).unwrap_or(false) {
-                &lines[..lines.len() - 1]
-            } else {
-                &lines[..]
-            };
-            ok(Value::Array(lines.iter().map(|l| Value::String(l.clone())).collect()))
+            let lines =
+                if content.ends_with('\n') && lines.last().map(String::is_empty).unwrap_or(false) {
+                    &lines[..lines.len() - 1]
+                } else {
+                    &lines[..]
+                };
+            ok(Value::Array(
+                lines.iter().map(|l| Value::String(l.clone())).collect(),
+            ))
         }
         Err(e) => err(format!("cannot read `{path}`: {e}")),
     };
@@ -144,9 +152,14 @@ fn json_to_value(v: serde_json::Value) -> Value {
             }
         }
         serde_json::Value::String(s) => Value::String(s),
-        serde_json::Value::Array(items) => Value::Array(items.into_iter().map(json_to_value).collect()),
+        serde_json::Value::Array(items) => {
+            Value::Array(items.into_iter().map(json_to_value).collect())
+        }
         serde_json::Value::Object(map) => {
-            let d: HashMap<ValueKey, Value> = map.into_iter().map(|(k, v)| (ValueKey::Str(k), json_to_value(v))).collect();
+            let d: HashMap<ValueKey, Value> = map
+                .into_iter()
+                .map(|(k, v)| (ValueKey::Str(k), json_to_value(v)))
+                .collect();
             Value::Dict(d)
         }
     }
@@ -361,7 +374,11 @@ fn csv_stringify(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeEr
         let fields = array_arg(row, "io::csv_stringify", 0)?;
         let mut out_row = Vec::with_capacity(fields.len());
         for (c, f) in fields.iter().enumerate() {
-            out_row.push(array_string(f, "io::csv_stringify", &format!("row {r} field {c}"))?);
+            out_row.push(array_string(
+                f,
+                "io::csv_stringify",
+                &format!("row {r} field {c}"),
+            )?);
         }
         out_rows.push(out_row);
     }
@@ -393,7 +410,11 @@ fn write_csv(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError>
         let fields = array_arg(row, "io::write_csv", 1)?;
         let mut out_row = Vec::with_capacity(fields.len());
         for (c, f) in fields.iter().enumerate() {
-            out_row.push(array_string(f, "io::write_csv", &format!("row {r} field {c}"))?);
+            out_row.push(array_string(
+                f,
+                "io::write_csv",
+                &format!("row {r} field {c}"),
+            )?);
         }
         out_rows.push(out_row);
     }

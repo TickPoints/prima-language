@@ -75,8 +75,16 @@ mod tests {
         // First registration wins.
         register_doc(
             "String::to_upper",
-            MethodDoc { name: "to_upper".into(), sig: "x".into(), doc: None, defined_at: "y".into() },
+            MethodDoc {
+                name: "to_upper".into(),
+                sig: "x".into(),
+                doc: None,
+                defined_at: "y".into(),
+            },
         );
-        assert_eq!(get_doc("String::to_upper").unwrap().sig, "to_upper(self) -> Self");
+        assert_eq!(
+            get_doc("String::to_upper").unwrap().sig,
+            "to_upper(self) -> Self"
+        );
     }
 }

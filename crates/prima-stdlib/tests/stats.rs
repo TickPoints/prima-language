@@ -16,103 +16,242 @@ fn f64_of(v: Value) -> f64 {
 }
 
 fn approx(a: f64, b: f64, tol: f64) {
-    assert!(
-        (a - b).abs() <= tol,
-        "expected {a} ≈ {b} within {tol}",
-    );
+    assert!((a - b).abs() <= tol, "expected {a} ≈ {b} within {tol}",);
 }
 
 #[test]
 fn mean_of_three() {
-    approx(f64_of(eval("import stats;\nstats::mean([1.0, 2.0, 3.0])")), 2.0, 1e-9);
+    approx(
+        f64_of(eval("import stats;\nstats::mean([1.0, 2.0, 3.0])")),
+        2.0,
+        1e-9,
+    );
 }
 
 #[test]
 fn median_odd_and_even() {
-    approx(f64_of(eval("import stats;\nstats::median([3.0, 1.0, 2.0])")), 2.0, 1e-9);
-    approx(f64_of(eval("import stats;\nstats::median([1.0, 2.0, 3.0, 4.0])")), 2.5, 1e-9);
+    approx(
+        f64_of(eval("import stats;\nstats::median([3.0, 1.0, 2.0])")),
+        2.0,
+        1e-9,
+    );
+    approx(
+        f64_of(eval("import stats;\nstats::median([1.0, 2.0, 3.0, 4.0])")),
+        2.5,
+        1e-9,
+    );
 }
 
 #[test]
 fn sample_variance_and_std() {
-    approx(f64_of(eval("import stats;\nstats::variance([2.0, 4.0, 6.0])")), 4.0, 1e-9);
-    approx(f64_of(eval("import stats;\nstats::std([2.0, 4.0, 6.0])")), 2.0, 1e-9);
+    approx(
+        f64_of(eval("import stats;\nstats::variance([2.0, 4.0, 6.0])")),
+        4.0,
+        1e-9,
+    );
+    approx(
+        f64_of(eval("import stats;\nstats::std([2.0, 4.0, 6.0])")),
+        2.0,
+        1e-9,
+    );
 }
 
 #[test]
 fn quantile_interpolates_between_ranks() {
-    approx(f64_of(eval("import stats;\nstats::quantile([1.0, 2.0, 3.0, 4.0], 0.5)")), 2.5, 1e-9);
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::quantile([1.0, 2.0, 3.0, 4.0], 0.5)",
+        )),
+        2.5,
+        1e-9,
+    );
 }
 
 #[test]
 fn percentile_matches_quantile() {
-    approx(f64_of(eval("import stats;\nstats::percentile([1.0, 2.0, 3.0, 4.0], 50)")), 2.5, 1e-9);
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::percentile([1.0, 2.0, 3.0, 4.0], 50)",
+        )),
+        2.5,
+        1e-9,
+    );
 }
 
 #[test]
 fn range_and_extrema() {
-    approx(f64_of(eval("import stats;\nstats::range([3.0, 1.0, 4.0])")), 3.0, 1e-9);
-    approx(f64_of(eval("import stats;\nstats::min([3.0, 1.0, 4.0])")), 1.0, 1e-9);
-    approx(f64_of(eval("import stats;\nstats::max([3.0, 1.0, 4.0])")), 4.0, 1e-9);
+    approx(
+        f64_of(eval("import stats;\nstats::range([3.0, 1.0, 4.0])")),
+        3.0,
+        1e-9,
+    );
+    approx(
+        f64_of(eval("import stats;\nstats::min([3.0, 1.0, 4.0])")),
+        1.0,
+        1e-9,
+    );
+    approx(
+        f64_of(eval("import stats;\nstats::max([3.0, 1.0, 4.0])")),
+        4.0,
+        1e-9,
+    );
 }
 
 #[test]
 fn mode_most_frequent_and_lowest_on_ties() {
-    approx(f64_of(eval("import stats;\nstats::mode([1.0, 2.0, 2.0, 3.0])")), 2.0, 1e-9);
-    approx(f64_of(eval("import stats;\nstats::mode([1.0, 1.0, 2.0, 2.0])")), 1.0, 1e-9);
+    approx(
+        f64_of(eval("import stats;\nstats::mode([1.0, 2.0, 2.0, 3.0])")),
+        2.0,
+        1e-9,
+    );
+    approx(
+        f64_of(eval("import stats;\nstats::mode([1.0, 1.0, 2.0, 2.0])")),
+        1.0,
+        1e-9,
+    );
 }
 
 #[test]
 fn covariance_is_sample() {
-    approx(f64_of(eval("import stats;\nstats::cov([1.0, 2.0, 3.0], [2.0, 4.0, 6.0])")), 2.0, 1e-9);
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::cov([1.0, 2.0, 3.0], [2.0, 4.0, 6.0])",
+        )),
+        2.0,
+        1e-9,
+    );
 }
 
 #[test]
 fn pearson_correlation_of_perfectly_correlated_data() {
-    approx(f64_of(eval("import stats;\nstats::corr([1.0, 2.0, 3.0], [2.0, 4.0, 6.0])")), 1.0, 1e-9);
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::corr([1.0, 2.0, 3.0], [2.0, 4.0, 6.0])",
+        )),
+        1.0,
+        1e-9,
+    );
 }
 
 #[test]
 fn spearman_correlation_of_monotone_data() {
-    approx(f64_of(eval("import stats;\nstats::spearman([1.0, 2.0, 3.0], [2.0, 4.0, 6.0])")), 1.0, 1e-9);
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::spearman([1.0, 2.0, 3.0], [2.0, 4.0, 6.0])",
+        )),
+        1.0,
+        1e-9,
+    );
 }
 
 #[test]
 fn normal_pdf_at_mean() {
-    approx(f64_of(eval("import stats;\nstats::pdf(stats::Normal(0.0, 1.0), 0.0)")), 0.3989423, 1e-6);
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::pdf(stats::Normal(0.0, 1.0), 0.0)",
+        )),
+        0.3989423,
+        1e-6,
+    );
 }
 
 #[test]
 fn normal_cdf_at_mean() {
-    approx(f64_of(eval("import stats;\nstats::cdf(stats::Normal(0.0, 1.0), 0.0)")), 0.5, 1e-9);
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::cdf(stats::Normal(0.0, 1.0), 0.0)",
+        )),
+        0.5,
+        1e-9,
+    );
 }
 
 #[test]
 fn normal_quantile_median() {
-    approx(f64_of(eval("import stats;\nstats::quantile(stats::Normal(0.0, 1.0), 0.5)")), 0.0, 1e-9);
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::quantile(stats::Normal(0.0, 1.0), 0.5)",
+        )),
+        0.0,
+        1e-9,
+    );
 }
 
 #[test]
 fn uniform_pdf_cdf_quantile() {
-    approx(f64_of(eval("import stats;\nstats::pdf(stats::Uniform(0.0, 2.0), 1.0)")), 0.5, 1e-9);
-    approx(f64_of(eval("import stats;\nstats::cdf(stats::Uniform(0.0, 2.0), 1.0)")), 0.5, 1e-9);
-    approx(f64_of(eval("import stats;\nstats::quantile(stats::Uniform(0.0, 2.0), 0.25)")), 0.5, 1e-9);
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::pdf(stats::Uniform(0.0, 2.0), 1.0)",
+        )),
+        0.5,
+        1e-9,
+    );
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::cdf(stats::Uniform(0.0, 2.0), 1.0)",
+        )),
+        0.5,
+        1e-9,
+    );
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::quantile(stats::Uniform(0.0, 2.0), 0.25)",
+        )),
+        0.5,
+        1e-9,
+    );
 }
 
 #[test]
 fn exponential_pdf_cdf() {
-    approx(f64_of(eval("import stats;\nstats::pdf(stats::Exponential(1.0), 0.0)")), 1.0, 1e-9);
-    approx(f64_of(eval("import stats;\nstats::cdf(stats::Exponential(1.0), 0.0)")), 0.0, 1e-9);
-    approx(f64_of(eval("import stats;\nstats::cdf(stats::Exponential(1.0), 1.0)")), 1.0 - std::f64::consts::E.powf(-1.0), 1e-6);
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::pdf(stats::Exponential(1.0), 0.0)",
+        )),
+        1.0,
+        1e-9,
+    );
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::cdf(stats::Exponential(1.0), 0.0)",
+        )),
+        0.0,
+        1e-9,
+    );
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::cdf(stats::Exponential(1.0), 1.0)",
+        )),
+        1.0 - std::f64::consts::E.powf(-1.0),
+        1e-6,
+    );
 }
 
 #[test]
 fn binomial_pmf_and_cdf() {
     // P(X = 2) for Binomial(4, 0.5) = 6/16 = 0.375
-    approx(f64_of(eval("import stats;\nstats::pdf(stats::Binomial(4, 0.5), 2.0)")), 0.375, 1e-6);
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::pdf(stats::Binomial(4, 0.5), 2.0)",
+        )),
+        0.375,
+        1e-6,
+    );
     // P(X <= 2) = (1 + 4 + 6)/16 = 11/16 = 0.6875
-    approx(f64_of(eval("import stats;\nstats::cdf(stats::Binomial(4, 0.5), 2.0)")), 0.6875, 1e-6);
-    approx(f64_of(eval("import stats;\nstats::quantile(stats::Binomial(4, 0.5), 0.5)")), 2.0, 1e-9);
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::cdf(stats::Binomial(4, 0.5), 2.0)",
+        )),
+        0.6875,
+        1e-6,
+    );
+    approx(
+        f64_of(eval(
+            "import stats;\nstats::quantile(stats::Binomial(4, 0.5), 0.5)",
+        )),
+        2.0,
+        1e-9,
+    );
 }
 
 #[test]

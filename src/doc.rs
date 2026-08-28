@@ -27,7 +27,9 @@ pub fn run(path: Option<&Path>, output: Option<&Path>, stdlib: bool) -> ExitCode
         let path = match path {
             Some(p) => p,
             None => {
-                diagnostics::print_colored_error("`prima doc` needs a `.pra` file, or `--stdlib` for the built-in modules");
+                diagnostics::print_colored_error(
+                    "`prima doc` needs a `.pra` file, or `--stdlib` for the built-in modules",
+                );
                 return ExitCode::FAILURE;
             }
         };
@@ -99,7 +101,11 @@ fn render_program(title: &str, program: &Program) -> String {
 fn is_definition(stmt: &Stmt) -> bool {
     matches!(
         stmt,
-        Stmt::FnDef { .. } | Stmt::MathDef { .. } | Stmt::ClassDef { .. } | Stmt::Const { .. } | Stmt::Let { .. }
+        Stmt::FnDef { .. }
+            | Stmt::MathDef { .. }
+            | Stmt::ClassDef { .. }
+            | Stmt::Const { .. }
+            | Stmt::Let { .. }
     )
 }
 
@@ -124,7 +130,9 @@ fn render_definition(stmt: &Stmt, is_pub: bool) -> String {
     let prefix = if is_pub { "pub " } else { "" };
     let mut out = String::new();
     match stmt {
-        Stmt::FnDef { name, params, ret, .. } => {
+        Stmt::FnDef {
+            name, params, ret, ..
+        } => {
             out.push_str("## `");
             out.push_str(prefix);
             out.push_str("fn ");
@@ -133,7 +141,9 @@ fn render_definition(stmt: &Stmt, is_pub: bool) -> String {
             fmt::format_ret(ret, &mut out);
             out.push_str("`\n");
         }
-        Stmt::MathDef { name, params, ret, .. } => {
+        Stmt::MathDef {
+            name, params, ret, ..
+        } => {
             out.push_str("## `");
             out.push_str(prefix);
             out.push_str("let ");
@@ -172,7 +182,12 @@ fn render_definition(stmt: &Stmt, is_pub: bool) -> String {
                         }
                         out.push('\n');
                     }
-                    ClassMemberKind::Method { name: mname, params, ret, .. } => {
+                    ClassMemberKind::Method {
+                        name: mname,
+                        params,
+                        ret,
+                        ..
+                    } => {
                         out.push_str("- method `");
                         fmt::format_visibility(member.vis, &mut out);
                         out.push_str(&mname.value);

@@ -185,7 +185,11 @@ impl Builtin {
     pub fn is_pure(self) -> bool {
         !matches!(
             self,
-            Builtin::Print | Builtin::Println | Builtin::Input | Builtin::ReadLine | Builtin::Simplify
+            Builtin::Print
+                | Builtin::Println
+                | Builtin::Input
+                | Builtin::ReadLine
+                | Builtin::Simplify
         )
     }
 
@@ -295,7 +299,11 @@ mod tests {
             "Ok",
             "Err",
         ] {
-            assert_eq!(Builtin::from_name(name), Some(Builtin::Collapse(name)), "name = {name}");
+            assert_eq!(
+                Builtin::from_name(name),
+                Some(Builtin::Collapse(name)),
+                "name = {name}"
+            );
         }
     }
 }

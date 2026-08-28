@@ -8,10 +8,10 @@ use std::sync::Arc;
 use prima_core::expr_pool::ExprData;
 use prima_core::symbol::SymbolTable;
 use prima_core::{BuiltinSymbols, ExprPool, IndeterminateForm};
+use prima_jit::CompiledScalar;
 use prima_jit::bytecode::{Bytecode, Op};
 use prima_jit::compiler::dag_to_bytecode;
 use prima_jit::engine::compile_bytecode;
-use prima_jit::CompiledScalar;
 
 fn compile(bc: &Bytecode, arity: usize) -> Arc<CompiledScalar> {
     compile_bytecode(bc, arity).expect("bytecode compiles")
@@ -34,7 +34,13 @@ fn square_is_x_mul_x() {
 #[test]
 fn x_times_2_plus_x() {
     // (x*2) + x  —  at x = 5 that is 15.
-    let bc = Bytecode(vec![Op::Param(0), Op::Const(2.0), Op::Mul, Op::Param(0), Op::Add]);
+    let bc = Bytecode(vec![
+        Op::Param(0),
+        Op::Const(2.0),
+        Op::Mul,
+        Op::Param(0),
+        Op::Add,
+    ]);
     let f = compile(&bc, 1);
     assert_eq!(f.call(&[5.0]), 15.0);
     assert_eq!(f.call(&[0.0]), 0.0);
@@ -208,12 +214,22 @@ fn dag_sub2_div2() {
     let builtins = BuiltinSymbols::global();
     let x = pool.symbol(SymbolTable::global().intern("x"));
     // x - 1  via `sub2` → Add([x, -1])
-    let f = prima_jit::compile_scalar(&pool, builtins, pool.sub2(x, pool.integer(1)), &["x".into()])
-        .expect("x - 1 compiles");
+    let f = prima_jit::compile_scalar(
+        &pool,
+        builtins,
+        pool.sub2(x, pool.integer(1)),
+        &["x".into()],
+    )
+    .expect("x - 1 compiles");
     assert_eq!(f.call(&[10.0]), 9.0);
     // x / 2  via `div2` → Mul([1/2, x])
-    let f = prima_jit::compile_scalar(&pool, builtins, pool.div2(x, pool.integer(2)), &["x".into()])
-        .expect("x / 2 compiles");
+    let f = prima_jit::compile_scalar(
+        &pool,
+        builtins,
+        pool.div2(x, pool.integer(2)),
+        &["x".into()],
+    )
+    .expect("x / 2 compiles");
     assert_eq!(f.call(&[10.0]), 5.0);
     assert_eq!(f.call(&[-10.0]), -5.0);
 }
@@ -224,8 +240,7 @@ fn dag_builtin_constants() {
     let builtins = BuiltinSymbols::global();
     // π + e
     let expr = pool.add2(pool.symbol(builtins.pi), pool.symbol(builtins.e));
-    let f = prima_jit::compile_scalar(&pool, builtins, expr, &[])
-        .expect("pi + e compiles");
+    let f = prima_jit::compile_scalar(&pool, builtins, expr, &[]).expect("pi + e compiles");
     assert!(approx(f.call(&[]), PI + E, 1e-12));
     // τ
     let f = prima_jit::compile_scalar(&pool, builtins, pool.symbol(builtins.tau), &[])
@@ -240,8 +255,7 @@ fn dag_math_functions() {
     let x = pool.symbol(SymbolTable::global().intern("x"));
     // sqrt(x) with x = 9
     let expr = pool.apply(pool.symbol(builtins.sqrt), &[x]);
-    let f = prima_jit::compile_scalar(&pool, builtins, expr, &["x".into()])
-        .expect("sqrt");
+    let f = prima_jit::compile_scalar(&pool, builtins, expr, &["x".into()]).expect("sqrt");
     assert_eq!(f.call(&[9.0]), 3.0);
     // log/ln both mean natural log: ln(e) = 1, log(e) = 1
     let expr = pool.apply(pool.symbol(builtins.ln), &[x]);
@@ -301,8 +315,10 @@ fn concurrent_calls_share_code() {
     let f = compile(&bc, 1);
     let f1 = f.clone();
     let f2 = f.clone();
-    let thread_a = std::thread::spawn(move || (0..1000).map(|i| f1.call(&[i as f64])).collect::<Vec<_>>());
-    let thread_b = std::thread::spawn(move || (0..1000).map(|i| f2.call(&[i as f64])).collect::<Vec<_>>());
+    let thread_a =
+        std::thread::spawn(move || (0..1000).map(|i| f1.call(&[i as f64])).collect::<Vec<_>>());
+    let thread_b =
+        std::thread::spawn(move || (0..1000).map(|i| f2.call(&[i as f64])).collect::<Vec<_>>());
     let a = thread_a.join().expect("thread a");
     let b = thread_b.join().expect("thread b");
     for i in 0..1000usize {

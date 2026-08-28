@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use prima_core::Value;
 use prima_syntax::ast::{Annotation, Program, Stmt, Type};
 
-use crate::eval::{EnvRef, Evaluator};
 use crate::error::RuntimeError;
+use crate::eval::{EnvRef, Evaluator};
 
 /// A single validated `@c_api::extern` export: the pieces of a C prototype line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,7 +39,13 @@ fn collect_stmt_export(stmt: &Stmt, out: &mut Vec<CExtern>) {
         Stmt::Pub(inner) => inner.as_ref(),
         _ => return,
     };
-    if let Stmt::FnDef { name, params, ret, annotations, .. } = inner
+    if let Stmt::FnDef {
+        name,
+        params,
+        ret,
+        annotations,
+        ..
+    } = inner
         && annotations.contains(&Annotation::CApiExtern)
     {
         let params = params
@@ -53,8 +59,15 @@ fn collect_stmt_export(stmt: &Stmt, out: &mut Vec<CExtern>) {
                 Some((p.name.value.clone(), c))
             })
             .collect();
-        let ret = ret.as_ref().and_then(c_type).unwrap_or_else(|| "void".into());
-        out.push(CExtern { name: name.value.clone(), params, ret });
+        let ret = ret
+            .as_ref()
+            .and_then(c_type)
+            .unwrap_or_else(|| "void".into());
+        out.push(CExtern {
+            name: name.value.clone(),
+            params,
+            ret,
+        });
     }
 }
 
@@ -116,7 +129,11 @@ pub fn render_header(exports: &[CExtern]) -> String {
     s.push_str("#define PRIMA_EXPORT_H\n\n");
     s.push_str("#ifdef __cplusplus\nextern \"C\" {\n#endif\n");
     for e in exports {
-        let params: Vec<String> = e.params.iter().map(|(name, c)| format!("{c} {name}")).collect();
+        let params: Vec<String> = e
+            .params
+            .iter()
+            .map(|(name, c)| format!("{c} {name}"))
+            .collect();
         s.push_str(&format!("{} {}({});\n", e.ret, e.name, params.join(", ")));
     }
     s.push_str("\n#ifdef __cplusplus\n}\n#endif\n\n#endif /* PRIMA_EXPORT_H */\n");
@@ -132,7 +149,9 @@ mod tests {
     fn ty(src: &str) -> Type {
         let program = parse(&format!("let x: {src} = 0;")).unwrap();
         match &program.stmts[0] {
-            Stmt::Let { type_ann: Some(t), .. } => t.clone(),
+            Stmt::Let {
+                type_ann: Some(t), ..
+            } => t.clone(),
             _ => panic!("expected a type annotation"),
         }
     }
@@ -174,7 +193,11 @@ mod tests {
                 params: vec![("a".into(), "double".into()), ("b".into(), "double".into())],
                 ret: "double".into(),
             },
-            CExtern { name: "hello".into(), params: vec![("a".into(), "int".into())], ret: "void".into() },
+            CExtern {
+                name: "hello".into(),
+                params: vec![("a".into(), "int".into())],
+                ret: "void".into(),
+            },
         ];
         let expected = "#ifndef PRIMA_EXPORT_H\n#define PRIMA_EXPORT_H\n\n#ifdef __cplusplus\nextern \"C\" {\n#endif\ndouble add(double a, double b);\nvoid hello(int a);\n\n#ifdef __cplusplus\n}\n#endif\n\n#endif /* PRIMA_EXPORT_H */\n";
         assert_eq!(render_header(&exports), expected);
@@ -191,14 +214,18 @@ mod tests {
         assert_eq!(exports.len(), 1);
         assert_eq!(exports[0].name, "add");
         assert_eq!(exports[0].ret, "double");
-        assert_eq!(exports[0].params, vec![("a".into(), "double".into()), ("b".into(), "double".into())]);
+        assert_eq!(
+            exports[0].params,
+            vec![("a".into(), "double".into()), ("b".into(), "double".into())]
+        );
     }
 
     /// `call_file_export` evaluates a `.pra` module and invokes an exported function (spec §18.4).
     #[test]
     fn call_file_export_invokes_an_export() {
         use prima_core::{Number, Real};
-        let path = std::env::temp_dir().join(format!("prima_capi_export_test_{}.pra", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("prima_capi_export_test_{}.pra", std::process::id()));
         std::fs::write(
             &path,
             "@c_api::extern\npub fn add(a: c_api::double, b: c_api::double) -> c_api::double { return a + b; }\n",

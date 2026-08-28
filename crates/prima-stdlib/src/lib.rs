@@ -16,14 +16,20 @@ pub fn init() {
     prima_runtime::stdlib::register_module_source("stats", include_str!("modules/stats.pra"));
     prima_runtime::stdlib::register_module_source("io", include_str!("modules/io.pra"));
     prima_runtime::stdlib::register_module_source("plot", include_str!("modules/plot.pra"));
-    prima_runtime::stdlib::register_module_source("sys::path", include_str!("modules/sys_path.pra"));
+    prima_runtime::stdlib::register_module_source(
+        "sys::path",
+        include_str!("modules/sys_path.pra"),
+    );
     prima_runtime::stdlib::register_module_source("sys::env", include_str!("modules/sys_env.pra"));
     prima_runtime::stdlib::register_module_source("sys::os", include_str!("modules/sys_os.pra"));
     prima_runtime::stdlib::register_module_source("time", include_str!("modules/time.pra"));
     prima_runtime::stdlib::register_module_source("num", include_str!("modules/num.pra"));
     // `String` is a native runtime class, not a stdlib module, but registering its signature
     // module under `core::string` lets `prima doc --stdlib` list the class offline (spec §20).
-    prima_runtime::stdlib::register_module_source("core::string", include_str!("modules/string.pra"));
+    prima_runtime::stdlib::register_module_source(
+        "core::string",
+        include_str!("modules/string.pra"),
+    );
     // implementations
     linalg::register();
     stats::register();

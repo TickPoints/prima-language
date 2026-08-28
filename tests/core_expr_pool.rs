@@ -1,5 +1,5 @@
-use prima_core::expr_pool::{ExprData, ExprPool, ExprId};
 use prima_core::SymbolId;
+use prima_core::expr_pool::{ExprData, ExprId, ExprPool};
 
 #[test]
 fn interning_deduplicates() {

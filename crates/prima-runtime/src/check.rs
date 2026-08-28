@@ -2,9 +2,12 @@ use std::collections::HashMap;
 
 use crate::builtins::Builtin;
 use crate::capi::c_type;
-use prima_syntax::ast::{Annotation, BinOp, ClassMemberKind, CompKind, DocComment, Expr, ExprKind, ImportItem, ImportKind, Literal, MatchArm, Param, Pattern, Program, Spanned, Stmt, Type, UnOp};
-use prima_syntax::parse;
 use prima_syntax::Span;
+use prima_syntax::ast::{
+    Annotation, BinOp, ClassMemberKind, CompKind, DocComment, Expr, ExprKind, ImportItem,
+    ImportKind, Literal, MatchArm, Param, Pattern, Program, Spanned, Stmt, Type, UnOp,
+};
+use prima_syntax::parse;
 
 /// A statically decidable type error (located via `--> file:line:col` per spec §16.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,7 +57,13 @@ pub fn check_src(src: &str) -> Vec<TypeError> {
                 .iter()
                 .map(|e| {
                     let (line, column) = line_col(src, e.span.start);
-                    TypeError { line, column, span: e.span, message: e.message.clone(), notes: Vec::new() }
+                    TypeError {
+                        line,
+                        column,
+                        span: e.span,
+                        message: e.message.clone(),
+                        notes: Vec::new(),
+                    }
                 })
                 .collect();
         }
@@ -85,7 +94,9 @@ fn build_signature_table(program: &Program) -> HashMap<String, Vec<Signature>> {
             }
         };
         let module_key = segments.join("::");
-        let Some(src) = crate::stdlib::get_module_source(&module_key) else { continue };
+        let Some(src) = crate::stdlib::get_module_source(&module_key) else {
+            continue;
+        };
         // Embedded sources are ours and known-good; a parse failure just yields no signatures.
         let Ok(parsed) = parse(src) else { continue };
         // Display path of the module, e.g. `linalg` → `linalg.pra`, `sys::path` → `sys/path.pra`.
@@ -93,12 +104,25 @@ fn build_signature_table(program: &Program) -> HashMap<String, Vec<Signature>> {
         let mut sigs = Vec::new();
         for stmt in &parsed.stmts {
             let Stmt::Pub(inner) = stmt else { continue };
-            let Stmt::FnDef { name, params, ret, docs, span, .. } = inner.as_ref() else { continue };
+            let Stmt::FnDef {
+                name,
+                params,
+                ret,
+                docs,
+                span,
+                ..
+            } = inner.as_ref()
+            else {
+                continue;
+            };
             let param_types = params
                 .iter()
                 .map(|p| {
                     p.type_ann.clone().unwrap_or_else(|| {
-                        Type::User(Spanned { value: "Value".into(), span: p.name.span })
+                        Type::User(Spanned {
+                            value: "Value".into(),
+                            span: p.name.span,
+                        })
                     })
                 })
                 .collect();
@@ -114,13 +138,19 @@ fn build_signature_table(program: &Program) -> HashMap<String, Vec<Signature>> {
         }
         // A name may have multiple signatures (overloads, e.g. `stats::quantile`); keep them all.
         for sig in &sigs {
-            table.entry(format!("{module_key}::{}", sig.name)).or_default().push(sig.clone());
+            table
+                .entry(format!("{module_key}::{}", sig.name))
+                .or_default()
+                .push(sig.clone());
         }
         match &imp.kind {
             ImportKind::From { items, .. } => {
                 for sig in &sigs {
                     for item in items {
-                        if let ImportItem::Name { name: item_name, alias } = item
+                        if let ImportItem::Name {
+                            name: item_name,
+                            alias,
+                        } = item
                             && item_name.value == sig.name
                         {
                             // Bind exactly what the runtime binds (eval.rs `bind_imports`): the
@@ -136,7 +166,10 @@ fn build_signature_table(program: &Program) -> HashMap<String, Vec<Signature>> {
             ImportKind::Namespace { alias, .. } => {
                 if let Some(a) = alias {
                     for sig in &sigs {
-                        table.entry(format!("{}::{}", a.value, sig.name)).or_default().push(sig.clone());
+                        table
+                            .entry(format!("{}::{}", a.value, sig.name))
+                            .or_default()
+                            .push(sig.clone());
                     }
                 }
             }
@@ -147,19 +180,34 @@ fn build_signature_table(program: &Program) -> HashMap<String, Vec<Signature>> {
 
 /// Look up the signatures for a `Path` callee, mirroring the runtime's flattened module-item lookup
 /// (`eval.rs` `lookup_module_item_flat`): the joined segments first, then every module prefix.
-fn lookup_call_signature<'a>(segments: &[Spanned<String>], sigs: &'a HashMap<String, Vec<Signature>>) -> Option<&'a Vec<Signature>> {
+fn lookup_call_signature<'a>(
+    segments: &[Spanned<String>],
+    sigs: &'a HashMap<String, Vec<Signature>>,
+) -> Option<&'a Vec<Signature>> {
     if segments.is_empty() {
         return None;
     }
-    let joined = segments.iter().map(|s| s.value.as_str()).collect::<Vec<_>>().join("::");
+    let joined = segments
+        .iter()
+        .map(|s| s.value.as_str())
+        .collect::<Vec<_>>()
+        .join("::");
     if let Some(sig) = sigs.get(&joined) {
         return Some(sig);
     }
     for i in 1..segments.len() - 1 {
         let key = format!(
             "{}::{}",
-            segments[..i].iter().map(|s| s.value.as_str()).collect::<Vec<_>>().join("::"),
-            segments[i..].iter().map(|s| s.value.as_str()).collect::<Vec<_>>().join("::")
+            segments[..i]
+                .iter()
+                .map(|s| s.value.as_str())
+                .collect::<Vec<_>>()
+                .join("::"),
+            segments[i..]
+                .iter()
+                .map(|s| s.value.as_str())
+                .collect::<Vec<_>>()
+                .join("::")
         );
         if let Some(sig) = sigs.get(&key) {
             return Some(sig);
@@ -170,19 +218,34 @@ fn lookup_call_signature<'a>(segments: &[Spanned<String>], sigs: &'a HashMap<Str
 
 /// Whether a call matches one signature (spec §18.4): arity at most the param count (stdlib functions
 /// may have optional trailing args) and every provided argument assignable (unknown types never reject).
-fn signature_accepts(sig: &Signature, args: &[Expr], sigs: &HashMap<String, Vec<Signature>>) -> bool {
+fn signature_accepts(
+    sig: &Signature,
+    args: &[Expr],
+    sigs: &HashMap<String, Vec<Signature>>,
+) -> bool {
     if args.len() > sig.params.len() {
         return false;
     }
-    args.iter().enumerate().all(|(i, arg)| assignable(&sig.params[i], &infer(arg, sigs)))
+    args.iter()
+        .enumerate()
+        .all(|(i, arg)| assignable(&sig.params[i], &infer(arg, sigs)))
 }
 
 /// The definition note attached to an `E0050` error (spec §16.4): the rendered call signature plus
 /// the definition location and, when the signature module documents it, the `///` doc text.
 fn sig_note(name: &str, sig: &Signature) -> String {
-    let params = sig.params.iter().map(type_name).collect::<Vec<_>>().join(", ");
+    let params = sig
+        .params
+        .iter()
+        .map(type_name)
+        .collect::<Vec<_>>()
+        .join(", ");
     let mut note = match &sig.ret {
-        Some(t) => format!("function `{name}({params}) -> {}` defined at {}", type_name(t), sig.defined_at),
+        Some(t) => format!(
+            "function `{name}({params}) -> {}` defined at {}",
+            type_name(t),
+            sig.defined_at
+        ),
         None => format!("function `{name}({params})` defined at {}", sig.defined_at),
     };
     if let Some(docs) = &sig.docs {
@@ -205,11 +268,20 @@ fn check_call_signature(
     errors: &mut Vec<TypeError>,
     sigs: &HashMap<String, Vec<Signature>>,
 ) {
-    let Some(candidates) = lookup_call_signature(segments, sigs) else { return };
-    if candidates.iter().any(|sig| signature_accepts(sig, args, sigs)) {
+    let Some(candidates) = lookup_call_signature(segments, sigs) else {
+        return;
+    };
+    if candidates
+        .iter()
+        .any(|sig| signature_accepts(sig, args, sigs))
+    {
         return;
     }
-    let name = segments.iter().map(|s| s.value.as_str()).collect::<Vec<_>>().join("::");
+    let name = segments
+        .iter()
+        .map(|s| s.value.as_str())
+        .collect::<Vec<_>>()
+        .join("::");
     // Report against the best-fitting signature: the one with the most parameters that still covers
     // the given arity, else the first candidate (for the arity error).
     let chosen = candidates
@@ -223,7 +295,11 @@ fn check_call_signature(
             src,
             errors,
             call_span,
-            format!("function `{name}` expects {} argument(s), got {} (E0050)", chosen.params.len(), args.len()),
+            format!(
+                "function `{name}` expects {} argument(s), got {} (E0050)",
+                chosen.params.len(),
+                args.len()
+            ),
             sig_note(&name, chosen),
         );
         return;
@@ -235,7 +311,12 @@ fn check_call_signature(
                 src,
                 errors,
                 arg.span,
-                format!("argument {} of `{name}` expects {}, got {} (E0050)", i + 1, type_name(&chosen.params[i]), got),
+                format!(
+                    "argument {} of `{name}` expects {}, got {} (E0050)",
+                    i + 1,
+                    type_name(&chosen.params[i]),
+                    got
+                ),
                 sig_note(&name, chosen),
             );
             return;
@@ -256,7 +337,13 @@ fn collect_stmt_errors(
     sigs: &HashMap<String, Vec<Signature>>,
 ) {
     match stmt {
-        Stmt::Let { pat, type_ann, value, span, .. } => {
+        Stmt::Let {
+            pat,
+            type_ann,
+            value,
+            span,
+            ..
+        } => {
             // `let` rejects refutable patterns (spec §4.4 `E0053`).
             if pattern_is_refutable(pat) {
                 let (line, column) = line_col(src, span.start);
@@ -283,7 +370,9 @@ fn collect_stmt_errors(
             }
             collect_expr_errors(src, value, errors, ctx, sigs);
         }
-        Stmt::Const { type_ann: t, value, .. } => {
+        Stmt::Const {
+            type_ann: t, value, ..
+        } => {
             let inf = infer(value, sigs);
             if !annot_accepts(t, &inf) {
                 let (line, column) = line_col(src, value.span.start);
@@ -297,22 +386,50 @@ fn collect_stmt_errors(
             }
             collect_expr_errors(src, value, errors, ctx, sigs);
         }
-        Stmt::FnDef { name, params, ret, annotations, body, .. } => {
-            errors.extend(check_annotation_errors(src, name, params, ret, annotations, !body.stmts.is_empty(), is_pub));
+        Stmt::FnDef {
+            name,
+            params,
+            ret,
+            annotations,
+            body,
+            ..
+        } => {
+            errors.extend(check_annotation_errors(
+                src,
+                name,
+                params,
+                ret,
+                annotations,
+                !body.stmts.is_empty(),
+                is_pub,
+            ));
             let allow = matches!(ret, Some(Type::Result(..) | Type::Option(..)));
             collect_block_errors(src, body, errors, Ctx { allow_try: allow }, sigs);
         }
         Stmt::MathDef { body, .. } => {
             collect_expr_errors(src, body, errors, Ctx { allow_try: false }, sigs);
         }
-        Stmt::ClassDef { name, annotations, members, .. } => {
+        Stmt::ClassDef {
+            name,
+            annotations,
+            members,
+            ..
+        } => {
             // Only the builtin `String` class is meaningful, and it is implicit — never declared in
             // source — so any user `@builtin class` has no registered implementation (spec §18.4, E0055).
             if annotations.iter().any(|a| a.is_builtin()) && name.value != "String" {
-                push_err(src, errors, name.span, format!("unregistered `@builtin` class `{}` (E0055)", name.value));
+                push_err(
+                    src,
+                    errors,
+                    name.span,
+                    format!("unregistered `@builtin` class `{}` (E0055)", name.value),
+                );
             }
             for m in members {
-                if let ClassMemberKind::Method { ret, body: Some(b), .. } = &m.kind {
+                if let ClassMemberKind::Method {
+                    ret, body: Some(b), ..
+                } = &m.kind
+                {
                     let allow = matches!(ret, Some(Type::Result(..) | Type::Option(..)));
                     collect_block_errors(src, b, errors, Ctx { allow_try: allow }, sigs);
                 }
@@ -323,7 +440,9 @@ fn collect_stmt_errors(
                 collect_stmt_errors(src, m, errors, ctx, false, sigs);
             }
         }
-        Stmt::IfLet { value, then, else_, .. } => {
+        Stmt::IfLet {
+            value, then, else_, ..
+        } => {
             collect_expr_errors(src, value, errors, ctx, sigs);
             collect_block_errors(src, then, errors, ctx, sigs);
             if let Some(b) = else_ {
@@ -334,11 +453,19 @@ fn collect_stmt_errors(
             collect_expr_errors(src, value, errors, ctx, sigs);
             collect_block_errors(src, body, errors, ctx, sigs);
         }
-        Stmt::Match { scrutinee, arms, .. } => {
+        Stmt::Match {
+            scrutinee, arms, ..
+        } => {
             collect_expr_errors(src, scrutinee, errors, ctx, sigs);
             collect_arms_errors(src, arms, errors, ctx, sigs);
         }
-        Stmt::If { cond, then, elifs, else_, .. } => {
+        Stmt::If {
+            cond,
+            then,
+            elifs,
+            else_,
+            ..
+        } => {
             collect_expr_errors(src, cond, errors, ctx, sigs);
             collect_block_errors(src, then, errors, ctx, sigs);
             for (c, b) in elifs {
@@ -353,7 +480,12 @@ fn collect_stmt_errors(
             collect_expr_errors(src, cond, errors, ctx, sigs);
             collect_block_errors(src, body, errors, ctx, sigs);
         }
-        Stmt::For { range, step, body, .. } | Stmt::ParFor { range, step, body, .. } => {
+        Stmt::For {
+            range, step, body, ..
+        }
+        | Stmt::ParFor {
+            range, step, body, ..
+        } => {
             collect_expr_errors(src, &range.0, errors, ctx, sigs);
             collect_expr_errors(src, &range.1, errors, ctx, sigs);
             if let Some(s) = step {
@@ -381,13 +513,25 @@ fn collect_stmt_errors(
     }
 }
 
-fn collect_block_errors(src: &str, block: &prima_syntax::ast::Block, errors: &mut Vec<TypeError>, ctx: Ctx, sigs: &HashMap<String, Vec<Signature>>) {
+fn collect_block_errors(
+    src: &str,
+    block: &prima_syntax::ast::Block,
+    errors: &mut Vec<TypeError>,
+    ctx: Ctx,
+    sigs: &HashMap<String, Vec<Signature>>,
+) {
     for s in &block.stmts {
         collect_stmt_errors(src, s, errors, ctx, false, sigs);
     }
 }
 
-fn collect_arms_errors(src: &str, arms: &[MatchArm], errors: &mut Vec<TypeError>, ctx: Ctx, sigs: &HashMap<String, Vec<Signature>>) {
+fn collect_arms_errors(
+    src: &str,
+    arms: &[MatchArm],
+    errors: &mut Vec<TypeError>,
+    ctx: Ctx,
+    sigs: &HashMap<String, Vec<Signature>>,
+) {
     for arm in arms {
         if let Some(g) = &arm.guard {
             collect_expr_errors(src, g, errors, ctx, sigs);
@@ -410,33 +554,79 @@ fn check_annotation_errors(
     is_pub: bool,
 ) -> Vec<TypeError> {
     let mut errors = Vec::new();
-    if let Some(level) = annotations.iter().filter(|a| a.is_builtin()).map(|a| a.builtin_level()).max() {
+    if let Some(level) = annotations
+        .iter()
+        .filter(|a| a.is_builtin())
+        .map(|a| a.builtin_level())
+        .max()
+    {
         if level == 0 {
             if has_body {
-                push_err(src, &mut errors, name.span, "`@builtin` function must not have a body (E0056)".into());
+                push_err(
+                    src,
+                    &mut errors,
+                    name.span,
+                    "`@builtin` function must not have a body (E0056)".into(),
+                );
             } else if Builtin::from_name(&name.value).is_none() {
-                push_err(src, &mut errors, name.span, format!("unregistered `@builtin` function `{}` (E0055)", name.value));
+                push_err(
+                    src,
+                    &mut errors,
+                    name.span,
+                    format!("unregistered `@builtin` function `{}` (E0055)", name.value),
+                );
             }
         } else if !has_body {
-            push_err(src, &mut errors, name.span, format!("`@builtin(O{level})` function must have a body (E0056)"));
+            push_err(
+                src,
+                &mut errors,
+                name.span,
+                format!("`@builtin(O{level})` function must have a body (E0056)"),
+            );
         }
     }
     if annotations.contains(&Annotation::CApiExtern) {
         if !is_pub {
-            push_err(src, &mut errors, name.span, "`@c_api::extern` function must be `pub` (E0072)".into());
+            push_err(
+                src,
+                &mut errors,
+                name.span,
+                "`@c_api::extern` function must be `pub` (E0072)".into(),
+            );
         }
         for p in params {
             let ok = p.type_ann.as_ref().is_some_and(c_param_ok);
             if !ok {
-                let ty = p.type_ann.as_ref().map_or_else(|| p.name.value.clone(), type_display);
-                let sp = p.type_ann.as_ref().map_or(p.name.span, |t| type_span(t, p.name.span));
-                push_err(src, &mut errors, sp, format!("`@c_api::extern` parameter/return type `{ty}` is not C-compatible (E0071)"));
+                let ty = p
+                    .type_ann
+                    .as_ref()
+                    .map_or_else(|| p.name.value.clone(), type_display);
+                let sp = p
+                    .type_ann
+                    .as_ref()
+                    .map_or(p.name.span, |t| type_span(t, p.name.span));
+                push_err(
+                    src,
+                    &mut errors,
+                    sp,
+                    format!(
+                        "`@c_api::extern` parameter/return type `{ty}` is not C-compatible (E0071)"
+                    ),
+                );
             }
         }
         if let Some(t) = ret
             && c_type(t).is_none()
         {
-            push_err(src, &mut errors, type_span(t, name.span), format!("`@c_api::extern` parameter/return type `{}` is not C-compatible (E0071)", type_display(t)));
+            push_err(
+                src,
+                &mut errors,
+                type_span(t, name.span),
+                format!(
+                    "`@c_api::extern` parameter/return type `{}` is not C-compatible (E0071)",
+                    type_display(t)
+                ),
+            );
         }
     }
     errors
@@ -467,18 +657,42 @@ fn type_span(t: &Type, fallback: Span) -> Span {
 /// Push a located error, deriving line/column from the span (spec §16.4).
 fn push_err(src: &str, errors: &mut Vec<TypeError>, span: Span, message: String) {
     let (line, column) = line_col(src, span.start);
-    errors.push(TypeError { line, column, span, message, notes: Vec::new() });
+    errors.push(TypeError {
+        line,
+        column,
+        span,
+        message,
+        notes: Vec::new(),
+    });
 }
 
 /// Push a located error carrying a diagnostic note (spec §16.4).
-fn push_err_with_note(src: &str, errors: &mut Vec<TypeError>, span: Span, message: String, note: String) {
+fn push_err_with_note(
+    src: &str,
+    errors: &mut Vec<TypeError>,
+    span: Span,
+    message: String,
+    note: String,
+) {
     let (line, column) = line_col(src, span.start);
-    errors.push(TypeError { line, column, span, message, notes: vec![note] });
+    errors.push(TypeError {
+        line,
+        column,
+        span,
+        message,
+        notes: vec![note],
+    });
 }
 
 /// Descend an expression tree, flagging `?` outside a `Result`/`Option`-returning function (spec
 /// §16.3 `E0054`) and validating stdlib call sites against harvested signatures (spec §18.4).
-fn collect_expr_errors(src: &str, expr: &Expr, errors: &mut Vec<TypeError>, ctx: Ctx, sigs: &HashMap<String, Vec<Signature>>) {
+fn collect_expr_errors(
+    src: &str,
+    expr: &Expr,
+    errors: &mut Vec<TypeError>,
+    ctx: Ctx,
+    sigs: &HashMap<String, Vec<Signature>>,
+) {
     match &expr.kind {
         ExprKind::Try(inner) => {
             if !ctx.allow_try {
@@ -487,7 +701,9 @@ fn collect_expr_errors(src: &str, expr: &Expr, errors: &mut Vec<TypeError>, ctx:
                     line,
                     column,
                     span: expr.span,
-                    message: "`?` can only be used inside a function returning `Result`/`Option` (E0054)".into(),
+                    message:
+                        "`?` can only be used inside a function returning `Result`/`Option` (E0054)"
+                            .into(),
                     notes: Vec::new(),
                 });
             }
@@ -523,7 +739,9 @@ fn collect_expr_errors(src: &str, expr: &Expr, errors: &mut Vec<TypeError>, ctx:
             collect_expr_errors(src, base, errors, ctx, sigs);
             for item in &index.items {
                 match item {
-                    prima_syntax::ast::IndexItem::Elem(e) => collect_expr_errors(src, e, errors, ctx, sigs),
+                    prima_syntax::ast::IndexItem::Elem(e) => {
+                        collect_expr_errors(src, e, errors, ctx, sigs)
+                    }
                     prima_syntax::ast::IndexItem::Slice { start, end } => {
                         if let Some(s) = start {
                             collect_expr_errors(src, s, errors, ctx, sigs);
@@ -558,7 +776,9 @@ fn collect_expr_errors(src: &str, expr: &Expr, errors: &mut Vec<TypeError>, ctx:
                 collect_expr_errors(src, v, errors, ctx, sigs);
             }
         }
-        ExprKind::Comprehension { output, clauses, .. } => {
+        ExprKind::Comprehension {
+            output, clauses, ..
+        } => {
             collect_expr_errors(src, output, errors, ctx, sigs);
             for c in clauses {
                 match c {
@@ -647,7 +867,9 @@ fn infer(expr: &Expr, sigs: &HashMap<String, Vec<Signature>>) -> String {
                         "to_rational" => "Rational".into(),
                         "to_complex" => "Complex".into(),
                         "print" | "println" => "Nil".into(),
-                        name if name.starts_with("try_") || name.starts_with("checked_") => "Result".into(),
+                        name if name.starts_with("try_") || name.starts_with("checked_") => {
+                            "Result".into()
+                        }
                         "Some" | "None" => "Option".into(),
                         "Ok" | "Err" => "Result".into(),
                         "get" => "Option".into(),
@@ -658,7 +880,10 @@ fn infer(expr: &Expr, sigs: &HashMap<String, Vec<Signature>>) -> String {
             }
             "unknown".into()
         }
-        ExprKind::Unary { op: UnOp::Neg | UnOp::Pos, operand } => infer(operand, sigs),
+        ExprKind::Unary {
+            op: UnOp::Neg | UnOp::Pos,
+            operand,
+        } => infer(operand, sigs),
         ExprKind::Unary { op: UnOp::Not, .. } => "Bool".into(),
         ExprKind::Try(inner) => infer(inner, sigs),
         ExprKind::Binary { op, lhs, rhs } => match op {
@@ -851,7 +1076,10 @@ fn type_name(t: &Type) -> String {
         Type::Char => "Char".into(),
         Type::Array(inner) => format!("Array<{}>", type_name(inner)),
         Type::Matrix(inner) => format!("Matrix<{}>", type_name(inner)),
-        Type::Tuple(ts) => format!("Tuple<{}>", ts.iter().map(type_name).collect::<Vec<_>>().join(", ")),
+        Type::Tuple(ts) => format!(
+            "Tuple<{}>",
+            ts.iter().map(type_name).collect::<Vec<_>>().join(", ")
+        ),
         Type::Option(inner) => format!("Option<{}>", type_name(inner)),
         Type::Result(a, b) => format!("Result<{}, {}>", type_name(a), type_name(b)),
         Type::Fn { params, ret } => format!(
@@ -954,11 +1182,15 @@ mod tests {
             "note should mention the definition location, notes: {notes:?}"
         );
         assert!(
-            notes.iter().any(|n| n.contains("inverse(Matrix<F64>) -> Matrix<F64>")),
+            notes
+                .iter()
+                .any(|n| n.contains("inverse(Matrix<F64>) -> Matrix<F64>")),
             "note should carry the rendered signature, notes: {notes:?}"
         );
         assert!(
-            notes.iter().any(|n| n.contains("Compute the inverse of a square matrix.")),
+            notes
+                .iter()
+                .any(|n| n.contains("Compute the inverse of a square matrix.")),
             "note should carry the `///` doc text, notes: {notes:?}"
         );
     }
@@ -1012,7 +1244,12 @@ mod tests {
 
     #[test]
     fn try_operator_allowed_in_result_fn() {
-        assert!(check_src("fn f() -> Result<F64, Error> {\n    let v = try_f64(\"a\")?;\n    return Ok(v);\n}").is_empty());
+        assert!(
+            check_src(
+                "fn f() -> Result<F64, Error> {\n    let v = try_f64(\"a\")?;\n    return Ok(v);\n}"
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -1070,15 +1307,30 @@ mod tests {
 
     #[test]
     fn assignable_wildcards_and_collections() {
-        let value = Type::User(Spanned { value: "Value".into(), span: Span::new(0, 0) });
+        let value = Type::User(Spanned {
+            value: "Value".into(),
+            span: Span::new(0, 0),
+        });
         assert!(assignable(&value, "anything"));
         assert!(assignable(&value, "unknown"));
         assert!(assignable(&Type::String, "unknown"));
         assert!(assignable(&Type::Array(Box::new(Type::F64)), "array"));
-        assert!(assignable(&Type::Array(Box::new(Type::F64)), "Array<Integer>"));
-        assert!(!assignable(&Type::Array(Box::new(Type::String)), "Array<Integer>"));
-        assert!(assignable(&Type::Matrix(Box::new(Type::F64)), "Array<Array<Integer>>"));
-        assert!(!assignable(&Type::Matrix(Box::new(Type::F64)), "Array<Integer>"));
+        assert!(assignable(
+            &Type::Array(Box::new(Type::F64)),
+            "Array<Integer>"
+        ));
+        assert!(!assignable(
+            &Type::Array(Box::new(Type::String)),
+            "Array<Integer>"
+        ));
+        assert!(assignable(
+            &Type::Matrix(Box::new(Type::F64)),
+            "Array<Array<Integer>>"
+        ));
+        assert!(!assignable(
+            &Type::Matrix(Box::new(Type::F64)),
+            "Array<Integer>"
+        ));
         assert!(assignable(&Type::Option(Box::new(Type::Integer)), "option"));
     }
 }

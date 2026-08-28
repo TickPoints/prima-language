@@ -13,19 +13,26 @@ fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
     if args.len() == n {
         Ok(())
     } else {
-        Err(RuntimeError::Message(format!("`{fname}` expects {n} argument(s), got {}", args.len())))
+        Err(RuntimeError::Message(format!(
+            "`{fname}` expects {n} argument(s), got {}",
+            args.len()
+        )))
     }
 }
 
 fn int_arg(args: &[Value], i: usize, fname: &str) -> Result<BigInt, RuntimeError> {
     match args.get(i) {
         Some(Value::Number(n)) => n.as_bigint().ok_or_else(|| {
-            RuntimeError::Type(format!("`{fname}` argument {i} must be an integer, got {n}"))
+            RuntimeError::Type(format!(
+                "`{fname}` argument {i} must be an integer, got {n}"
+            ))
         }),
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be an integer, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!("`{fname}` missing argument {i}"))),
+        None => Err(RuntimeError::Message(format!(
+            "`{fname}` missing argument {i}"
+        ))),
     }
 }
 
@@ -35,7 +42,9 @@ fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeEr
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a string, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!("`{fname}` missing argument {i}"))),
+        None => Err(RuntimeError::Message(format!(
+            "`{fname}` missing argument {i}"
+        ))),
     }
 }
 
@@ -43,11 +52,19 @@ fn radix_arg(args: &[Value], i: usize, fname: &str) -> Result<u32, RuntimeError>
     match args.get(i) {
         Some(Value::Number(n)) => match n.as_i64() {
             Some(r) if (2..=36).contains(&r) => Ok(r as u32),
-            Some(r) => Err(RuntimeError::Message(format!("`{fname}` radix must be in 2..=36, got {r}"))),
-            None => Err(RuntimeError::Type(format!("`{fname}` radix must be an integer, got {n}"))),
+            Some(r) => Err(RuntimeError::Message(format!(
+                "`{fname}` radix must be in 2..=36, got {r}"
+            ))),
+            None => Err(RuntimeError::Type(format!(
+                "`{fname}` radix must be an integer, got {n}"
+            ))),
         },
-        Some(other) => Err(RuntimeError::Type(format!("`{fname}` radix must be an integer, got {other:?}"))),
-        None => Err(RuntimeError::Message(format!("`{fname}` missing argument {i}"))),
+        Some(other) => Err(RuntimeError::Type(format!(
+            "`{fname}` radix must be an integer, got {other:?}"
+        ))),
+        None => Err(RuntimeError::Message(format!(
+            "`{fname}` missing argument {i}"
+        ))),
     }
 }
 
@@ -71,7 +88,9 @@ fn fibonacci(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError>
     arity(args, 1, "num::fibonacci")?;
     let n = int_arg(args, 0, "num::fibonacci")?;
     if n < BigInt::from(0) {
-        return Err(RuntimeError::Message("num::fibonacci expects a non-negative integer".into()));
+        return Err(RuntimeError::Message(
+            "num::fibonacci expects a non-negative integer".into(),
+        ));
     }
     let mut a = BigInt::from(0);
     let mut b = BigInt::from(1);
@@ -121,7 +140,9 @@ fn random_integer(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeE
     let a = int_arg(args, 0, "num::random_integer")?;
     let b = int_arg(args, 1, "num::random_integer")?;
     if a > b {
-        return Err(RuntimeError::Message("`num::random_integer` requires a <= b".into()));
+        return Err(RuntimeError::Message(
+            "`num::random_integer` requires a <= b".into(),
+        ));
     }
     let range = &b - &a + BigInt::from(1);
     let offset = BigInt::from(next_u64()) % &range;
@@ -140,8 +161,12 @@ fn from_base(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError>
     let s = string_arg(args, 0, "num::from_base")?;
     let radix = radix_arg(args, 1, "num::from_base")?;
     match parse_base(&s, radix) {
-        Some(v) => Ok(Value::Result(Ok(Box::new(Value::Number(Number::Integer(v)))))),
-        None => Ok(Value::Result(Err(format!("cannot parse `{s}` in base {radix}")))),
+        Some(v) => Ok(Value::Result(Ok(Box::new(Value::Number(Number::Integer(
+            v,
+        )))))),
+        None => Ok(Value::Result(Err(format!(
+            "cannot parse `{s}` in base {radix}"
+        )))),
     }
 }
 
@@ -251,7 +276,11 @@ fn next_u64() -> u64 {
             .unwrap_or(0x9E37_79B9_7F4A_7C15)
             ^ ((std::process::id() as u64) << 32)
             ^ PRNG_SEED_COUNTER.fetch_add(1, Ordering::Relaxed);
-        x = if seed == 0 { 0x9E37_79B9_7F4A_7C15 } else { seed };
+        x = if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        };
     }
     x ^= x << 13;
     x ^= x >> 7;

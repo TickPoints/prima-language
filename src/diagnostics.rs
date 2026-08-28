@@ -10,15 +10,20 @@ use std::path::Path;
 
 use codespan_reporting::diagnostic::{Diagnostic, Label, Severity};
 use codespan_reporting::files::SimpleFile;
-use codespan_reporting::term::termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
-use codespan_reporting::term::{emit_to_write_style, Chars, Config};
+use codespan_reporting::term::termcolor::{
+    Color, ColorChoice, ColorSpec, StandardStream, WriteColor,
+};
+use codespan_reporting::term::{Chars, Config, emit_to_write_style};
 use prima_runtime::check::TypeError;
 use prima_runtime::error::RuntimeError;
 use prima_syntax::error::{SyntaxError, SyntaxWarning};
 
 /// rustc-style rendering (`--> file:line:col`, spec §16.4).
 fn term_config() -> Config {
-    Config { chars: Chars::ascii(), ..Config::default() }
+    Config {
+        chars: Chars::ascii(),
+        ..Config::default()
+    }
 }
 
 /// Render a full diagnostic: `<severity>[<code>]: <message>` header (code optional),
@@ -47,7 +52,8 @@ fn emit(
     if !notes.is_empty() {
         diagnostic = diagnostic.with_notes(notes);
     }
-    let buffer_writer = codespan_reporting::term::termcolor::BufferWriter::stderr(ColorChoice::Auto);
+    let buffer_writer =
+        codespan_reporting::term::termcolor::BufferWriter::stderr(ColorChoice::Auto);
     let mut buffer = buffer_writer.buffer();
     let config = term_config();
     let _ = emit_to_write_style(&mut buffer, &config, &files, &diagnostic);
@@ -69,7 +75,16 @@ pub fn print_colored_error(message: &str) {
 /// Report collected parse errors (spec §16.4 diagnostic format).
 pub fn report_syntax_errors(file: &Path, source: &str, errors: &[SyntaxError]) {
     for e in errors {
-        emit(file, source, Severity::Error, None, e.message.clone(), Some((e.span.start, e.span.end)), Vec::new(), None);
+        emit(
+            file,
+            source,
+            Severity::Error,
+            None,
+            e.message.clone(),
+            Some((e.span.start, e.span.end)),
+            Vec::new(),
+            None,
+        );
     }
 }
 
@@ -81,7 +96,16 @@ pub fn report_type_errors(file: &Path, source: &str, errors: &[TypeError]) {
         if e.message.contains("Expr") {
             notes.push("help: collapse the expression explicitly, e.g. `to_f64(...)`".into());
         }
-        emit(file, source, Severity::Error, None, e.message.clone(), Some((e.span.start, e.span.end)), notes, None);
+        emit(
+            file,
+            source,
+            Severity::Error,
+            None,
+            e.message.clone(),
+            Some((e.span.start, e.span.end)),
+            notes,
+            None,
+        );
     }
 }
 
@@ -89,7 +113,16 @@ pub fn report_type_errors(file: &Path, source: &str, errors: &[TypeError]) {
 /// do not affect the exit code; `prima check --deny W####` promotes a subset to errors.
 pub fn report_warnings(file: &Path, source: &str, warnings: &[SyntaxWarning]) {
     for w in warnings {
-        emit(file, source, Severity::Warning, Some(w.code), w.message.clone(), Some((w.span.start, w.span.end)), Vec::new(), None);
+        emit(
+            file,
+            source,
+            Severity::Warning,
+            Some(w.code),
+            w.message.clone(),
+            Some((w.span.start, w.span.end)),
+            Vec::new(),
+            None,
+        );
     }
 }
 
@@ -104,7 +137,10 @@ pub fn report_denied_warnings(file: &Path, source: &str, warnings: &[SyntaxWarni
             Some(w.code),
             w.message.clone(),
             Some((w.span.start, w.span.end)),
-            vec![format!("help: `{}` is denied by `--deny` and promoted to an error", w.code)],
+            vec![format!(
+                "help: `{}` is denied by `--deny` and promoted to an error",
+                w.code
+            )],
             None,
         );
     }
@@ -125,7 +161,16 @@ pub fn report_runtime_error(file: &Path, source: &str, e: &RuntimeError) {
     let help = e.help();
     match e.location() {
         Some(span) if (span.end as usize) <= source.len() => {
-            emit(file, source, Severity::Error, None, e.to_string(), Some((span.start, span.end)), notes, help.as_deref());
+            emit(
+                file,
+                source,
+                Severity::Error,
+                None,
+                e.to_string(),
+                Some((span.start, span.end)),
+                notes,
+                help.as_deref(),
+            );
         }
         _ => {
             print_colored_error(&e.to_string());

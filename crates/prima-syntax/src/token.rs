@@ -19,7 +19,11 @@ pub enum TokenKind {
     /// String literal (spec §3/§18.1): the final text plus the source markers `raw`/`single`
     /// (`r"..."` raw, `'...'` single-quoted). A `'...'` literal whose content is a single
     /// character is lexed as `Char`, not `Str` (spec appendix A `char` vs `string`).
-    Str { value: String, raw: bool, single: bool },
+    Str {
+        value: String,
+        raw: bool,
+        single: bool,
+    },
     Char(char),
     TexStr(String),
     /// f-string literal (spec §18.1): literal segments plus `{expr}` interpolations whose
@@ -27,7 +31,10 @@ pub enum TokenKind {
     FStr(Vec<FStringToken>),
     /// Doc comment (spec §4.1): the text after the `///`/`//!` marker (one optional leading
     /// space stripped). `module` distinguishes `//!` (module docs, top of file) from `///`.
-    Doc { text: String, module: bool },
+    Doc {
+        text: String,
+        module: bool,
+    },
 
     KwLet,
     KwMut,
@@ -123,7 +130,10 @@ pub enum FStringToken {
     /// backslash escapes are already resolved.
     Lit(String),
     /// `{expr}` (optionally `{expr:spec}`): the expression body token stream plus the raw `:spec` text.
-    Interp { expr: Vec<Token>, spec: Option<String> },
+    Interp {
+        expr: Vec<Token>,
+        spec: Option<String>,
+    },
 }
 
 pub fn describe(kind: &TokenKind) -> String {
@@ -140,7 +150,9 @@ pub fn describe(kind: &TokenKind) -> String {
             format!("`{prefix}{delim}{value}{delim}`")
         }
         TokenKind::FStr(_) => "an f-string literal".into(),
-        TokenKind::Doc { text, module } => format!("{}`{text}`", if *module { "//! " } else { "/// " }),
+        TokenKind::Doc { text, module } => {
+            format!("{}`{text}`", if *module { "//! " } else { "/// " })
+        }
         TokenKind::Char(c) => format!("`'{c}'`"),
         TokenKind::KwLet => "`let`".into(),
         TokenKind::KwMut => "`mut`".into(),

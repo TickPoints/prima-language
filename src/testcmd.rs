@@ -56,7 +56,11 @@ pub fn run(dir: &Path) -> ExitCode {
         }
     }
     println!("{passed} passed, {failed} failed, {skipped} skipped");
-    if failed > 0 { ExitCode::FAILURE } else { ExitCode::SUCCESS }
+    if failed > 0 {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 /// Recursively collect `*.pra` files under `dir`, sorted by relative path.

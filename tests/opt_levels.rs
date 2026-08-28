@@ -61,7 +61,10 @@ fn simplify_level_controls_symbolic_depth() {
     let level2 = run_src("config { simplify_level := 2 }\nprintln(tex\"\\sin(0)\");\n");
     let level0 = run_src("config { simplify_level := 0 }\nprintln(tex\"\\sin(0)\");\n");
     assert_eq!(level2.trim(), "0");
-    assert!(level0.contains("\\sin"), "expected unreduced call, got: {level0:?}");
+    assert!(
+        level0.contains("\\sin"),
+        "expected unreduced call, got: {level0:?}"
+    );
 }
 
 #[test]

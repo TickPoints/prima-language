@@ -34,13 +34,18 @@ fn layered_fibonacci_small_values() {
     assert_eq!(fib_int(&eval_at("O0", "import num;\nnum::fibonacci(0)")), 0);
     assert_eq!(fib_int(&eval_at("O1", "import num;\nnum::fibonacci(1)")), 1);
     assert_eq!(fib_int(&eval_at("O1", "import num;\nnum::fibonacci(6)")), 8);
-    assert_eq!(fib_int(&eval_at("O3", "import num;\nnum::fibonacci(15)")), 610);
+    assert_eq!(
+        fib_int(&eval_at("O3", "import num;\nnum::fibonacci(15)")),
+        610
+    );
 }
 
 #[test]
 fn builtin_o0_signature_only_requires_registered_impl() {
     // A bare `@builtin` (O0) at an unregistered name errors with E0055 (spec §18.4).
     prima_stdlib::init();
-    let err = Evaluator::new().eval_value("@builtin\npub fn not_a_real_builtin() -> Integer;").unwrap_err();
+    let err = Evaluator::new()
+        .eval_value("@builtin\npub fn not_a_real_builtin() -> Integer;")
+        .unwrap_err();
     assert!(err.to_string().contains("E0055"), "got: {err}");
 }

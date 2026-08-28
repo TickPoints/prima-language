@@ -60,19 +60,39 @@ fn is_vectorizable(op: BinOp) -> bool {
 /// Try a SIMD elementwise binary op over two dense `F64` arrays (spec §10.2, tier `O3`).
 /// Returns `None` when the inputs are not a straightforward dense-`F64` case.
 pub fn try_f64x4_arrays(op: BinOp, a: &[Number], b: &[Number]) -> Option<Vec<Number>> {
-    if a.is_empty() || b.len() != a.len() || a.len() < LANES || !is_dense_f64(a) || !is_dense_f64(b) || !is_vectorizable(op) {
+    if a.is_empty()
+        || b.len() != a.len()
+        || a.len() < LANES
+        || !is_dense_f64(a)
+        || !is_dense_f64(b)
+        || !is_vectorizable(op)
+    {
         return None;
     }
     let mut out = Vec::with_capacity(a.len());
     let mut i = 0;
     while i + LANES <= a.len() {
-        let va = f64x4::from([lane_value(&a[i]), lane_value(&a[i + 1]), lane_value(&a[i + 2]), lane_value(&a[i + 3])]);
-        let vb = f64x4::from([lane_value(&b[i]), lane_value(&b[i + 1]), lane_value(&b[i + 2]), lane_value(&b[i + 3])]);
+        let va = f64x4::from([
+            lane_value(&a[i]),
+            lane_value(&a[i + 1]),
+            lane_value(&a[i + 2]),
+            lane_value(&a[i + 3]),
+        ]);
+        let vb = f64x4::from([
+            lane_value(&b[i]),
+            lane_value(&b[i + 1]),
+            lane_value(&b[i + 2]),
+            lane_value(&b[i + 3]),
+        ]);
         push_lanes(binary_vec(op, va, vb), &mut out);
         i += LANES;
     }
     for (x, y) in a[i..].iter().zip(b[i..].iter()) {
-        out.push(Number::Real(Real::F64(scalar_binary(op, lane_value(x), lane_value(y)))));
+        out.push(Number::Real(Real::F64(scalar_binary(
+            op,
+            lane_value(x),
+            lane_value(y),
+        ))));
     }
     Some(out)
 }
@@ -80,14 +100,24 @@ pub fn try_f64x4_arrays(op: BinOp, a: &[Number], b: &[Number]) -> Option<Vec<Num
 /// Try a SIMD elementwise binary op broadcasting a dense-`F64` scalar across a dense-`F64` array
 /// (`array ⊕ scalar`; spec §11.4).
 pub fn try_f64x4_scalar(op: BinOp, arr: &[Number], scalar: &Number) -> Option<Vec<Number>> {
-    if arr.is_empty() || arr.len() < LANES || !is_dense_f64(arr) || !matches!(scalar, Number::Real(Real::F64(_))) || !is_vectorizable(op) {
+    if arr.is_empty()
+        || arr.len() < LANES
+        || !is_dense_f64(arr)
+        || !matches!(scalar, Number::Real(Real::F64(_)))
+        || !is_vectorizable(op)
+    {
         return None;
     }
     let s = lane_value(scalar);
     let mut out = Vec::with_capacity(arr.len());
     let mut i = 0;
     while i + LANES <= arr.len() {
-        let va = f64x4::from([lane_value(&arr[i]), lane_value(&arr[i + 1]), lane_value(&arr[i + 2]), lane_value(&arr[i + 3])]);
+        let va = f64x4::from([
+            lane_value(&arr[i]),
+            lane_value(&arr[i + 1]),
+            lane_value(&arr[i + 2]),
+            lane_value(&arr[i + 3]),
+        ]);
         push_lanes(binary_vec(op, va, f64x4::splat(s)), &mut out);
         i += LANES;
     }
@@ -100,14 +130,24 @@ pub fn try_f64x4_scalar(op: BinOp, arr: &[Number], scalar: &Number) -> Option<Ve
 /// Try a SIMD elementwise binary op broadcasting a dense-`F64` scalar to the LEFT of an array
 /// (`scalar ⊕ array`; spec §11.4).
 pub fn try_f64x4_scalar_left(op: BinOp, scalar: &Number, arr: &[Number]) -> Option<Vec<Number>> {
-    if arr.is_empty() || arr.len() < LANES || !is_dense_f64(arr) || !matches!(scalar, Number::Real(Real::F64(_))) || !is_vectorizable(op) {
+    if arr.is_empty()
+        || arr.len() < LANES
+        || !is_dense_f64(arr)
+        || !matches!(scalar, Number::Real(Real::F64(_)))
+        || !is_vectorizable(op)
+    {
         return None;
     }
     let s = lane_value(scalar);
     let mut out = Vec::with_capacity(arr.len());
     let mut i = 0;
     while i + LANES <= arr.len() {
-        let va = f64x4::from([lane_value(&arr[i]), lane_value(&arr[i + 1]), lane_value(&arr[i + 2]), lane_value(&arr[i + 3])]);
+        let va = f64x4::from([
+            lane_value(&arr[i]),
+            lane_value(&arr[i + 1]),
+            lane_value(&arr[i + 2]),
+            lane_value(&arr[i + 3]),
+        ]);
         push_lanes(binary_scalar_left(op, f64x4::splat(s), va), &mut out);
         i += LANES;
     }
@@ -160,7 +200,11 @@ mod tests {
         let b = f64s(&[-1.0, 2.5, 0.0, 4.0, 5.0, -6.0, 1.0, 8.0]);
         for op in [BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Div] {
             let got = try_f64x4_arrays(op, &a, &b).expect("dense f64 arrays vectorize");
-            let expect = scalar_ref(op, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], &[-1.0, 2.5, 0.0, 4.0, 5.0, -6.0, 1.0, 8.0]);
+            let expect = scalar_ref(
+                op,
+                &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+                &[-1.0, 2.5, 0.0, 4.0, 5.0, -6.0, 1.0, 8.0],
+            );
             for (g, e) in got.iter().zip(expect.iter()) {
                 assert_eq!(lane_value(g), *e, "op {op:?}");
             }
@@ -189,7 +233,12 @@ mod tests {
         let a = f64s(&[1.0, 2.0, 3.0]);
         let b = f64s(&[1.0, 2.0, 3.0]);
         assert!(try_f64x4_arrays(BinOp::Add, &a, &b).is_none());
-        let mixed = vec![Number::from(1), Number::Real(Real::F64(2.0)), Number::Real(Real::F64(3.0)), Number::Real(Real::F64(4.0))];
+        let mixed = vec![
+            Number::from(1),
+            Number::Real(Real::F64(2.0)),
+            Number::Real(Real::F64(3.0)),
+            Number::Real(Real::F64(4.0)),
+        ];
         let dense = f64s(&[1.0, 2.0, 3.0, 4.0]);
         assert!(try_f64x4_arrays(BinOp::Add, &mixed, &dense).is_none());
         assert!(try_f64x4_arrays(BinOp::Pow, &dense, &dense).is_none());
