@@ -268,7 +268,7 @@ fn to_rational(name: &str, n: &Number) -> Result<Value, RuntimeError> {
 }
 
 /// `to_bigfloat` (spec §9.2) is a degenerate implementation that preserves precision: the number is returned unchanged (exact values are kept, `Real` stays f64).
-/// Arbitrary-precision floats (BigFloat) are deferred to a later phase.
+/// Arbitrary-precision floats (BigFloat) are deferred to a later release.
 fn to_bigfloat(n: &Number) -> Result<Value, RuntimeError> {
     Ok(Value::Number(n.clone()))
 }

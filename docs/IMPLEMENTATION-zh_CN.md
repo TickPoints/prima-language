@@ -462,9 +462,9 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 ---
 
-## 5. 实施路线图（Phase 0 → 5）
+## 5. 实施路线图（Phase 0 → 12）
 
-每个 Phase 结束都有可运行的验收命令。Phase 0–2 已按 v1.x 落地；v2.0 变更分布在各 Phase 的增量任务中，见各 Phase 的「v2.0 增量」小节。
+每个 Phase 结束都有可运行的验收命令。Phase 0–9 已全部落地（落地记录见各 Phase 末尾「落地」块）；Phase 10–12 为规划中。Phase 0–2 已按 v1.x 落地；v2.0 变更分布在各 Phase 的增量任务中，见各 Phase 的「v2.0 增量」小节。
 
 ### Phase 0：工程骨架 + 前端（syntax crate）
 
