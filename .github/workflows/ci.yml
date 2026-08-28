@@ -1,5 +1,6 @@
-# CI pipeline: lint and test on every push to main/dev and every PR.
+# CI pipeline: format, lint, and test on every push to main/dev and every PR.
 #
+# - fmt:     `cargo fmt --all --check` (formatting must be canonical).
 # - clippy:  `cargo clippy --workspace --all-targets -- -D warnings` (zero warnings).
 # - test:    `cargo test --workspace` on Linux and Windows (insta snapshots,
 #            assert_cmd CLI tests, proptest, stdlib integration tests).
@@ -22,6 +23,18 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt --all --check
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest
@@ -36,7 +49,7 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
-    needs: clippy
+    needs: [fmt, clippy]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
