@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use prima_core::Value;
-use prima_runtime::stdlib::register_impl;
+use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
@@ -31,21 +31,21 @@ fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeEr
 /// `sys::path::<name>` / `sys::env::<name>` / `sys::os::<name>` key (spec §18.4).
 pub fn register() {
     // sys::path
-    register_impl("sys::path::join", path_join);
-    register_impl("sys::path::file_name", path_file_name);
-    register_impl("sys::path::extension", path_extension);
-    register_impl("sys::path::parent", path_parent);
-    register_impl("sys::path::is_absolute", path_is_absolute);
-    register_impl("sys::path::canonicalize", path_canonicalize);
+    builtin!("sys::path::join", path_join);
+    builtin!("sys::path::file_name", path_file_name);
+    builtin!("sys::path::extension", path_extension);
+    builtin!("sys::path::parent", path_parent);
+    builtin!("sys::path::is_absolute", path_is_absolute);
+    builtin!("sys::path::canonicalize", path_canonicalize);
     // sys::env
-    register_impl("sys::env::home_dir", env_home_dir);
-    register_impl("sys::env::get", env_get);
-    register_impl("sys::env::args", env_args);
-    register_impl("sys::env::current_dir", env_current_dir);
+    builtin!("sys::env::home_dir", env_home_dir);
+    builtin!("sys::env::get", env_get);
+    builtin!("sys::env::args", env_args);
+    builtin!("sys::env::current_dir", env_current_dir);
     // sys::os
-    register_impl("sys::os::name", os_name);
-    register_impl("sys::os::arch", os_arch);
-    register_impl("sys::os::exit", os_exit);
+    builtin!("sys::os::name", os_name);
+    builtin!("sys::os::arch", os_arch);
+    builtin!("sys::os::exit", os_exit);
 }
 
 fn path_join(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {

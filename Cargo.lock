@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "prima-core"
-version = "0.2.2-alpha"
+version = "0.2.3-beta"
 dependencies = [
  "dashmap",
  "num-bigint",
@@ -1110,7 +1110,7 @@ dependencies = [
 
 [[package]]
 name = "prima-jit"
-version = "0.2.2-alpha"
+version = "0.2.3-beta"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -1123,7 +1123,7 @@ dependencies = [
 
 [[package]]
 name = "prima-language"
-version = "0.2.2-alpha"
+version = "0.2.3-beta"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -1144,7 +1144,7 @@ dependencies = [
 
 [[package]]
 name = "prima-runtime"
-version = "0.2.2-alpha"
+version = "0.2.3-beta"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -1153,11 +1153,12 @@ dependencies = [
  "prima-syntax",
  "rayon",
  "thiserror",
+ "wide 1.7.0",
 ]
 
 [[package]]
 name = "prima-stdlib"
-version = "0.2.2-alpha"
+version = "0.2.3-beta"
 dependencies = [
  "nalgebra",
  "num-bigint",
@@ -1169,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "prima-syntax"
-version = "0.2.2-alpha"
+version = "0.2.3-beta"
 dependencies = [
  "thiserror",
  "unicode-ident",
@@ -1437,6 +1438,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "safe_arch"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42c6efa15875e6ecb39ca61fb0b0c1a40b84fac5a5ffe71eef7d1000c8eb3f5f"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1510,7 +1520,7 @@ dependencies = [
  "num-complex",
  "num-traits",
  "paste",
- "wide",
+ "wide 0.7.33",
 ]
 
 [[package]]
@@ -1776,7 +1786,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
 dependencies = [
  "bytemuck",
- "safe_arch",
+ "safe_arch 0.7.4",
+]
+
+[[package]]
+name = "wide"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cf05ca94c9fba0c51316899caa1d1e74a064fc310a5efa7375e614343d415be"
+dependencies = [
+ "bytemuck",
+ "safe_arch 1.2.0",
 ]
 
 [[package]]

@@ -70,22 +70,61 @@ pub fn has_namespace(name: &str) -> bool {
 /// concurrent registrations (e.g. parallel tests) from losing a write.
 static IMPLS: OnceLock<Mutex<HashMap<String, NativeCall>>> = OnceLock::new();
 
+/// Min-tier metadata for each registered `@builtin` implementation (spec §18.4/§10.2): the declared
+/// `O0`..`O3` tier, recorded via the `builtin!` macro. This is *metadata* — the `.pra` `@builtin(ON)`
+/// annotation is the authoritative dispatch tier (spec §18.4) — so it is not consulted at call sites.
+static IMPL_LEVELS: OnceLock<Mutex<HashMap<String, u8>>> = OnceLock::new();
+
 fn impls() -> &'static Mutex<HashMap<String, NativeCall>> {
     IMPLS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn impl_levels() -> &'static Mutex<HashMap<String, u8>> {
+    IMPL_LEVELS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Register one `@builtin` implementation (spec §18.4). Idempotent: the first registration wins,
 /// so a shared key cannot be silently overwritten by a later `init`/test.
 pub fn register_impl(key: impl Into<String>, call: NativeCall) {
+    register_impl_level(key, call, 0);
+}
+
+/// Register one `@builtin` implementation with its declared tier (spec §18.4/§10.2). Idempotent.
+/// The tier is recorded as metadata; the `.pra` `@builtin(ON)` annotation drives dispatch.
+pub fn register_impl_level(key: impl Into<String>, call: NativeCall, level: u8) {
     let key = key.into();
     let mut map = impls().lock().unwrap_or_else(|e| e.into_inner());
-    map.entry(key).or_insert(call);
+    map.entry(key.clone()).or_insert(call);
+    let mut lv = impl_levels().lock().unwrap_or_else(|e| e.into_inner());
+    lv.entry(key).or_insert(level);
 }
 
 /// Look up a registered `@builtin` implementation by its fully-qualified key.
 pub fn get_impl(key: &str) -> Option<NativeCall> {
     let map = impls().lock().unwrap_or_else(|e| e.into_inner());
     map.get(key).copied()
+}
+
+/// Look up the declared tier of a registered `@builtin` implementation (metadata; default `O0`).
+pub fn get_impl_level(key: &str) -> u8 {
+    let map = impl_levels().lock().unwrap_or_else(|e| e.into_inner());
+    map.get(key).copied().unwrap_or(0)
+}
+
+/// Declarative registration for a stdlib `@builtin` implementation (spec §18.4): `builtin!` replaces
+/// the manual string-keyed `register_impl` calls with a compact form and records the declared tier.
+/// The `.pra` `@builtin(ON)` annotation remains the authoritative dispatch tier.
+///
+/// Forms:
+/// - `builtin!("linalg::determinant", det_impl)`
+/// - `builtin!("num::fibonacci", fibonacci_impl, O1)`
+#[macro_export]
+macro_rules! builtin {
+    ($key:expr, $func:expr) => { $crate::stdlib::register_impl($key, $func); };
+    ($key:expr, $func:expr, O0) => { $crate::stdlib::register_impl($key, $func); };
+    ($key:expr, $func:expr, O1) => { $crate::stdlib::register_impl_level($key, $func, 1); };
+    ($key:expr, $func:expr, O2) => { $crate::stdlib::register_impl_level($key, $func, 2); };
+    ($key:expr, $func:expr, O3) => { $crate::stdlib::register_impl_level($key, $func, 3); };
 }
 
 /// Embedded stdlib module source (the `.pra` signature file), keyed by module path

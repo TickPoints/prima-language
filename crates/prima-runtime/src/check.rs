@@ -308,7 +308,7 @@ fn collect_stmt_errors(
         Stmt::ClassDef { name, annotations, members, .. } => {
             // Only the builtin `String` class is meaningful, and it is implicit — never declared in
             // source — so any user `@builtin class` has no registered implementation (spec §18.4, E0055).
-            if annotations.contains(&Annotation::Builtin) && name.value != "String" {
+            if annotations.iter().any(|a| a.is_builtin()) && name.value != "String" {
                 push_err(src, errors, name.span, format!("unregistered `@builtin` class `{}` (E0055)", name.value));
             }
             for m in members {
@@ -397,7 +397,8 @@ fn collect_arms_errors(src: &str, arms: &[MatchArm], errors: &mut Vec<TypeError>
 }
 
 /// Annotation validation (spec §18.4), returning the errors for one `fn`:
-/// - `@builtin`: signature-only and the name must name a registered host builtin (E0056/E0055).
+/// - `@builtin(O0)`: signature-only and the name must name a registered host builtin (E0056/E0055).
+/// - `@builtin(ON)` (`N >= 1`): must have a `.pra` fallback body (E0056); the Rust impl is optional.
 /// - `@c_api::extern`: `pub` and `c_api::*` C-compatible parameter/return types (E0072/E0071).
 fn check_annotation_errors(
     src: &str,
@@ -409,11 +410,15 @@ fn check_annotation_errors(
     is_pub: bool,
 ) -> Vec<TypeError> {
     let mut errors = Vec::new();
-    if annotations.contains(&Annotation::Builtin) {
-        if has_body {
-            push_err(src, &mut errors, name.span, "`@builtin` function must not have a body (E0056)".into());
-        } else if Builtin::from_name(&name.value).is_none() {
-            push_err(src, &mut errors, name.span, format!("unregistered `@builtin` function `{}` (E0055)", name.value));
+    if let Some(level) = annotations.iter().filter(|a| a.is_builtin()).map(|a| a.builtin_level()).max() {
+        if level == 0 {
+            if has_body {
+                push_err(src, &mut errors, name.span, "`@builtin` function must not have a body (E0056)".into());
+            } else if Builtin::from_name(&name.value).is_none() {
+                push_err(src, &mut errors, name.span, format!("unregistered `@builtin` function `{}` (E0055)", name.value));
+            }
+        } else if !has_body {
+            push_err(src, &mut errors, name.span, format!("`@builtin(O{level})` function must have a body (E0056)"));
         }
     }
     if annotations.contains(&Annotation::CApiExtern) {

@@ -121,7 +121,9 @@ Program {
                     ),
                 ),
                 annotations: [
-                    Builtin,
+                    Builtin {
+                        opt_level: 0,
+                    },
                 ],
                 body: Block {
                     stmts: [],

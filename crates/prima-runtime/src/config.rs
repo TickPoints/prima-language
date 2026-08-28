@@ -43,6 +43,40 @@ pub enum OverloadPolicy {
     Deny,
 }
 
+/// Optimization level (spec §10.2/§13.2): an incrementally-configured set of compiler optimization
+/// channels. `O0 < O1 < O2 < O3`; each tier enables all channels of the lower tiers. Default `O2`.
+/// Distinct from `simplify_level` (symbolic-semantic, spec §8.3): `opt_level` only controls
+/// compiler-applied optimizations and never changes observable program semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OptLevel {
+    O0,
+    O1,
+    O2,
+    O3,
+}
+
+impl OptLevel {
+    /// The tier as a `u8` (O0=0 .. O3=3), for comparing against an `@builtin(ON)` annotation.
+    pub const fn tier(self) -> u8 {
+        match self {
+            OptLevel::O0 => 0,
+            OptLevel::O1 => 1,
+            OptLevel::O2 => 2,
+            OptLevel::O3 => 3,
+        }
+    }
+
+    /// Convert a validated tier number back to an `OptLevel` (clamping out-of-range to `O3`).
+    pub const fn from_tier(n: u8) -> OptLevel {
+        match n {
+            0 => OptLevel::O0,
+            1 => OptLevel::O1,
+            2 => OptLevel::O2,
+            _ => OptLevel::O3,
+        }
+    }
+}
+
 /// Policy configuration (spec §13.2 finalized): `domain`/`undefined_handling` are global (polluting) policies,
 /// the rest are module/local policies; defaults match the spec (`fraction`/`broadcast`/`loop_optimization` on by default).
 #[derive(Debug, Clone)]
@@ -55,6 +89,7 @@ pub struct Config {
     pub broadcast: bool,
     pub loop_optimization: bool,
     pub simplify_level: u8,
+    pub opt_level: OptLevel,
     pub num_to_big: bool,
     pub print_format: PrintFormat,
     pub overload_policy: OverloadPolicy,
@@ -70,6 +105,7 @@ impl Default for Config {
             broadcast: true,
             loop_optimization: true,
             simplify_level: 2,
+            opt_level: OptLevel::O2,
             num_to_big: true,
             print_format: PrintFormat::Latex,
             overload_policy: OverloadPolicy::Warn,
@@ -110,6 +146,7 @@ impl Config {
                 "broadcast" => self.broadcast = parse_bool(&e.value, "broadcast")?,
                 "loop_optimization" => self.loop_optimization = parse_bool(&e.value, "loop_optimization")?,
                 "simplify_level" => self.simplify_level = parse_int(&e.value, "simplify_level")?,
+                "opt_level" => self.opt_level = parse_opt_level(&e.value)?,
                 "num_to_big" => self.num_to_big = parse_bool(&e.value, "num_to_big")?,
                 "print_format" => {
                     let v = parse_enum(&e.value, "print_format")?;
@@ -157,5 +194,17 @@ fn parse_enum(e: &Expr, key: &str) -> Result<String, RuntimeError> {
         ExprKind::Path { segments } if segments.len() == 1 => Ok(segments[0].value.clone()),
         ExprKind::Symbol(s) => Ok(s.value.clone()),
         _ => Err(RuntimeError::Message(format!("config `{key}` expects an enum value"))),
+    }
+}
+
+/// Parse an `opt_level` config value (spec §10.2/§13.2), accepting the `O0`..`O3` enum forms.
+fn parse_opt_level(e: &Expr) -> Result<OptLevel, RuntimeError> {
+    let v = parse_enum(e, "opt_level")?;
+    match v.as_str() {
+        "O0" => Ok(OptLevel::O0),
+        "O1" => Ok(OptLevel::O1),
+        "O2" => Ok(OptLevel::O2),
+        "O3" => Ok(OptLevel::O3),
+        _ => Err(RuntimeError::Message(format!("unknown `opt_level` value `{v}` (expected O0..=O3)"))),
     }
 }

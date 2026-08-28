@@ -5,7 +5,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use prima_core::{Number, Real, Value};
-use prima_runtime::stdlib::register_impl;
+use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
@@ -41,13 +41,13 @@ fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeEr
 /// under its fully-qualified key (`time::Duration::from_secs` resolves `Duration::from_secs` via the
 /// flattened module-item lookup, see `eval::resolve_func`).
 pub fn register() {
-    register_impl("time::now", time_now);
-    register_impl("time::sleep", time_sleep);
-    register_impl("time::unix_timestamp", time_unix_timestamp);
-    register_impl("time::format", time_format);
-    register_impl("time::parse", time_parse);
-    register_impl("time::Duration::from_secs", duration_from_secs);
-    register_impl("time::Duration::from_millis", duration_from_millis);
+    builtin!("time::now", time_now);
+    builtin!("time::sleep", time_sleep);
+    builtin!("time::unix_timestamp", time_unix_timestamp);
+    builtin!("time::format", time_format);
+    builtin!("time::parse", time_parse);
+    builtin!("time::Duration::from_secs", duration_from_secs);
+    builtin!("time::Duration::from_millis", duration_from_millis);
 }
 
 fn time_now(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {

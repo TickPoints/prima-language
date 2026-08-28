@@ -1,0 +1,8 @@
+config { opt_level := O1 }
+
+import num;
+
+println(num::fibonacci(20));
+with config { opt_level := O0 } {
+    println(num::fibonacci(20));
+}

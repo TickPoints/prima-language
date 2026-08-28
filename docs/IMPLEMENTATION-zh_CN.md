@@ -663,6 +663,15 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
   cargo test                                 # 各等级结果等价性（数值语义不变）
   ```
 
+> **Phase 8 落地记录（2026-08，v2.2）**：全部完成。与本文档的偏差/定稿：
+>
+> - `Config::opt_level: OptLevel`（`config.rs`，默认 `O2`），`OptLevel` 新增 `tier() -> u8`/`from_tier(u8)` 辅助比较（`@builtin(ON)` 按 `.pra` 注解等级判定）。
+> - 通道闸门落地在求值器调用点：循环闭式公式 → `loop_optimization && opt_level >= O1`（eval.rs `For` 分支）；JIT 自动热点编译 → `hot.force || (opt_level >= O2 && c+1 >= threshold)`（`@jit` 强制编译在任何等级生效）；TCO → `opt_level >= O2`（Host 调用 trampoline 重构为 `apply_host_tco`）。
+> - **CSE/自动内联**：规范列为 `O2` 通道，但由 hash-consing（结构相等自动去重）与 MFn 调用代入天然满足，不额外引入等级闸门；宿主 `fn` 的自动内联未实现（体积/纯性启发式风险高），留待后续。
+> - **SIMD**：`runtime::simd` 用 portable `wide` crate（`f64x4`，stable Rust——`std::simd` 仍 nightly-only）实现稠密 `F64` 数组逐元素二元运算（数组⊕数组、数组⊕标量、标量⊕数组）的向量化；仅 `opt_level >= O3` 且全元素为 `Real::F64`（`len >= 4`）时启用，其余回退标量循环（空/嵌套/非 `F64`/`Pow`/`Mod`/比较不动）。IEEE 逐位语义与标量一致（含 `Div` 的 `0.0/0.0 → NaN`，custom `0/0` 只作用于精确层）。`R0009`/`R0014` 检查顺序不变。
+> - **`simplify_level` 接线**：`core::simplify::{simplify, simplify_at}`，`simplify_at(level)` 使 `level >= 2` 才应用符号规则（内置常量折叠、`sqrt` 消除、欧拉公式），`level >= 3` 为未来有理化规则的超集；intern 层等级 0/1 恒存。求值器新增 `simplify_current`，把 `Config.simplify_level` 接入用户面符号化简调用点；显式 `simplify(...)` 内建恒用等级 3；`diff.rs` 内部 `simplify` 保持全量（求导正确性）。
+> - **验收样例**：`examples/opt_levels.pra`（`O3` SIMD 数组运算）、`examples/config_simplify.pra`（`simplify_level` 深度差异）；`tests/opt_levels.rs`（跨等级结果等价性 + simplify_level 深度 + 显式 simplify 恒全量）。
+
 ### Phase 9：`@builtin` 注册简化与分层优化（v2.2，规范 §18.4，优先级 normal）
 
 **对应工作项 3**（`@builtin(ON)` + 注册更简单）。
@@ -676,6 +685,14 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
   cargo test                                 # @builtin(O1) 正/负用例 + 两实现一致性
   cargo run -- run examples/builtin_layers.pra
   ```
+
+> **Phase 9 落地记录（2026-08，v2.2）**：全部完成。与本文档的偏差/定稿：
+>
+> - `Annotation` 由 `Builtin`（单元）改为 `Builtin { opt_level: u8 }`（`prima-syntax::ast`），新增 `is_builtin()`/`builtin_level()` 辅助；解析器 `@builtin(ON)` 解析可选 `(O0|O1|O2|O3)`（默认 `O0`），非法等级 → 解析期 `E0057`；`prima fmt` 对 `opt_level > 0` 输出 `@builtin(O{N})`。
+> - 解析器对任意等级 `@builtin` 无 `{` 时仍解析为签名-only（空体），把「O0 必须有体/ O1+ 必须有体」的约束交给 `check.rs`（`E0056`）与求值器 `bind_builtin_annotated`（E0056/E0055）统一把关——避免在 parser 层产生两种错误形态。
+> - 新增 `Function::Layered { params, ret, body, env, native: Option<NativeCall>, level: u8 }`（eval.rs）：`apply_function` 分派为「`opt_level >= level && native.is_some()` → 调 Rust 实现；否则求值 `.pra` 体（Host 语义，TCO 与 `apply_host_tco` 复用）」。`collect_pub`/`eval_stmt` 的 FnDef 分支改用 `bind_builtin_annotated(name, level, params, ret, body, env)`。
+> - 注册简化：`stdlib.rs` 由手工字符串键 `register_impl` 升级为 `builtin!` 声明式宏（`builtin!(key, func)` 与 `builtin!(key, func, O1)`），并保留 `register_impl`/`register_impl_level` 作为底层 API；全仓 stdlib crate（`linalg/io/stats/num/plot/sys/time`）改用宏。**等级权威**：分派只看 `.pra` 里的 `@builtin(ON)`，宏记录的 `MinLevel` 仅是元数据（`get_impl_level` 不参与调用点判定），符合「`.pra` 是唯一可观察语义来源」。
+> - **两实现一致性样例**：`num::fibonacci` 声明为 `@builtin(O1)`（`num.pra` 线性递推 `.pra` 体 + `num.rs` 迭代 Rust 实现）；`O0/O2` 结果一致（tests `builtin_layers.rs`），负用例覆盖 `E0055`/`E0056`/`E0057`。
 
 ### Phase 10：内置方法体系（String 全方法集，v2.2，规范 §18.1，优先级 xhigh）
 

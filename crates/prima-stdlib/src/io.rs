@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 
 use prima_core::{Number, Value, ValueKey};
-use prima_runtime::stdlib::register_impl;
+use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
@@ -63,18 +63,18 @@ fn err(msg: String) -> Value {
 /// CSV helpers. Each `@builtin` declaration in the embedded `io.pra` signature module binds to the
 /// implementation registered under its fully-qualified `io::<name>` key (spec §18.4).
 pub fn register() {
-    register_impl("io::read_file", read_file);
-    register_impl("io::write_file", write_file);
-    register_impl("io::read_lines", read_lines);
-    register_impl("io::exists", exists);
-    register_impl("io::json_parse", json_parse);
-    register_impl("io::json_stringify", json_stringify);
-    register_impl("io::read_json", read_json);
-    register_impl("io::write_json", write_json);
-    register_impl("io::csv_parse", csv_parse);
-    register_impl("io::csv_stringify", csv_stringify);
-    register_impl("io::read_csv", read_csv);
-    register_impl("io::write_csv", write_csv);
+    builtin!("io::read_file", read_file);
+    builtin!("io::write_file", write_file);
+    builtin!("io::read_lines", read_lines);
+    builtin!("io::exists", exists);
+    builtin!("io::json_parse", json_parse);
+    builtin!("io::json_stringify", json_stringify);
+    builtin!("io::read_json", read_json);
+    builtin!("io::write_json", write_json);
+    builtin!("io::csv_parse", csv_parse);
+    builtin!("io::csv_stringify", csv_stringify);
+    builtin!("io::read_csv", read_csv);
+    builtin!("io::write_csv", write_csv);
 }
 
 // ——— file I/O (spec §18) ———

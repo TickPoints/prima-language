@@ -1,0 +1,6 @@
+config { simplify_level := 2 }
+
+println(tex"\sin(0)");
+with config { simplify_level := 0 } {
+    println(tex"\sin(0)");
+}

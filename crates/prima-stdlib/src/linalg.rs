@@ -7,7 +7,7 @@
 
 use nalgebra::{DMatrix, DVector};
 use prima_core::{Number, Real, Value};
-use prima_runtime::stdlib::register_impl;
+use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
@@ -26,28 +26,28 @@ fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
 /// under its fully-qualified key (`linalg::Matrix::zeros` resolves `Matrix::zeros` via the flattened
 /// module-item lookup, see `eval::resolve_func`).
 pub fn register() {
-    register_impl("linalg::Matrix::zeros", matrix_zeros);
-    register_impl("linalg::Matrix::ones", matrix_ones);
-    register_impl("linalg::Matrix::identity", matrix_identity);
-    register_impl("linalg::Matrix::diagonal", matrix_diagonal);
-    register_impl("linalg::Matrix::from_rows", matrix_from_rows);
-    register_impl("linalg::Matrix::from_cols", matrix_from_cols);
-    register_impl("linalg::transpose", transpose);
-    register_impl("linalg::inverse", inverse);
-    register_impl("linalg::determinant", determinant);
-    register_impl("linalg::trace", trace);
-    register_impl("linalg::rank", rank);
-    register_impl("linalg::norm", norm);
-    register_impl("linalg::cond", cond);
-    register_impl("linalg::dot", dot);
-    register_impl("linalg::cross", cross);
-    register_impl("linalg::lu", lu);
-    register_impl("linalg::qr", qr);
-    register_impl("linalg::svd", svd);
-    register_impl("linalg::eigen", eigen);
-    register_impl("linalg::cholesky", cholesky);
-    register_impl("linalg::solve", solve);
-    register_impl("linalg::lstsq", lstsq);
+    builtin!("linalg::Matrix::zeros", matrix_zeros);
+    builtin!("linalg::Matrix::ones", matrix_ones);
+    builtin!("linalg::Matrix::identity", matrix_identity);
+    builtin!("linalg::Matrix::diagonal", matrix_diagonal);
+    builtin!("linalg::Matrix::from_rows", matrix_from_rows);
+    builtin!("linalg::Matrix::from_cols", matrix_from_cols);
+    builtin!("linalg::transpose", transpose);
+    builtin!("linalg::inverse", inverse);
+    builtin!("linalg::determinant", determinant);
+    builtin!("linalg::trace", trace);
+    builtin!("linalg::rank", rank);
+    builtin!("linalg::norm", norm);
+    builtin!("linalg::cond", cond);
+    builtin!("linalg::dot", dot);
+    builtin!("linalg::cross", cross);
+    builtin!("linalg::lu", lu);
+    builtin!("linalg::qr", qr);
+    builtin!("linalg::svd", svd);
+    builtin!("linalg::eigen", eigen);
+    builtin!("linalg::cholesky", cholesky);
+    builtin!("linalg::solve", solve);
+    builtin!("linalg::lstsq", lstsq);
 }
 
 // —— value conversion helpers (spec §11.3 representation) ——
