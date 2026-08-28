@@ -5,6 +5,20 @@ All notable changes to the Prima toolchain are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Quick-install scripts.** `install.sh` (POSIX bash) and `install.ps1` (Windows PowerShell) at the repo root download the latest `prima` release binary for the detected OS/architecture (mapping to the release matrix targets), verify the SHA-256 checksum, and install to `~/.local/bin` (override with `PRIMA_INSTALL_DIR`; `PRIMA_TARGET`/`PRIMA_VERSION` override detection). The README now shows the one-line install commands.
+- **CI workflow (`.github/workflows/ci.yml`).** Runs `cargo clippy --workspace --all-targets -- -D warnings` on ubuntu and `cargo test --workspace` on ubuntu + windows, for every push to `main`/`dev` and every pull request.
+- `tests/cli.rs`: `run_all_examples_succeed` now also runs the previously unasserted examples `autodiff`, `builtin_layers`, `capi`, `config_simplify`, `fstring`, `jit`, `mymath`, `opt_levels`.
+
+### Changed
+
+- **Release workflow macOS matrix.** `x86_64-apple-darwin` was pinned to `macos-13`, a GitHub-hosted runner retired in Dec 2025 — a retired `runs-on` label leaves the job queued forever instead of failing. Both macOS targets now run on `macos-15` (arm64): `x86_64-apple-darwin` is cross-compiled on Apple Silicon via `rustup target add` + `cargo build --target` (the Xcode SDK is universal), and `aarch64-apple-darwin` builds natively. The build job gained a `timeout-minutes` safety net and verifies the x86_64 macOS artifact's architecture with `file`.
+- **Comment/consistency housekeeping.** Removed stray Chinese text from code comments (`src/diagnostics.rs`, `examples/jit.pra`), fixed a duplicated phrase in `examples/linear_algebra.pra`, dropped stale "prima-jit is a stub" wording in `benches/bench_jit.rs` (the crate is fully implemented), and reworded "deferred to a later phase/stage" doc comments to "later release". `docs/IMPLEMENTATION-*.md` §5 roadmap heading updated to reflect Phases 0–12 scope.
+- README (English + Chinese) rewritten with badges, an install section, and updated document version references (v2.1 → v2.3); the broken `cargo run -- release run` quick-start command was corrected.
+
 ## [0.2.3-beta] - 2026-08-28
 
 ### Added
