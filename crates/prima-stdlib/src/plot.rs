@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use prima_core::Value;
-use prima_runtime::stdlib::register_impl;
+use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
 /// Plot series kind (spec §B.4): `plot`/`line` draw lines, `scatter` draws point markers,
@@ -159,20 +159,20 @@ fn label(text: String) -> Option<String> {
 /// declaration in the embedded `plot.pra` signature module binds to the implementation registered
 /// under its fully-qualified `plot::<name>` key (spec §18.4).
 pub fn register() {
-    register_impl("plot::plot", plot);
-    register_impl("plot::scatter", scatter);
-    register_impl("plot::line", line);
-    register_impl("plot::bar", bar);
-    register_impl("plot::xlabel", xlabel);
-    register_impl("plot::ylabel", ylabel);
-    register_impl("plot::title", title);
-    register_impl("plot::legend", legend);
-    register_impl("plot::xlim", xlim);
-    register_impl("plot::ylim", ylim);
-    register_impl("plot::grid", grid);
-    register_impl("plot::savefig", savefig);
-    register_impl("plot::show", show);
-    register_impl("plot::clear", clear);
+    builtin!("plot::plot", plot);
+    builtin!("plot::scatter", scatter);
+    builtin!("plot::line", line);
+    builtin!("plot::bar", bar);
+    builtin!("plot::xlabel", xlabel);
+    builtin!("plot::ylabel", ylabel);
+    builtin!("plot::title", title);
+    builtin!("plot::legend", legend);
+    builtin!("plot::xlim", xlim);
+    builtin!("plot::ylim", ylim);
+    builtin!("plot::grid", grid);
+    builtin!("plot::savefig", savefig);
+    builtin!("plot::show", show);
+    builtin!("plot::clear", clear);
 }
 
 /// `plot(x, y, label = "", color = "blue")` — line series (spec §B.4).

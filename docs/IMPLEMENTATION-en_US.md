@@ -664,6 +664,15 @@ Each Phase ends with runnable acceptance commands. Phases 0–2 have been delive
   cargo test                                 # per-level result equivalence (numeric semantics unchanged)
   ```
 
+> **Phase 8 implementation record (2026-08, v2.2)**: complete. Deviations/final decisions vs. this doc:
+>
+> - `Config::opt_level: OptLevel` (`config.rs`, default `O2`); `OptLevel` gained `tier() -> u8`/`from_tier(u8)` helpers for comparing against `@builtin(ON)` annotation tiers.
+> - Pass gating is applied at the evaluator call sites: the loop closed form → `loop_optimization && opt_level >= O1` (the `For` branch in `eval.rs`); automatic JIT hot-path compilation → `hot.force || (opt_level >= O2 && c+1 >= threshold)` (`@jit` force-compile still works at any tier); TCO → `opt_level >= O2` (the host-call trampoline was refactored into `apply_host_tco`).
+> - **CSE/automatic inlining**: listed as `O2` passes, but are satisfied naturally by hash-consing (structural-equality dedup) and MFn call substitution, so no extra per-level gate was introduced; automatic inlining of host `fn` bodies was not implemented (the size/purity heuristics carry too much risk) and is left for later.
+> - **SIMD**: `runtime::simd` uses the portable `wide` crate (`f64x4`, stable Rust — `std::simd` is still nightly-only) to vectorize dense `F64` array elementwise binary ops (array⊕array, array⊕scalar, scalar⊕array); enabled only for `opt_level >= O3` and when every element is `Real::F64` (`len >= 4`); otherwise it falls back to the scalar loops (empty/nested/non-`F64`, or `Pow`/`Mod`/comparisons are untouched). IEEE lane semantics are bit-identical to scalar (including `Div`'s `0.0/0.0 → NaN`, since the custom `0/0` rule applies only to the exact layer). The `R0009`/`R0014` check order is unchanged.
+> - **`simplify_level` wiring**: `core::simplify::{simplify, simplify_at}` — `simplify_at(level)` applies the symbolic rules (builtin constant folding, `sqrt`-elimination, Euler's formula) only when `level >= 2`, with `level >= 3` a superset for future rationalization rules; intern-time level-0/1 rules always hold. The evaluator gained `simplify_current`, threading `Config.simplify_level` into the user-facing symbolic simplify call sites; the explicit `simplify(...)` builtin always uses level 3; `diff.rs`'s internal `simplify` calls stay full (derivation correctness).
+> - **Acceptance samples**: `examples/opt_levels.pra` (O3 SIMD array ops), `examples/config_simplify.pra` (simplify_level depth difference); `tests/opt_levels.rs` (cross-tier result equivalence + simplify_level depth + explicit simplify always full).
+
 ### Phase 9: `@builtin` registration simplification and layered optimization (v2.2, spec §18.4, priority normal)
 
 **Work item 3** (`@builtin(ON)` + simpler registration).
@@ -677,6 +686,14 @@ Each Phase ends with runnable acceptance commands. Phases 0–2 have been delive
   cargo test                                 # @builtin(O1) positive/negative cases + two-implementation consistency
   cargo run -- run examples/builtin_layers.pra
   ```
+
+> **Phase 9 implementation record (2026-08, v2.2)**: complete. Deviations/final decisions vs. this doc:
+>
+> - `Annotation` changed from the unit `Builtin` to `Builtin { opt_level: u8 }` (`prima-syntax::ast`), with `is_builtin()`/`builtin_level()` helpers; the parser parses `@builtin(ON)` with an optional `(O0|O1|O2|O3)` (default `O0`), an invalid tier being a parse-time `E0057`; `prima fmt` renders `@builtin(O{N})` when `opt_level > 0`.
+> - The parser still parses a body-less `@builtin` (any tier) as a signature-only form, deferring the "O0 must have no body / O1+ must have a body" rule to `check.rs` (`E0056`) and the evaluator's `bind_builtin_annotated` (E0056/E0055) — avoiding two distinct error shapes at the parser layer.
+> - New `Function::Layered { params, ret, body, env, native: Option<NativeCall>, level: u8 }` (`eval.rs`): `apply_function` dispatches "`opt_level >= level && native.is_some()` → call the Rust implementation; otherwise evaluate the `.pra` body (host semantics, reusing `apply_host_tco`/TCO)". The `FnDef` branches in `collect_pub`/`eval_stmt` now use `bind_builtin_annotated(name, level, params, ret, body, env)`.
+> - Registration simplification: `stdlib.rs` upgraded the manual string-keyed `register_impl` to the declarative `builtin!` macro (`builtin!(key, func)` and `builtin!(key, func, O1)`), keeping `register_impl`/`register_impl_level` as the underlying API; all stdlib crates (`linalg/io/stats/num/plot/sys/time`) were migrated to the macro. **Tier authority**: dispatch reads only the `.pra` `@builtin(ON)`; the macro's recorded `MinLevel` is metadata only (`get_impl_level` is not consulted at call sites), matching "the `.pra` body is the sole observable-semantics source".
+> - **Two-implementation consistency sample**: `num::fibonacci` declared `@builtin(O1)` (a linear-recurrence `.pra` body in `num.pra` + an iterative Rust impl in `num.rs`); `O0`/`O2` results agree (tests `builtin_layers.rs`); negative cases cover `E0055`/`E0056`/`E0057`.
 
 ### Phase 10: Builtin method system (full String method set, v2.2, spec §18.1, priority xhigh)
 

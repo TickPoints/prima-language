@@ -256,10 +256,10 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             format_expr(value, 0, out);
         }
         Stmt::FnDef { name, params, ret, annotations, body, .. } => {
+            format_annotations(annotations, out);
             if is_pub {
                 out.push_str("pub ");
             }
-            format_annotations(annotations, out);
             out.push_str("fn ");
             out.push_str(&name.value);
             format_params(params, out);
@@ -280,10 +280,10 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             format_expr(body, 0, out);
         }
         Stmt::ClassDef { name, annotations, members, .. } => {
+            format_annotations(annotations, out);
             if is_pub {
                 out.push_str("pub ");
             }
-            format_annotations(annotations, out);
             out.push_str("class ");
             out.push_str(&name.value);
             out.push_str(" {\n");
@@ -436,7 +436,13 @@ fn format_annotations(annotations: &[Annotation], out: &mut String) {
             Annotation::Parallel => out.push_str("@parallel "),
             Annotation::Jit => out.push_str("@jit "),
             Annotation::Gpu => out.push_str("@gpu "),
-            Annotation::Builtin => out.push_str("@builtin "),
+            Annotation::Builtin { opt_level } => {
+                if *opt_level == 0 {
+                    out.push_str("@builtin ");
+                } else {
+                    out.push_str(&format!("@builtin(O{}) ", opt_level));
+                }
+            }
             Annotation::CApiExtern => out.push_str("@c_api::extern "),
         }
     }

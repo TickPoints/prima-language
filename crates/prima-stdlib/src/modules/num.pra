@@ -28,3 +28,21 @@ pub fn to_base(n: Integer, radix: Integer) -> String;
 /// Parse `s` as an integer in the given `radix` (2..=36).
 @builtin
 pub fn from_base(s: String, radix: Integer) -> Result<Integer, String>;
+
+/// The `n`-th Fibonacci number (spec §18.4): a layered `@builtin(O1)`. A Rust fast path is used when
+/// `opt_level >= O1`; otherwise this `.pra` body (a simple linear recurrence) is the fallback.
+@builtin(O1)
+pub fn fibonacci(n: Integer) -> Integer {
+    let mut a = 0;
+    let mut b = 1;
+    if n <= 1 {
+        b = n;
+    } else {
+        for i in 0..(n - 1) {
+            let t = a + b;
+            a = b;
+            b = t;
+        }
+    }
+    b;
+}

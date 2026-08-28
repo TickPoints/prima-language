@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use prima_core::{Number, Real, Value, ValueKey};
-use prima_runtime::stdlib::register_impl;
+use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
@@ -122,27 +122,27 @@ fn ranks(d: &[f64]) -> Vec<f64> {
 /// declaration in the embedded `stats.pra` signature module binds to the implementation registered
 /// under its fully-qualified `stats::<name>` key (spec §18.4).
 pub fn register() {
-    register_impl("stats::mean", mean);
-    register_impl("stats::median", median);
-    register_impl("stats::mode", mode);
-    register_impl("stats::variance", variance);
-    register_impl("stats::std", std_dev);
-    register_impl("stats::quantile", quantile);
-    register_impl("stats::percentile", percentile);
-    register_impl("stats::range", range);
-    register_impl("stats::min", min_val);
-    register_impl("stats::max", max_val);
-    register_impl("stats::cov", cov);
-    register_impl("stats::corr", corr);
-    register_impl("stats::spearman", spearman);
-    register_impl("stats::Normal", normal_dist);
-    register_impl("stats::Uniform", uniform_dist);
-    register_impl("stats::Exponential", exponential_dist);
-    register_impl("stats::Binomial", binomial_dist);
-    register_impl("stats::Poisson", poisson_dist);
-    register_impl("stats::pdf", pdf);
-    register_impl("stats::cdf", cdf);
-    register_impl("stats::sample", sample);
+    builtin!("stats::mean", mean);
+    builtin!("stats::median", median);
+    builtin!("stats::mode", mode);
+    builtin!("stats::variance", variance);
+    builtin!("stats::std", std_dev);
+    builtin!("stats::quantile", quantile);
+    builtin!("stats::percentile", percentile);
+    builtin!("stats::range", range);
+    builtin!("stats::min", min_val);
+    builtin!("stats::max", max_val);
+    builtin!("stats::cov", cov);
+    builtin!("stats::corr", corr);
+    builtin!("stats::spearman", spearman);
+    builtin!("stats::Normal", normal_dist);
+    builtin!("stats::Uniform", uniform_dist);
+    builtin!("stats::Exponential", exponential_dist);
+    builtin!("stats::Binomial", binomial_dist);
+    builtin!("stats::Poisson", poisson_dist);
+    builtin!("stats::pdf", pdf);
+    builtin!("stats::cdf", cdf);
+    builtin!("stats::sample", sample);
 }
 
 fn mean(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {

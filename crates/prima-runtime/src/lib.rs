@@ -12,6 +12,7 @@ pub mod eval;
 pub mod jit;
 pub mod module;
 pub mod opt;
+pub mod simd;
 pub mod stdlib;
 
 pub use builtins::Builtin;

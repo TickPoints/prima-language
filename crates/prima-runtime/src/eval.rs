@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 
 use num_bigint::BigInt;
 use prima_core::render::{render_latex, render_number};
-use prima_core::simplify::simplify;
+use prima_core::simplify::{simplify, simplify_at};
 use prima_core::{BuiltinSymbols, ExprData, ExprId, ExprPool, Number, Real, SymbolId, SymbolTable, Value, ValueKey};
 use prima_syntax::ast::{
     Annotation, AssignOp, BinOp, Block, ClassMemberKind, CompKind, ComprehensionClause, ConfigBlock, DocComment, Expr,
@@ -21,7 +21,7 @@ use rayon::prelude::*;
 
 use crate::builtins::Builtin;
 use crate::class::{ClassDef, ClassInstance, FieldDef, MethodDef};
-use crate::config::{Config, Domain, OverloadPolicy, UndefinedHandling};
+use crate::config::{Config, Domain, OptLevel, OverloadPolicy, UndefinedHandling};
 use crate::error::RuntimeError;
 use crate::module::{ModuleGraph, ModuleUnit, ResolvedImport};
 
@@ -69,6 +69,11 @@ pub enum Function {
     NativeGet,
     /// A Rust-hosted stdlib function (spec §18); see [`NativeCall`].
     Native { name: &'static str, call: NativeCall },
+    /// A `@builtin(ON)` layered function (spec §18.4): carries a `.pra` fallback body plus an
+    /// optional Rust implementation. The native path is used when `opt_level >= level` and the Rust
+    /// implementation is registered; otherwise the `.pra` body is evaluated. The `.pra` body is the
+    /// sole observable-semantics source (spec §18.4).
+    Layered { params: Vec<Param>, ret: Option<Type>, body: Block, env: EnvRef, native: Option<NativeCall>, level: u8 },
 }
 
 impl Function {
@@ -82,6 +87,8 @@ impl Function {
             Function::NativeGet => false,
             // Native stdlib functions (matrix/vector ops, sys/time/num) never participate in implicit broadcast.
             Function::Native { .. } => false,
+            // A layered function may be a host body with side effects; keep it out of the elementwise path.
+            Function::Layered { .. } => false,
         }
     }
 }
@@ -420,6 +427,13 @@ impl Evaluator {
         self.config.last().unwrap_or(&DEFAULT_CONFIG)
     }
 
+    /// Simplify a symbolic `ExprId` at the depth requested by the active `simplify_level` policy
+    /// (spec §8.3/§13.2). Semantics (not just polish) never change: lowering the level only reduces
+    /// which rules fire, never the mathematical value.
+    fn simplify_current(&self, id: ExprId) -> ExprId {
+        simplify_at(self.pool, self.builtins, id, self.current_config().simplify_level)
+    }
+
     fn push_module_config(&mut self, block: Option<&ConfigBlock>) -> Result<(), RuntimeError> {
         if let Some(block) = block {
             let mut cfg = self.current_config().clone();
@@ -462,6 +476,40 @@ impl Evaluator {
             return Ok(Function::Native { name: leaked, call });
         }
         crate::error::err(format!("unregistered `@builtin` function `{name}` (E0055)"))
+    }
+
+    /// Bind a `@builtin(ON)` fn declaration (spec §18.4) to its implementation:
+    /// - tier `O0` (bare `@builtin`): signature-only — a body is an error (`E0056`) and the impl must be
+    ///   registered (`E0055`, via [`Self::bind_builtin`]);
+    /// - tier `O1..=O3` (layered): requires a `.pra` fallback body (`E0056` if absent); the Rust impl is
+    ///   optional and is used at call time when `opt_level >= level` (spec §18.4).
+    fn bind_builtin_annotated(
+        &self,
+        name: &str,
+        level: u8,
+        params: &[Param],
+        ret: &Option<Type>,
+        body: &Block,
+        env: &EnvRef,
+    ) -> Result<Function, RuntimeError> {
+        if level == 0 {
+            if !body.stmts.is_empty() {
+                return crate::error::err(format!("`@builtin` function `{name}` must not have a body (E0056)"));
+            }
+            return self.bind_builtin(name);
+        }
+        if body.stmts.is_empty() {
+            return crate::error::err(format!("`@builtin(O{level})` function `{name}` must have a body (E0056)"));
+        }
+        let native = crate::stdlib::get_impl(&self.builtin_key(name));
+        Ok(Function::Layered {
+            params: params.to_vec(),
+            ret: ret.clone(),
+            body: body.clone(),
+            env: Rc::clone(env),
+            native,
+            level,
+        })
     }
 
     /// Interpret a file as the root module (spec §15.3 module system plus the pre-imported `core`).
@@ -586,9 +634,11 @@ impl Evaluator {
                 // `@builtin pub fn` (spec §18.4): the exported item binds to the core builtin or the
                 // registered stdlib implementation (keyed `"<module>::<name>"`), keeping the typed
                 // signature for later call-site checking. Path names like `Matrix::zeros` are exported
-                // under the joined key so module-qualified calls resolve.
-                let f = if annotations.contains(&Annotation::Builtin) {
-                    self.bind_builtin(&name.value)?
+                // under the joined key so module-qualified calls resolve. A `@builtin(ON)` tier
+                // produces a layered function (native fast path + `.pra` fallback).
+                let f = if annotations.iter().any(|a| a.is_builtin()) {
+                    let level = annotations.iter().map(|a| a.builtin_level()).max().unwrap_or(0);
+                    self.bind_builtin_annotated(&name.value, level, params, ret, body, env)?
                 } else {
                     Function::Host { params: params.clone(), ret: ret.clone(), body: body.clone(), env: Rc::clone(env) }
                 };
@@ -938,8 +988,10 @@ impl Evaluator {
             Stmt::FnDef { name, params, ret, annotations, body, .. } => {
                 // `@builtin fn` (spec §18.4): bind, in order, to the core builtin of the same name,
                 // then to a registered stdlib implementation keyed `"<module>::<name>"`; unregistered → E0055.
-                if annotations.contains(&Annotation::Builtin) {
-                    let f = self.bind_builtin(&name.value)?;
+                // A `@builtin(ON)` tier produces a layered function (native fast path + `.pra` fallback).
+                if annotations.iter().any(|a| a.is_builtin()) {
+                    let level = annotations.iter().map(|a| a.builtin_level()).max().unwrap_or(0);
+                    let f = self.bind_builtin_annotated(&name.value, level, params, ret, body, env)?;
                     env.borrow_mut().set_func(&name.value, f);
                     Ok(Flow::Continue)
                 } else {
@@ -1143,8 +1195,10 @@ impl Evaluator {
             }
             Stmt::For { var, range, step, body, .. } => {
                 // Loop formula optimization (spec §10/§19.1): closed form for the arithmetic series `for i in 0..n`/`1..n { acc += i }`.
+                // Gated at `opt_level >= O1` (spec §10.2); `loop_optimization := false` disables it at any tier (spec §10.2).
                 if step.is_none()
                     && self.current_config().loop_optimization
+                    && self.current_config().opt_level >= OptLevel::O1
                     && let Some(()) = self.try_arithmetic_sum(env, var, range, body)?
                 {
                     return Ok(Flow::Continue);
@@ -1780,7 +1834,7 @@ impl Evaluator {
                         BinOp::Mod => return crate::error::err("`%` requires numeric operands"),
                         _ => unreachable!(),
                     };
-                    let simp = simplify(self.pool, self.builtins, node);
+                    let simp = self.simplify_current(node);
                     Ok(self.value_from_expr(simp))
                 }
             },
@@ -1948,7 +2002,7 @@ impl Evaluator {
         let a = self.pool.number(&x);
         let b = self.pool.number(&y);
         let node = self.pool.pow2(a, b);
-        let simp = simplify(self.pool, self.builtins, node);
+        let simp = self.simplify_current(node);
         Ok(self.value_from_expr(simp))
     }
 
@@ -2072,7 +2126,7 @@ impl Evaluator {
                     }
                     Value::Expr(id) => {
                         let node = self.pool.mul2(self.pool.integer(-1), id);
-                        let simp = simplify(self.pool, self.builtins, node);
+                        let simp = self.simplify_current(node);
                         Ok(self.value_from_expr(simp))
                     }
                     _ => crate::error::err("cannot negate this value"),
@@ -2165,7 +2219,7 @@ impl Evaluator {
                 let expr = self.lower_symbolic(env, &args[0])?;
                 let x = self.eval_var_symbol(env, &args[1])?;
                 let d = crate::diff::derivative(self.pool, self.builtins, expr, x);
-                Ok(self.value_from_expr(simplify(self.pool, self.builtins, d)))
+                Ok(self.value_from_expr(self.simplify_current(d)))
             }
             Builtin::Grad => {
                 if args.len() != 1 {
@@ -2175,7 +2229,7 @@ impl Evaluator {
                 let grads = crate::diff::grad(self.pool, self.builtins, expr);
                 let vals: Vec<Value> = grads
                     .into_iter()
-                    .map(|g| self.value_from_expr(simplify(self.pool, self.builtins, g)))
+                    .map(|g| self.value_from_expr(self.simplify_current(g)))
                     .collect();
                 Ok(Value::Tuple(vals))
             }
@@ -3539,11 +3593,13 @@ impl Evaluator {
                         return Ok(Value::Number(Number::Real(Real::F64(f.call(&inputs)))));
                     }
                     if hot.compiled.get().is_none() {
-                        // Compile on the call that makes the count reach `JIT_CALL_THRESHOLD` (spec §19.2
+                        // Auto hot-path compilation (spec §19.2, gated at `opt_level >= O2` per §10.2):
+                        // compile on the call that makes the count reach `JIT_CALL_THRESHOLD` (spec §19.2
                         // default 100), so `for i in 1..100 { f(to_f64(i)) }` warms up and the next call
-                        // (`f(to_f64(101))`) runs native.
+                        // (`f(to_f64(101))`) runs native. `@jit` (an execution-model annotation, §10.2)
+                        // forces compilation on the first numeric call at any tier.
                         let c = hot.calls.fetch_add(1, AtomicOrdering::Relaxed);
-                        let attempt = hot.force || c + 1 >= JIT_CALL_THRESHOLD;
+                        let attempt = hot.force || (self.current_config().opt_level >= OptLevel::O2 && c + 1 >= JIT_CALL_THRESHOLD);
                         if attempt {
                             let compiled = self.try_compile_body(params, body, f_env);
                             let _ = hot.compiled.set(compiled);
@@ -3559,53 +3615,87 @@ impl Evaluator {
                 }
                 self.eval_expr(&call_env, body)
             }
-            Function::Host { params, ret: _, body, env: f_env } => {
+            Function::Host { params, ret: _, body, env: f_env } => self.apply_host(params, body, f_env, args),
+            // A `@builtin(ON)` layered fn (spec §18.4): the Rust implementation is used when the
+            // active `opt_level` is at least the declared tier and it is registered; otherwise the
+            // `.pra` fallback body is evaluated (host semantics, so TCO applies at `O2`).
+            Function::Layered { params, body, env: f_env, native, level, .. } => {
                 if args.len() != params.len() {
                     return crate::error::err(format!("expected {} arguments, got {}", params.len(), args.len()));
                 }
-                // Tail-call optimization (spec §10.2 item 6): when a host body ends in a direct
-                // `return f(args)` preceded only by effect-free statements (see `crate::opt`), the
-                // call is trampolined so tail recursion runs in constant stack space. Early `return`s
-                // in the effect-free prefix are honored; the prefix is re-evaluated per iteration but
-                // is pure, so this cannot change observable behavior.
-                let mut cparams = params.clone();
-                let mut cbody = body.clone();
-                let mut cenv = Rc::clone(f_env);
-                let mut cargs = args;
-                loop {
-                    let call_env = Env::child(&cenv);
-                    for (p, a) in cparams.iter().zip(&cargs) {
-                        call_env.borrow_mut().set_value(&p.name.value, a.clone());
-                    }
-                    let Some(tc) = crate::opt::tail_call_of(&cbody) else {
-                        return self.eval_block_tail(&call_env, &cbody);
-                    };
-                    let n = cbody.stmts.len();
-                    for stmt in &cbody.stmts[..n - 1] {
-                        if let Flow::Return(v) = self.eval_stmt(&call_env, stmt)? {
-                            return Ok(v);
-                        }
-                    }
-                    let ExprKind::Path { segments } = &tc.callee.kind else {
-                        return self.eval_block_tail(&call_env, &cbody);
-                    };
-                    let next = self.resolve_func(&call_env, segments).ok_or_else(|| {
-                        RuntimeError::Message(format!("unknown function `{}`", path_key(segments)))
-                    })?;
-                    let nargs: Vec<Value> = tc.args.iter().map(|a| self.eval_expr(&call_env, a)).collect::<Result<_, _>>()?;
-                    match next {
-                        Function::Host { params: np, ret: _, body: nb, env: nenv } => {
-                            if nargs.len() != np.len() {
-                                return crate::error::err(format!("expected {} arguments, got {}", np.len(), nargs.len()));
-                            }
-                            cparams = np;
-                            cbody = nb;
-                            cenv = nenv;
-                            cargs = nargs;
-                        }
-                        other => return self.apply_function(&other, nargs),
+                if let Some(call) = native {
+                    let cfg_level = self.current_config().opt_level.tier();
+                    if cfg_level >= *level {
+                        return call(self, &args);
                     }
                 }
+                let tco = self.current_config().opt_level >= OptLevel::O2;
+                self.apply_host_tco(params, body, f_env, args, tco)
+            }
+        }
+    }
+
+    /// Evaluate a host `fn` body (spec §11.2). When `tco` is enabled and the body ends in a direct
+    /// `return f(args)` preceded only by effect-free statements (see `crate::opt`), the call is
+    /// trampolined so tail recursion runs in constant stack space; otherwise the body is evaluated
+    /// normally (spec §10.2 item 6, gated by `opt_level >= O2`).
+    fn apply_host(&mut self, params: &[Param], body: &Block, f_env: &EnvRef, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let tco = self.current_config().opt_level >= OptLevel::O2;
+        self.apply_host_tco(params, body, f_env, args, tco)
+    }
+
+    fn apply_host_tco(&mut self, params: &[Param], body: &Block, f_env: &EnvRef, args: Vec<Value>, tco: bool) -> Result<Value, RuntimeError> {
+        if args.len() != params.len() {
+            return crate::error::err(format!("expected {} arguments, got {}", params.len(), args.len()));
+        }
+        // Tail-call optimization (spec §10.2 item 6): when a host body ends in a direct
+        // `return f(args)` preceded only by effect-free statements (see `crate::opt`), the
+        // call is trampolined so tail recursion runs in constant stack space. Early `return`s
+        // in the effect-free prefix are honored; the prefix is re-evaluated per iteration but
+        // is pure, so this cannot change observable behavior.
+        if !tco {
+            let call_env = Env::child(f_env);
+            for (p, a) in params.iter().zip(args) {
+                call_env.borrow_mut().set_value(&p.name.value, a);
+            }
+            return self.eval_block_tail(&call_env, body);
+        }
+        let mut cparams: Vec<Param> = params.to_vec();
+        let mut cbody: Block = (*body).clone();
+        let mut cenv = Rc::clone(f_env);
+        let mut cargs = args;
+        loop {
+            let call_env = Env::child(&cenv);
+            for (p, a) in cparams.iter().zip(&cargs) {
+                call_env.borrow_mut().set_value(&p.name.value, a.clone());
+            }
+            let Some(tc) = crate::opt::tail_call_of(&cbody) else {
+                return self.eval_block_tail(&call_env, &cbody);
+            };
+            let n = cbody.stmts.len();
+            for stmt in &cbody.stmts[..n - 1] {
+                if let Flow::Return(v) = self.eval_stmt(&call_env, stmt)? {
+                    return Ok(v);
+                }
+            }
+            let ExprKind::Path { segments } = &tc.callee.kind else {
+                return self.eval_block_tail(&call_env, &cbody);
+            };
+            let next = self.resolve_func(&call_env, segments).ok_or_else(|| {
+                RuntimeError::Message(format!("unknown function `{}`", path_key(segments)))
+            })?;
+            let nargs: Vec<Value> = tc.args.iter().map(|a| self.eval_expr(&call_env, a)).collect::<Result<_, _>>()?;
+            match next {
+                Function::Host { params: np, ret: _, body: nb, env: nenv } => {
+                    if nargs.len() != np.len() {
+                        return crate::error::err(format!("expected {} arguments, got {}", np.len(), nargs.len()));
+                    }
+                    cparams = np;
+                    cbody = nb;
+                    cenv = nenv;
+                    cargs = nargs;
+                }
+                other => return self.apply_function(&other, nargs),
             }
         }
     }
@@ -3736,6 +3826,9 @@ impl Evaluator {
                 }
                 let av = require_numeric_array(&av)?;
                 let bv = require_numeric_array(&bv)?;
+                if let Some(v) = self.try_simd_arrays(op, &av, &bv) {
+                    return Ok(Value::Array(v));
+                }
                 let mut out = Vec::with_capacity(av.len());
                 for (x, y) in av.into_iter().zip(bv) {
                     match self.eval_number_binary(op, x, y)? {
@@ -3751,6 +3844,9 @@ impl Evaluator {
                     return crate::error::err("cannot operate on an empty array");
                 }
                 let av = require_numeric_array(&av)?;
+                if let Some(v) = self.try_simd_scalar(op, &av, &scalar) {
+                    return Ok(Value::Array(v));
+                }
                 let mut out = Vec::with_capacity(av.len());
                 for x in av {
                     match self.eval_number_binary(op, x, scalar.clone())? {
@@ -3766,6 +3862,9 @@ impl Evaluator {
                     return crate::error::err("cannot operate on an empty array");
                 }
                 let bv = require_numeric_array(&bv)?;
+                if let Some(v) = self.try_simd_scalar_left(op, &scalar, &bv) {
+                    return Ok(Value::Array(v));
+                }
                 let mut out = Vec::with_capacity(bv.len());
                 for y in bv {
                     match self.eval_number_binary(op, scalar.clone(), y)? {
@@ -3785,6 +3884,31 @@ impl Evaluator {
             Value::Number(n) => Ok(n),
             _ => crate::error::err("cannot broadcast with a non-numeric scalar"),
         }
+    }
+
+    /// SIMD-accelerated elementwise `array ⊕ array` when the active tier is `O3` and both arrays are
+    /// dense `F64` (spec §10.2). Returns `None` to fall back to the scalar loop.
+    fn try_simd_arrays(&self, op: BinOp, a: &[Number], b: &[Number]) -> Option<Vec<Value>> {
+        if self.current_config().opt_level < OptLevel::O3 {
+            return None;
+        }
+        crate::simd::try_f64x4_arrays(op, a, b).map(|nums| nums.into_iter().map(Value::Number).collect())
+    }
+
+    /// SIMD-accelerated elementwise `array ⊕ scalar` when the active tier is `O3` (spec §10.2).
+    fn try_simd_scalar(&self, op: BinOp, a: &[Number], scalar: &Number) -> Option<Vec<Value>> {
+        if self.current_config().opt_level < OptLevel::O3 {
+            return None;
+        }
+        crate::simd::try_f64x4_scalar(op, a, scalar).map(|nums| nums.into_iter().map(Value::Number).collect())
+    }
+
+    /// SIMD-accelerated elementwise `scalar ⊕ array` when the active tier is `O3` (spec §10.2).
+    fn try_simd_scalar_left(&self, op: BinOp, scalar: &Number, b: &[Number]) -> Option<Vec<Value>> {
+        if self.current_config().opt_level < OptLevel::O3 {
+            return None;
+        }
+        crate::simd::try_f64x4_scalar_left(op, scalar, b).map(|nums| nums.into_iter().map(Value::Number).collect())
     }
 
     /// `match`/`if let`/`while let` arm evaluation (spec §4.4/§16.3): first matching pattern (with optional guard) wins.
@@ -4253,7 +4377,7 @@ impl Evaluator {
                 }
                 let arg_id = self.to_expr_id(&args[0])?;
                 let app = self.pool.apply(f_id, &[arg_id]);
-                let simp = simplify(self.pool, self.builtins, app);
+                let simp = self.simplify_current(app);
                 Ok(self.value_from_expr(simp))
             }
         }
@@ -4336,6 +4460,7 @@ static DEFAULT_CONFIG: Config = Config {
     broadcast: true,
     loop_optimization: true,
     simplify_level: 2,
+    opt_level: crate::config::OptLevel::O2,
     num_to_big: true,
     print_format: crate::config::PrintFormat::Latex,
     overload_policy: OverloadPolicy::Warn,

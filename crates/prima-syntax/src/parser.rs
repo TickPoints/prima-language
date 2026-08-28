@@ -510,10 +510,11 @@ impl Parser {
             Stmt::ClassDef { name, mut annotations, mut members, span, docs } => {
                 annotations.extend_from_slice(anns);
                 // A `@builtin` class carries the annotation on every method (signature-only bodies are the builtin form, spec §18.4).
-                if anns.contains(&Annotation::Builtin) {
+                if let Some(Annotation::Builtin { opt_level }) = anns.iter().find(|a| a.is_builtin()) {
+                    let level = *opt_level;
                     for m in &mut members {
                         if let ClassMemberKind::Method { annotations, .. } = &mut m.kind {
-                            annotations.push(Annotation::Builtin);
+                            annotations.push(Annotation::Builtin { opt_level: level });
                         }
                     }
                 }
@@ -596,7 +597,7 @@ impl Parser {
         // A `@builtin` fn carries an optional `::`-joined path name (`Matrix::zeros`, spec §18.4),
         // which is exported under that joined key for module-qualified calls. Only `@builtin` fns
         // accept the path form; a plain `fn a::b() {}` stays an error (`expected `(``).
-        let name = if stmt_annotations.contains(&Annotation::Builtin) && self.at(&TokenKind::ColonColon) {
+        let name = if stmt_annotations.iter().any(|a| a.is_builtin()) && self.at(&TokenKind::ColonColon) {
             let mut joined = name.value;
             while self.eat(&TokenKind::ColonColon).is_some() {
                 self.skip_newlines();
@@ -628,8 +629,10 @@ impl Parser {
         }
         // Signature-only `@builtin fn` (spec §18.4): no body — the implementation is the Rust host
         // builtin of the same name. A `@builtin` before the signature (statement level) or after it
-        // both mark the signature-only form.
-        let is_builtin = annotations.contains(&Annotation::Builtin);
+        // both mark the signature-only form. The rule that tier `O0` must be signature-only and tier
+        // `O1..O3` must have a `.pra` body is enforced by `check`/the evaluator (E0056); the parser only
+        // decides whether the `{ ... }` body is present.
+        let is_builtin = annotations.iter().any(|a| a.is_builtin());
         let body = if is_builtin && !self.at(&TokenKind::LBrace) {
             self.end_statement()?;
             Block { stmts: Vec::new(), span: start }
@@ -689,7 +692,23 @@ impl Parser {
                     "parallel" => Annotation::Parallel,
                     "jit" => Annotation::Jit,
                     "gpu" => Annotation::Gpu,
-                    "builtin" => Annotation::Builtin,
+                    "builtin" => {
+                        // `@builtin(O0)`..`@builtin(O3)` (spec §18.4): an optional tier argument;
+                        // bare `@builtin` is tier `O0`. An invalid tier is a compile error (E0057).
+                        let mut opt_level = 0u8;
+                        if self.eat(&TokenKind::LParen).is_some() {
+                            self.skip_newlines();
+                            let seg = self.parse_ident("optimization level")?;
+                            let level_pat: [&str; 4] = ["O0", "O1", "O2", "O3"];
+                            match level_pat.iter().position(|&l| l == seg.value) {
+                                Some(idx) => opt_level = idx as u8,
+                                None => return Err(self.err(seg.span, format!("invalid `@builtin` optimization level `{}` (E0057)", seg.value))),
+                            }
+                            self.skip_newlines();
+                            self.expect(&TokenKind::RParen, "`)`")?;
+                        }
+                        Annotation::Builtin { opt_level }
+                    }
                     // `@c_api::extern` (spec §18.4).
                     "c_api" if self.eat(&TokenKind::ColonColon).is_some() => {
                         let seg = self.parse_ident("annotation segment")?;
@@ -2258,7 +2277,7 @@ mod tests {
             Stmt::Pub(inner) => match *inner {
                 Stmt::FnDef { name, params, annotations, body, ret, .. } => {
                     assert_eq!(name.value, "Matrix::zeros");
-                    assert!(annotations.contains(&Annotation::Builtin));
+                    assert!(annotations.iter().any(|a| a.is_builtin()));
                     assert_eq!(params.len(), 2);
                     assert!(matches!(ret, Some(Type::Matrix(_))));
                     assert!(body.stmts.is_empty(), "signature-only builtin must have an empty body");
@@ -2276,7 +2295,7 @@ mod tests {
         match stmt {
             Stmt::FnDef { name, annotations, body, .. } => {
                 assert_eq!(name.value, "Util::twice");
-                assert!(annotations.contains(&Annotation::Builtin));
+                assert!(annotations.iter().any(|a| a.is_builtin()));
                 assert!(body.stmts.is_empty());
             }
             other => panic!("expected FnDef, got {other:?}"),
@@ -2286,6 +2305,25 @@ mod tests {
     #[test]
     fn non_builtin_fn_rejects_path_name() {
         assert!(parse_err("fn a::b() {}"), "path names are only allowed on `@builtin` fns");
+    }
+
+    #[test]
+    fn builtin_tier_annotation_parses() {
+        // `@builtin(O2)` carries its tier (spec §18.4); bare `@builtin` is tier `O0`.
+        let p1 = crate::parse("@builtin(O2)\npub fn scale(a: Integer) -> Integer;").expect("parse failed");
+        let mut stmt = p1.stmts.into_iter().next().unwrap();
+        if let Stmt::Pub(inner) = stmt { stmt = *inner; }
+        let Stmt::FnDef { annotations, body, .. } = stmt else { panic!("expected FnDef") };
+        assert_eq!(annotations.iter().map(|a| a.builtin_level()).max(), Some(2));
+        assert!(body.stmts.is_empty());
+
+        let p0 = crate::parse("@builtin\npub fn identity(a: Integer) -> Integer;").expect("parse failed");
+        let mut stmt0 = p0.stmts.into_iter().next().unwrap();
+        if let Stmt::Pub(inner) = stmt0 { stmt0 = *inner; }
+        let Stmt::FnDef { annotations, .. } = stmt0 else { panic!("expected FnDef") };
+        assert_eq!(annotations.iter().map(|a| a.builtin_level()).max(), Some(0));
+
+        assert!(parse_err("@builtin(O9) pub fn f() -> Integer;"), "invalid tier is E0057");
     }
 
     #[test]
@@ -2368,7 +2406,7 @@ mod tests {
             Stmt::Pub(inner) => match *inner {
                 Stmt::FnDef { name, annotations, body, .. } => {
                     assert_eq!(name.value, "answer");
-                    assert!(annotations.contains(&Annotation::Builtin));
+                    assert!(annotations.iter().any(|a| a.is_builtin()));
                     assert!(body.stmts.is_empty());
                 }
                 other => panic!("expected FnDef, got {other:?}"),

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`opt_level` optimization tiers (spec §10.2/§13.2, Phase 8).** A new `OptLevel` policy (`O0`–`O3`, default `O2`) gates the compiler optimization channels: the arithmetic-series loop closed form now requires `opt_level >= O1`, automatic JIT hot-path compilation and tail-call optimization require `opt_level >= O2`, and tier `O3` enables SIMD vectorization of dense `F64` array elementwise binary ops (`runtime::simd`, via the portable `wide` crate on stable Rust). `simplify_level` was wired into the symbolic simplify pipeline (`simplify_at`), so lowering it reduces only how deeply a symbolic value is canonicalized — never its mathematical value. Results are semantically identical across tiers (equivalence tests; IEEE lane arithmetic is bit-identical to scalar).
+
+### Changed
+
+- **`@builtin` layered optimization (spec §18.4, Phase 9).** `@builtin` may now take a tier, `@builtin(O0)`–`@builtin(O3)`: tier `O0` (bare) stays signature-only and must bind to a registered Rust implementation (`E0055`/`E0056`); tiers `O1`–`O3` carry a `.pra` fallback body (the semantic authority, `E0056` if absent) plus an optional Rust fast path used when `opt_level >= N`, with an invalid tier reported as `E0057`. A new `Function::Layered` variant dispatches between the two implementations at call time. `register_impl` was augmented with `register_impl_level` and a declarative `builtin!` macro (`builtin!("num::fibonacci", fibonacci_impl, O1)`) that replaces the manual string-keyed registration calls across the stdlib crates; the `.pra` `@builtin(ON)` annotation remains the authoritative dispatch tier.
+
 ## [0.2.2-alpha] - 2026-08-22
 ### Added
 

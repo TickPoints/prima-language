@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use num_bigint::BigInt;
 use prima_core::{Number, Value};
-use prima_runtime::stdlib::register_impl;
+use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
@@ -55,13 +55,33 @@ fn radix_arg(args: &[Value], i: usize, fname: &str) -> Result<u32, RuntimeError>
 /// `@builtin` declaration in the embedded `num.pra` signature module binds to the implementation
 /// registered under its fully-qualified `num::<name>` key (spec §18.4).
 pub fn register() {
-    register_impl("num::gcd", gcd);
-    register_impl("num::lcm", lcm);
-    register_impl("num::is_prime", is_prime);
-    register_impl("num::next_prime", next_prime);
-    register_impl("num::random_integer", random_integer);
-    register_impl("num::to_base", to_base);
-    register_impl("num::from_base", from_base);
+    builtin!("num::gcd", gcd);
+    builtin!("num::lcm", lcm);
+    builtin!("num::is_prime", is_prime);
+    builtin!("num::next_prime", next_prime);
+    builtin!("num::random_integer", random_integer);
+    builtin!("num::to_base", to_base);
+    builtin!("num::from_base", from_base);
+    // Layered `@builtin(O1)` (spec §18.4): a Rust fast path used when `opt_level >= O1`, plus a `.pra`
+    // fallback body in `num.pra`. The two implementations must agree (spec §18.4).
+    builtin!("num::fibonacci", fibonacci, O1);
+}
+
+fn fibonacci(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
+    arity(args, 1, "num::fibonacci")?;
+    let n = int_arg(args, 0, "num::fibonacci")?;
+    if n < BigInt::from(0) {
+        return Err(RuntimeError::Message("num::fibonacci expects a non-negative integer".into()));
+    }
+    let mut a = BigInt::from(0);
+    let mut b = BigInt::from(1);
+    let mut i = BigInt::from(0);
+    while i < n {
+        let t = &a + &b;
+        a = std::mem::replace(&mut b, t);
+        i += 1;
+    }
+    Ok(Value::Number(Number::Integer(a)))
 }
 
 fn gcd(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {

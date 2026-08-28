@@ -240,10 +240,27 @@ pub enum Annotation {
     Parallel,
     Jit,
     Gpu,
-    /// `@builtin`: implementation provided by the Rust host (spec §18.4).
-    Builtin,
+    /// `@builtin(ON)` (spec §18.4): implementation provided by the Rust host. `opt_level` is the
+    /// layered-optimization tier `O0..=O3` (default `O0`, equivalent to bare `@builtin`); `O1..=O3`
+    /// functions carry a `.pra` fallback body plus an optional Rust implementation.
+    Builtin { opt_level: u8 },
     /// `@c_api::extern`: export a C ABI interface (spec §18.4).
     CApiExtern,
+}
+
+impl Annotation {
+    /// Whether this is a `@builtin` annotation (any tier, spec §18.4).
+    pub fn is_builtin(&self) -> bool {
+        matches!(self, Annotation::Builtin { .. })
+    }
+
+    /// The `@builtin` optimization tier (`O0..=O3`), `0` for non-`@builtin` annotations.
+    pub fn builtin_level(&self) -> u8 {
+        match self {
+            Annotation::Builtin { opt_level } => *opt_level,
+            _ => 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

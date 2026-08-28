@@ -9,6 +9,14 @@ use crate::number::Number;
 /// `Pow(sqrt(x), 2) → x`, Euler's `e^{iθ} → cos + i·sin`, constant folding for `sin/cos/exp/log/ln/abs/sqrt`,
 /// `Pow(x, 1/2) → \sqrt{x}`. Simplification never changes the mathematical value.
 pub fn simplify(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId) -> ExprId {
+    simplify_at(pool, builtins, id, 3)
+}
+
+/// Simplification gated by a level (spec §8.3/§13.2): a lower `simplify_level` reduces how many
+/// rules are applied, while intern-time level-0/1 canonicalization (`0*x→0`, `1*x→x`, constant
+/// merging) always holds. Level `>= 2` enables the symbolic rules (builtin constant folding,
+/// `sqrt`-elimination, Euler's formula); level `3` is a superset for future rationalization rules.
+pub fn simplify_at(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId, level: u8) -> ExprId {
     let node = match pool.get(id) {
         Some(n) => n,
         None => return id,
@@ -18,9 +26,9 @@ pub fn simplify(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId) -> ExprI
             if items.is_empty() {
                 return id;
             }
-            let mut acc = simplify(pool, builtins, items[0]);
+            let mut acc = simplify_at(pool, builtins, items[0], level);
             for &it in &items[1..] {
-                let s = simplify(pool, builtins, it);
+                let s = simplify_at(pool, builtins, it, level);
                 acc = pool.add2(acc, s);
             }
             acc
@@ -29,38 +37,41 @@ pub fn simplify(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId) -> ExprI
             if items.is_empty() {
                 return id;
             }
-            let mut acc = simplify(pool, builtins, items[0]);
+            let mut acc = simplify_at(pool, builtins, items[0], level);
             for &it in &items[1..] {
-                let s = simplify(pool, builtins, it);
+                let s = simplify_at(pool, builtins, it, level);
                 acc = pool.mul2(acc, s);
             }
             acc
         }
         ExprData::Pow { base, exp } => {
-            let b = simplify(pool, builtins, base);
-            let e = simplify(pool, builtins, exp);
-            if let Some(ExprData::Apply { f, args }) = pool.get(b)
-                && f == pool.symbol(builtins.sqrt)
-                && args.len() == 1
-                && e == pool.integer(2)
-            {
-                return simplify(pool, builtins, args[0]);
-            }
-            if b == pool.symbol(builtins.e) && let Some(r) = euler(pool, builtins, e) {
-                return r;
+            let b = simplify_at(pool, builtins, base, level);
+            let e = simplify_at(pool, builtins, exp, level);
+            if level >= 2 {
+                if let Some(ExprData::Apply { f, args }) = pool.get(b)
+                    && f == pool.symbol(builtins.sqrt)
+                    && args.len() == 1
+                    && e == pool.integer(2)
+                {
+                    return simplify_at(pool, builtins, args[0], level);
+                }
+                if b == pool.symbol(builtins.e) && let Some(r) = euler(pool, builtins, e) {
+                    return r;
+                }
             }
             pool.pow2(b, e)
         }
         ExprData::Apply { f, args } => {
             let mut new_args = Vec::with_capacity(args.len());
             for &a in args.iter() {
-                new_args.push(simplify(pool, builtins, a));
+                new_args.push(simplify_at(pool, builtins, a, level));
             }
-            if let Some(r) = apply_rule(pool, builtins, f, &new_args) {
-                r
-            } else {
-                pool.apply(f, &new_args)
+            if level >= 2
+                && let Some(r) = apply_rule(pool, builtins, f, &new_args)
+            {
+                return r;
             }
+            pool.apply(f, &new_args)
         }
         _ => id,
     }
