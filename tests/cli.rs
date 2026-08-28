@@ -112,6 +112,7 @@ fn run_all_examples_succeed() {
         "number_literals.pra",
         "simple.pra",
         "config_fraction.pra",
+        "config_simplify.pra",
         "loop_optimization.pra",
         "collapse.pra",
         "control_flow.pra",
@@ -133,6 +134,13 @@ fn run_all_examples_succeed() {
         "io.pra",
         "physics.pra",
         "sys_time.pra",
+        "mymath.pra",
+        "fstring.pra",
+        "jit.pra",
+        "autodiff.pra",
+        "opt_levels.pra",
+        "builtin_layers.pra",
+        "capi.pra",
     ];
     for name in examples {
         Command::cargo_bin("prima")
