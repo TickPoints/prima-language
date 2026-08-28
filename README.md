@@ -116,10 +116,11 @@ Where the spec and the implementation plan conflict, the implementation plan win
 ```bash
 cargo test --workspace     # full test suite (insta snapshots, assert_cmd CLI tests, proptest)
 cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check
 INSTA_UPDATE=always cargo test   # refresh insta snapshots
 ```
 
-CI (`.github/workflows/ci.yml`) enforces clippy (warnings denied) and the full test suite on Linux and Windows for every push and PR.
+CI (`.github/workflows/ci.yml`) enforces formatting, clippy (warnings denied), and the full test suite on Linux and Windows for every push and PR.
 
 Conventional Commits (`feat:` / `fix:` / `test:` / `docs:` / `refactor:` / `chore:`), one topic per commit.
 

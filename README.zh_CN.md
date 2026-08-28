@@ -116,10 +116,11 @@ prima doc    <file.pra> | --stdlib 依据 /// 注释生成 Markdown 文档
 ```bash
 cargo test --workspace       # 完整测试套件（insta 快照、assert_cmd CLI 测试、proptest）
 cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check
 INSTA_UPDATE=always cargo test   # 刷新 insta 快照
 ```
 
-CI（`.github/workflows/ci.yml`）在每次推送与 PR 上，于 Linux 与 Windows 强制 clippy（warnings denied）与完整测试套件。
+CI（`.github/workflows/ci.yml`）在每次推送与 PR 上，于 Linux 与 Windows 强制格式化、clippy（warnings denied）与完整测试套件。
 
 提交使用 Conventional Commits（`feat:` / `fix:` / `test:` / `docs:` / `refactor:` / `chore:`），一条一主题。
 
