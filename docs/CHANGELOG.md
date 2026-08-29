@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Windows io tests.** `crates/prima-stdlib/tests/io.rs` embedded the temp-file path directly into a Prima string literal; on Windows the path's backslashes (e.g. `\U` in `C:\Users\...`) were read as invalid escape sequences and every test failed with `syntax error: invalid escape sequence`. Paths are now escaped with `primed_str` (doubling backslashes, quoting double-quotes, spec §18.1) before interpolation.
+- **Windows plot tests.** `crates/prima-stdlib/tests/plot.rs` embedded the temp-file path directly into Prima string literals via `Path::display()`; on Windows the backslashes were consumed as escape sequences, so the three tests that actually write a file failed (`plot_savefig_writes_svg`, `plot_clear_then_plot_again`, `plot_scatter_and_bar_render`) while the two "rejection" tests only passed because a parse error made them fail coincidentally. Paths are now escaped with `primed_str` (doubling backslashes, quoting double-quotes, spec §18.1) before interpolation.
+- **Termux/Android install.** `install.sh` defaulted to glibc (`*`-unknown-linux-gnu) on every Linux, which cannot load on Termux (bionic libc). The script now detects Termux via `$TERMUX_VERSION`/`$PREFIX` and selects the static musl target (`*`-unknown-linux-musl) and installs into `$PREFIX/bin`; `PRIMA_LIBC=gnu` still overrides on any Linux, and the target detection respects `PRIMA_LIBC` as before on regular distros.
 
 ## [0.2.4-beta] - 2026-08-28
 
