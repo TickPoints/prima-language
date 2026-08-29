@@ -1147,6 +1147,7 @@ name = "prima-runtime"
 version = "0.2.4-beta"
 dependencies = [
  "num-bigint",
+ "num-integer",
  "num-traits",
  "prima-core",
  "prima-jit",

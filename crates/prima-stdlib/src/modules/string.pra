@@ -1,49 +1,372 @@
 //! The `String` type and its method set (spec §18.1).
 //!
 //! Method list and usage are maintained here; the `///` comments are the single source of truth
-//! and feed `prima doc` and diagnostic notes (spec §4.1/§16.4).
+//! and feed `prima doc` and diagnostic notes (spec §4.1/§16.4). The method set follows the stable
+//! Python 3 `str` methods, adapted to Prima naming; hot methods are layered (`@builtin(ON)`, spec
+//! §18.4) with a Rust fast path, and low-frequency readable methods are written directly in `.pra`.
 //!
 //! Associated functions: `String::new()` (empty string) and `String::from(x)` (any value rendered
 //! with f-string semantics); `from` is a keyword so it is not declared as a member here.
+//!
+//! Naming/semantics notes: `split("")` returns the array of single characters (Python `list(s)`);
+//! `casefold` is a simplified lowercase (Python `casefold` also folds e.g. `ß` → `ss`);
+//! `is_digit` uses Unicode `Numeric` (Python `isdigit` excludes fractions).
 
 /// A UTF-8 string value (value-semantic copies; methods return new strings).
 class String {
     /// An empty string.
-    pub fn new() -> Self,
+    pub fn new() -> Self {
+        ""
+    },
     /// Returns the number of Unicode scalar values in `self`.
-    pub fn len(self) -> Integer,
+    pub fn len(self) -> Integer @builtin,
     /// Returns `true` when `self` is the empty string.
-    pub fn is_empty(self) -> Bool,
+    pub fn is_empty(self) -> Bool @builtin,
     /// Append `s` to the end of `self`, returning the new string.
-    pub fn push(self, s: String) -> String,
+    pub fn push(self, s: String) -> String @builtin,
     /// Insert `s` at `index` (in Unicode scalar values); errors when out of range.
-    pub fn insert(self, index: Integer, s: String) -> Result<String, String>,
+    pub fn insert(self, index: Integer, s: String) -> Result<String, String> @builtin,
     /// The Unicode scalar value at `index`, or `None` when out of range.
-    pub fn char_at(self, index: Integer) -> Option<Char>,
+    pub fn char_at(self, index: Integer) -> Option<Char> @builtin,
     /// The substring in `[start, end)` measured in Unicode scalar values.
-    pub fn substring(self, start: Integer, end: Integer) -> String,
+    pub fn substring(self, start: Integer, end: Integer) -> String @builtin,
     /// Returns `true` when `self` contains `pat` as a substring.
-    pub fn contains(self, pat: String) -> Bool,
-    /// Returns `true` when `self` starts with `pat`.
-    pub fn starts_with(self, pat: String) -> Bool,
-    /// Returns `true` when `self` ends with `pat`.
-    pub fn ends_with(self, pat: String) -> Bool,
-    /// Replace every occurrence of `old` in `self` with `new`.
-    pub fn replace(self, old: String, new: String) -> String,
-    /// Strip ASCII whitespace from both ends of `self`.
-    pub fn trim(self) -> String,
-    /// Strip any leading/trailing character present in `pat` from `self`.
-    pub fn strip(self, pat: String) -> String,
-    /// Split `self` on `sep`, returning an array of substrings.
-    pub fn split(self, sep: String) -> Array<String>,
-    /// Join the array of strings `parts` using `self` as the separator.
-    pub fn join(self, parts: Array<String>) -> String,
-    /// The index of the first occurrence of `pat`, or `None`.
-    pub fn find(self, pat: String) -> Option<Integer>,
+    pub fn contains(self, pat: String) -> Bool @builtin,
     /// An uppercase copy of `self`.
-    pub fn to_upper(self) -> String,
+    pub fn to_upper(self) -> String @builtin,
     /// A lowercase copy of `self`.
-    pub fn to_lower(self) -> String,
+    pub fn to_lower(self) -> String @builtin,
     /// `self` repeated `n` times.
-    pub fn repeat(self, n: Integer) -> String,
+    pub fn repeat(self, n: Integer) -> String @builtin,
+    /// Strip ASCII whitespace from both ends of `self`.
+    pub fn trim(self) -> String @builtin,
+    /// Strip any leading/trailing character present in `pat` from `self`.
+    pub fn lstrip(self, pat: String) -> String @builtin,
+    /// Strip any trailing character present in `pat` from `self`.
+    pub fn rstrip(self, pat: String) -> String @builtin,
+    /// `true` when every cased character is uppercase and at least one is cased.
+    pub fn is_upper(self) -> Bool @builtin,
+    /// `true` when every cased character is lowercase and at least one is cased.
+    pub fn is_lower(self) -> Bool @builtin,
+    /// `true` when non-empty and every character is alphabetic.
+    pub fn is_alpha(self) -> Bool @builtin,
+    /// `true` when non-empty and every character is a digit (Unicode `Numeric`).
+    pub fn is_digit(self) -> Bool @builtin,
+    /// `true` when non-empty and every character is alphanumeric.
+    pub fn is_alnum(self) -> Bool @builtin,
+    /// `true` when non-empty and every character is whitespace.
+    pub fn is_space(self) -> Bool @builtin,
+    /// `true` when every character is ASCII (the empty string is ASCII).
+    pub fn is_ascii(self) -> Bool @builtin,
+    /// First character uppercased, the rest lowercased.
+    pub fn capitalize(self) -> String @builtin,
+    /// Title-cased copy: the first cased character of each word is upper, the rest lower.
+    pub fn title(self) -> String @builtin,
+    /// Copy with each uppercase character lowercased and vice versa.
+    pub fn swapcase(self) -> String @builtin,
+    /// Lowercased copy (a simplified `casefold`; see module doc).
+    pub fn casefold(self) -> String @builtin,
+    /// Split `self` on `sep`, returning an array of substrings; `split("")` yields the characters.
+    pub fn split(self, sep: String) -> Array<String> @builtin(O2) {
+        if sep == "" {
+            let mut out = [];
+            let mut i = 0;
+            while i < self.len() {
+                out.push(to_string(self.char_at(i).unwrap()));
+                i += 1;
+            }
+            return out;
+        }
+        let mut out = [];
+        let mut pos = 0;
+        let mut searching = true;
+        while searching {
+            let idx = self.substring(pos, self.len()).find(sep);
+            if let Some(g) = idx {
+                out.push(self.substring(pos, pos + g));
+                pos += g + sep.len();
+            } else {
+                searching = false;
+            }
+        }
+        out.push(self.substring(pos, self.len()));
+        out
+    },
+    /// Replace every occurrence of `old` in `self` with `new` (non-overlapping).
+    pub fn replace(self, old: String, new: String) -> String @builtin(O2) {
+        if old == "" {
+            return self;
+        }
+        let mut out = "";
+        let mut pos = 0;
+        let mut searching = true;
+        while searching {
+            let idx = self.substring(pos, self.len()).find(old);
+            if let Some(g) = idx {
+                out = out.push(self.substring(pos, pos + g));
+                out = out.push(new);
+                pos += g + old.len();
+            } else {
+                searching = false;
+            }
+        }
+        out.push(self.substring(pos, self.len()))
+    },
+    /// Strip any leading/trailing character present in `pat` (a character set) from `self`.
+    pub fn strip(self, pat: String) -> String @builtin(O2) {
+        let n = self.len();
+        let mut start = 0;
+        let mut done = false;
+        while !done && start < n {
+            if pat.contains(to_string(self.char_at(start).unwrap())) {
+                start += 1;
+            } else {
+                done = true;
+            }
+        }
+        let mut end = n;
+        done = false;
+        while !done && end > start {
+            if pat.contains(to_string(self.char_at(end - 1).unwrap())) {
+                end -= 1;
+            } else {
+                done = true;
+            }
+        }
+        self.substring(start, end)
+    },
+    /// The char index of the first occurrence of `pat`, or `None`; `find("")` is `Some(0)`.
+    pub fn find(self, pat: String) -> Option<Integer> @builtin(O2) {
+        if pat == "" {
+            return Some(0);
+        }
+        let n = self.len();
+        let m = pat.len();
+        let mut i = 0;
+        while i + m <= n {
+            if self.substring(i, i + m) == pat {
+                return Some(i);
+            }
+            i += 1;
+        }
+        None()
+    },
+    /// Join the array of strings `parts` using `self` as the separator.
+    pub fn join(self, parts: Array<String>) -> String @builtin(O2) {
+        let mut out = "";
+        let mut i = 0;
+        while i < len(parts) {
+            if i > 0 {
+                out = out.push(self);
+            }
+            out = out.push(parts[i]);
+            i += 1;
+        }
+        out
+    },
+    /// Returns `true` when `self` starts with `pat`.
+    pub fn starts_with(self, pat: String) -> Bool {
+        let n = pat.len();
+        if n > self.len() {
+            return false;
+        }
+        self.substring(0, n) == pat
+    },
+    /// Returns `true` when `self` ends with `pat`.
+    pub fn ends_with(self, pat: String) -> Bool {
+        let n = pat.len();
+        let m = self.len();
+        if n > m {
+            return false;
+        }
+        self.substring(m - n, m) == pat
+    },
+    /// The number of non-overlapping occurrences of `pat` in `self`; `count("")` is `len + 1`.
+    pub fn count(self, pat: String) -> Integer {
+        if pat == "" {
+            return self.len() + 1;
+        }
+        let mut n = 0;
+        let mut pos = 0;
+        let mut searching = true;
+        while searching {
+            let idx = self.substring(pos, self.len()).find(pat);
+            if let Some(g) = idx {
+                n += 1;
+                pos += g + pat.len();
+            } else {
+                searching = false;
+            }
+        }
+        n
+    },
+    /// The char index of the last occurrence of `pat`, or `None`; `rfind("")` is `len`.
+    pub fn rfind(self, pat: String) -> Option<Integer> {
+        if pat == "" {
+            return Some(self.len());
+        }
+        let m = pat.len();
+        let mut pos = self.len();
+        while pos >= m {
+            if self.substring(pos - m, pos) == pat {
+                return Some(pos - m);
+            }
+            pos -= 1;
+        }
+        None()
+    },
+    /// `self` without the `prefix`, or unchanged when it does not start with `prefix`.
+    pub fn removeprefix(self, prefix: String) -> String {
+        if self.starts_with(prefix) {
+            return self.substring(prefix.len(), self.len());
+        }
+        self
+    },
+    /// `self` without the `suffix`, or unchanged when it does not end with `suffix`.
+    pub fn removesuffix(self, suffix: String) -> String {
+        if self.ends_with(suffix) {
+            return self.substring(0, self.len() - suffix.len());
+        }
+        self
+    },
+    /// Left-pad with `fill` (repeated) to at least `width` characters.
+    pub fn ljust(self, width: Integer, fill: String) -> String {
+        let mut out = self;
+        while out.len() < width {
+            out = out.push(fill);
+        }
+        out
+    },
+    /// Right-pad with `fill` (repeated) to at least `width` characters.
+    pub fn rjust(self, width: Integer, fill: String) -> String {
+        let mut out = "";
+        while out.len() + self.len() < width {
+            out = out.push(fill);
+        }
+        out.push(self)
+    },
+    /// Center `self` in `width` columns, padding with `fill` (extra goes right).
+    pub fn center(self, width: Integer, fill: String) -> String {
+        let n = self.len();
+        if width <= n {
+            return self;
+        }
+        let extra = width - n;
+        let left = extra / 2;
+        let right = extra - left;
+        let mut out = "";
+        let mut i = 0;
+        while i < left {
+            out = out.push(fill);
+            i += 1;
+        }
+        out = out.push(self);
+        i = 0;
+        while i < right {
+            out = out.push(fill);
+            i += 1;
+        }
+        out
+    },
+    /// Zero-pad on the left (after any leading `+`/`-`) to at least `width` characters.
+    pub fn zfill(self, width: Integer) -> String {
+        let n = self.len();
+        if width <= n {
+            return self;
+        }
+        let pad = width - n;
+        let mut sign = "";
+        let mut rest = self;
+        if self.starts_with("-") || self.starts_with("+") {
+            sign = self.substring(0, 1);
+            rest = self.substring(1, n);
+        }
+        let mut out = sign;
+        let mut i = 0;
+        while i < pad {
+            out = out.push("0");
+            i += 1;
+        }
+        out.push(rest)
+    },
+    /// Split on line boundaries (`\n`, with a trailing `\r` stripped), keeping no trailing empty line.
+    pub fn splitlines(self) -> Array<String> {
+        if self.len() == 0 {
+            return [];
+        }
+        let mut out = [];
+        let mut start = 0;
+        let mut pos = 0;
+        let n = self.len();
+        while pos < n {
+            if self.substring(pos, pos + 1) == "\n" {
+                let line = self.substring(start, pos);
+                if line.ends_with("\r") {
+                    out.push(line.substring(0, line.len() - 1));
+                } else {
+                    out.push(line);
+                }
+                start = pos + 1;
+            }
+            pos += 1;
+        }
+        if start < n {
+            let line = self.substring(start, n);
+            if line.ends_with("\r") {
+                out.push(line.substring(0, line.len() - 1));
+            } else {
+                out.push(line);
+            }
+        }
+        out
+    },
+    /// Expand tab characters to the next multiple of `tabsize` columns.
+    pub fn expandtabs(self, tabsize: Integer) -> String {
+        if tabsize <= 0 {
+            return self;
+        }
+        let mut out = "";
+        let mut col = 0;
+        let mut i = 0;
+        let n = self.len();
+        while i < n {
+            let ch = self.substring(i, i + 1);
+            if ch == "\t" {
+                let spaces = tabsize - (col % tabsize);
+                let mut j = 0;
+                while j < spaces {
+                    out = out.push(" ");
+                    j += 1;
+                }
+                col += spaces;
+            } else {
+                out = out.push(ch);
+                col += 1;
+            }
+            i += 1;
+        }
+        out
+    },
+    /// Split at the first occurrence of `sep` into `(head, sep, tail)`; `("", "", "")` when absent.
+    pub fn partition(self, sep: String) -> Tuple<String, String, String> {
+        if sep == "" {
+            return (self, "", "");
+        }
+        let idx = self.find(sep);
+        if let Some(at) = idx {
+            return (self.substring(0, at), sep, self.substring(at + sep.len(), self.len()));
+        }
+        (self, "", "")
+    },
+    /// Split at the last occurrence of `sep` into `(head, sep, tail)`; `("", "", "")` when absent.
+    pub fn rpartition(self, sep: String) -> Tuple<String, String, String> {
+        if sep == "" {
+            return ("", "", self);
+        }
+        let idx = self.rfind(sep);
+        if let Some(at) = idx {
+            return (self.substring(0, at), sep, self.substring(at + sep.len(), self.len()));
+        }
+        ("", "", self)
+    },
 }

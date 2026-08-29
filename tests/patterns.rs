@@ -6,10 +6,12 @@ use prima_core::{Number, Value};
 use prima_runtime::Evaluator;
 
 fn eval(src: &str) -> Value {
+    prima_stdlib::init();
     Evaluator::new().eval_value(src).expect("eval failed")
 }
 
 fn run_src(src: &str) -> String {
+    prima_stdlib::init();
     let out = Rc::new(RefCell::new(String::new()));
     let out_c = Rc::clone(&out);
     let mut ev = Evaluator::with_sink(move |s| out_c.borrow_mut().push_str(&s));

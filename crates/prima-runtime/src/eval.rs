@@ -24,7 +24,7 @@ use prima_syntax::{Span, SyntaxWarning};
 use rayon::prelude::*;
 
 use crate::builtins::Builtin;
-use crate::class::{ClassDef, ClassInstance, FieldDef, MethodDef};
+use crate::class::{ClassDef, ClassInstance, FieldDef, MethodDef, MethodNature};
 use crate::config::{Config, Domain, OptLevel, OverloadPolicy, UndefinedHandling};
 use crate::error::RuntimeError;
 use crate::module::{ModuleGraph, ModuleUnit, ResolvedImport};
@@ -32,6 +32,23 @@ use crate::module::{ModuleGraph, ModuleUnit, ResolvedImport};
 /// A Rust-hosted standard-library function registered by `prima-stdlib` (spec §18): called with the
 /// evaluator (for access to pool/symbols/output) and the already-evaluated arguments.
 pub type NativeCall = fn(&mut Evaluator, &[Value]) -> Result<Value, RuntimeError>;
+
+/// Which runtime backend executes a builtin-class method (spec §18.1): read-only collection and
+/// `Char`/`Tuple` backends, receiver write-back via `mutate_*` (spec §11.3/§11.6), or the collapse
+/// family (`collapse::call`, spec §9) for `Number`/`Option`/`Result`.
+#[derive(Debug, Clone, Copy)]
+enum BuiltinBackend {
+    Array,
+    Dict,
+    Set,
+    MutateArray,
+    MutateDict,
+    MutateSet,
+    Char,
+    Tuple,
+    Collapse,
+    CollapseNumber,
+}
 
 /// Default call count before an MFn body is JIT-compiled (spec §19.2); `@jit` functions skip the countdown.
 pub const JIT_CALL_THRESHOLD: u64 = 100;
@@ -371,6 +388,10 @@ pub struct Evaluator {
     overloads: HashMap<String, MethodDef>,
     /// Stack of the `self` receiver instance ids of the methods currently executing (spec §4.5).
     self_stack: Vec<u32>,
+    /// Stack of the `self` receiver *values* of builtin-class methods currently executing (spec
+    /// §18.1): `Value::String`/`Array`/... receivers are not class instances, so their `.pra`
+    /// bodies resolve `self` through this stack instead of `self_stack`.
+    self_values: Vec<Value>,
     /// Module path currently being evaluated (`""` for the root module), for `pub(mod)` visibility (spec §15.2).
     current_module: String,
 }
@@ -396,6 +417,7 @@ impl Evaluator {
             next_instance_id: 0,
             overloads: HashMap::new(),
             self_stack: Vec::new(),
+            self_values: Vec::new(),
             current_module: String::new(),
         }
     }
@@ -414,6 +436,7 @@ impl Evaluator {
             next_instance_id: 0,
             overloads: HashMap::new(),
             self_stack: Vec::new(),
+            self_values: Vec::new(),
             current_module: String::new(),
         }
     }
@@ -742,7 +765,7 @@ impl Evaluator {
                 docs,
                 ..
             } => {
-                let def = self.build_class_def(name, members, docs.as_ref(), env);
+                let def = self.build_class_def(name, members, docs.as_ref(), env)?;
                 self.register_class(def.clone());
                 items.insert(def.name.clone(), NamespaceItem::Class(def));
                 Ok(())
@@ -1169,7 +1192,7 @@ impl Evaluator {
                 docs,
                 ..
             } => {
-                let def = self.build_class_def(name, members, docs.as_ref(), env);
+                let def = self.build_class_def(name, members, docs.as_ref(), env)?;
                 self.register_class(def);
                 Ok(Flow::Continue)
             }
@@ -1189,6 +1212,9 @@ impl Evaluator {
                                 params: params.clone(),
                                 ret: ret.clone(),
                                 body: Some(body.clone()),
+                                native: None,
+                                level: 0,
+                                nature: MethodNature::Plain,
                                 vis: Visibility::Public,
                                 env: Rc::clone(env),
                                 docs: None,
@@ -1206,6 +1232,9 @@ impl Evaluator {
                                 params: params.clone(),
                                 ret: ret.clone(),
                                 body: Some(block),
+                                native: None,
+                                level: 0,
+                                nature: MethodNature::Plain,
                                 vis: Visibility::Public,
                                 env: Rc::clone(env),
                                 docs: None,
@@ -1860,11 +1889,15 @@ impl Evaluator {
                 }
             }
             ExprKind::Self_ => {
-                let id = *self
-                    .self_stack
-                    .last()
-                    .ok_or_else(|| RuntimeError::Message("`self` outside of a method".into()))?;
-                Ok(Value::Class(id))
+                // `self` resolves to the enclosing method's receiver: a class instance (spec §12.3)
+                // for user classes, or a builtin-class value (`Value::String`/`Array`/..., spec §18.1).
+                if let Some(id) = self.self_stack.last() {
+                    Ok(Value::Class(*id))
+                } else if let Some(v) = self.self_values.last() {
+                    Ok(v.clone())
+                } else {
+                    Err(RuntimeError::Message("`self` outside of a method".into()))
+                }
             }
             ExprKind::Call { callee, args } => self.eval_call(env, callee, args),
             ExprKind::MethodCall {
@@ -2259,7 +2292,7 @@ impl Evaluator {
 
     /// Value equality used by membership/count/index (spec §11.3): numbers compare through the
     /// promotion tower, everything else structurally.
-    fn value_eq(&self, a: &Value, b: &Value) -> bool {
+    pub fn value_eq(&self, a: &Value, b: &Value) -> bool {
         match (a, b) {
             (Value::Number(x), Value::Number(y)) => self.number_cmp(x, y) == Some(Ordering::Equal),
             _ => a == b,
@@ -3178,59 +3211,193 @@ impl Evaluator {
                 self.call_method(&method, Value::Class(id), arg_values)
                     .map_err(|e| with_notes(e, method_note(&name.value, &method), None))
             }
-            Value::String(s) => self
-                .call_string_method(&s, &name.value, arg_values)
-                .map_err(|e| native_method_error("String", &name.value, e)),
-            Value::Number(_) => {
-                // Numeric method syntax (spec §9): `x.to_f64()`, `x.rounded(3)` etc. dispatch to the collapse family.
-                let collapse_name = numeric_method_name(&name.value);
-                let mut cargs = Vec::with_capacity(arg_values.len() + 1);
-                cargs.push(rcv.clone());
-                cargs.extend(arg_values);
-                crate::collapse::call(&collapse_name, &cargs, self.pool, self.builtins)
-            }
-            Value::Array(a) => {
-                if is_mutating_array_method(&name.value) {
-                    self.mutate_array(env, receiver, &name.value, arg_values)
-                        .map_err(|e| native_method_error("Array", &name.value, e))
+            // Builtin classes (spec §18.1): the method is looked up in the embedded `core::<class>`
+            // module and dispatched through its registered impl / `.pra` body / runtime backend.
+            Value::String(_) => self.dispatch_builtin_method(
+                env,
+                receiver,
+                "String",
+                rcv,
+                &name.value,
+                arg_values,
+                None,
+            ),
+            Value::Number(_) => self.dispatch_builtin_method(
+                env,
+                receiver,
+                "Number",
+                rcv,
+                &name.value,
+                arg_values,
+                Some(BuiltinBackend::CollapseNumber),
+            ),
+            Value::Array(_) => {
+                let backend = if is_mutating_array_method(&name.value) {
+                    BuiltinBackend::MutateArray
                 } else {
-                    self.call_array_method(&a, &name.value, arg_values)
-                        .map_err(|e| native_method_error("Array", &name.value, e))
-                }
+                    BuiltinBackend::Array
+                };
+                self.dispatch_builtin_method(
+                    env,
+                    receiver,
+                    "Array",
+                    rcv,
+                    &name.value,
+                    arg_values,
+                    Some(backend),
+                )
             }
-            Value::Dict(d) => {
-                if is_mutating_dict_method(&name.value) {
-                    self.mutate_dict(env, receiver, &name.value, arg_values)
-                        .map_err(|e| native_method_error("Dict", &name.value, e))
+            Value::Dict(_) => {
+                let backend = if is_mutating_dict_method(&name.value) {
+                    BuiltinBackend::MutateDict
                 } else {
-                    self.call_dict_method(&d, &name.value, arg_values)
-                        .map_err(|e| native_method_error("Dict", &name.value, e))
-                }
+                    BuiltinBackend::Dict
+                };
+                self.dispatch_builtin_method(
+                    env,
+                    receiver,
+                    "Dict",
+                    rcv,
+                    &name.value,
+                    arg_values,
+                    Some(backend),
+                )
             }
-            Value::Set(s) => {
-                if is_mutating_set_method(&name.value) {
-                    self.mutate_set(env, receiver, &name.value, arg_values)
-                        .map_err(|e| native_method_error("Set", &name.value, e))
+            Value::Set(_) => {
+                let backend = if is_mutating_set_method(&name.value) {
+                    BuiltinBackend::MutateSet
                 } else {
-                    self.call_set_method(&s, &name.value, arg_values)
-                        .map_err(|e| native_method_error("Set", &name.value, e))
-                }
+                    BuiltinBackend::Set
+                };
+                self.dispatch_builtin_method(
+                    env,
+                    receiver,
+                    "Set",
+                    rcv,
+                    &name.value,
+                    arg_values,
+                    Some(backend),
+                )
             }
-            Value::Option(_) | Value::Result(_)
-                if matches!(name.value.as_str(), "unwrap" | "unwrap_or" | "expect") =>
-            {
-                // `v.get(10).unwrap_or(0)` method syntax on `Option`/`Result` (spec §16.3) → the collapse builtin.
-                let mut cargs = Vec::with_capacity(arg_values.len() + 1);
-                cargs.push(rcv.clone());
-                cargs.extend(arg_values);
-                crate::collapse::call(&name.value, &cargs, self.pool, self.builtins)
-            }
+            Value::Char(_) => self.dispatch_builtin_method(
+                env,
+                receiver,
+                "Char",
+                rcv,
+                &name.value,
+                arg_values,
+                Some(BuiltinBackend::Char),
+            ),
+            Value::Tuple(_) => self.dispatch_builtin_method(
+                env,
+                receiver,
+                "Tuple",
+                rcv,
+                &name.value,
+                arg_values,
+                Some(BuiltinBackend::Tuple),
+            ),
+            Value::Option(_) => self.dispatch_builtin_method(
+                env,
+                receiver,
+                "Option",
+                rcv,
+                &name.value,
+                arg_values,
+                Some(BuiltinBackend::Collapse),
+            ),
+            Value::Result(_) => self.dispatch_builtin_method(
+                env,
+                receiver,
+                "Result",
+                rcv,
+                &name.value,
+                arg_values,
+                Some(BuiltinBackend::Collapse),
+            ),
             other => crate::error::err(format!(
                 "cannot call method `{}` on {}",
                 name.value,
                 value_type_name(&other)
             )),
         }
+    }
+
+    /// Dispatch a builtin-class method call through its class definition (spec §18.1): a registered
+    /// Rust fast path or `.pra` fallback body when the method declares one (layered `@builtin(ON)`,
+    /// spec §18.4), otherwise the runtime backend. Errors are wrapped with the method's doc note
+    /// (spec §16.4).
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_builtin_method(
+        &mut self,
+        env: &EnvRef,
+        receiver: &Expr,
+        class: &str,
+        rcv: Value,
+        name: &str,
+        args: Vec<Value>,
+        backend: Option<BuiltinBackend>,
+    ) -> Result<Value, RuntimeError> {
+        let Some(method) = self.builtin_method(class, name)? else {
+            let err = RuntimeError::Message(format!("unknown `{class}` method `{name}`"));
+            return Err(native_method_error(class, name, err));
+        };
+        // Registered impl and/or `.pra` body: `call_method` applies the `@builtin(ON)` layering.
+        if method.body.is_some() || method.native.is_some() {
+            return self
+                .call_method(&method, rcv, args)
+                .map_err(|e| native_method_error(class, name, e));
+        }
+        let backend = backend.ok_or_else(|| {
+            RuntimeError::Message(format!("unregistered `{class}` method `{name}`"))
+        })?;
+        let result = match backend {
+            BuiltinBackend::Array => {
+                let Value::Array(a) = &rcv else {
+                    return crate::error::err("expected an array receiver");
+                };
+                self.call_array_method(a, name, args)
+            }
+            BuiltinBackend::Dict => {
+                let Value::Dict(d) = &rcv else {
+                    return crate::error::err("expected a dict receiver");
+                };
+                self.call_dict_method(d, name, args)
+            }
+            BuiltinBackend::Set => {
+                let Value::Set(s) = &rcv else {
+                    return crate::error::err("expected a set receiver");
+                };
+                self.call_set_method(s, name, args)
+            }
+            BuiltinBackend::MutateArray => self.mutate_array(env, receiver, name, args),
+            BuiltinBackend::MutateDict => self.mutate_dict(env, receiver, name, args),
+            BuiltinBackend::MutateSet => self.mutate_set(env, receiver, name, args),
+            BuiltinBackend::Char => {
+                let Value::Char(c) = &rcv else {
+                    return crate::error::err("expected a char receiver");
+                };
+                self.call_char_method(*c, name, args)
+            }
+            BuiltinBackend::Tuple => {
+                let Value::Tuple(t) = &rcv else {
+                    return crate::error::err("expected a tuple receiver");
+                };
+                self.call_tuple_method(t, name, args)
+            }
+            BuiltinBackend::Collapse | BuiltinBackend::CollapseNumber => {
+                let collapse_name = if matches!(backend, BuiltinBackend::CollapseNumber) {
+                    numeric_method_name(name)
+                } else {
+                    name.to_string()
+                };
+                let mut cargs = Vec::with_capacity(args.len() + 1);
+                cargs.push(rcv);
+                cargs.extend(args);
+                crate::collapse::call(&collapse_name, &cargs, self.pool, self.builtins)
+            }
+        };
+        result.map_err(|e| native_method_error(class, name, e))
     }
 
     /// Call a method: `self` is bound to the receiver (a shallow copy — same instance handle, spec §12.3).
@@ -3240,10 +3407,6 @@ impl Evaluator {
         receiver: Value,
         args: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
-        let body = method
-            .body
-            .as_ref()
-            .ok_or_else(|| RuntimeError::Message("unregistered `@builtin` method".into()))?;
         let self_param = method
             .params
             .first()
@@ -3252,17 +3415,33 @@ impl Evaluator {
         let expected = method.params.len() - 1;
         if args.len() != expected {
             return crate::error::err(format!(
-                "method expects {} arguments, got {}",
-                expected,
+                "method expects {expected} arguments, got {}",
                 args.len()
             ));
         }
+        // Layered `@builtin(ON)` method (spec §18.4): the registered Rust implementation is used when
+        // the active `opt_level` is at least the declared tier; otherwise the `.pra` body is evaluated.
+        if let Some(native) = method.native
+            && (method.level == 0 || self.current_config().opt_level.tier() >= method.level)
+        {
+            let mut full = Vec::with_capacity(args.len() + 1);
+            full.push(receiver);
+            full.extend(args);
+            return native(self, &full);
+        }
+        let body = method
+            .body
+            .as_ref()
+            .ok_or_else(|| RuntimeError::Message("unregistered `@builtin` method".into()))?;
         let instance_id = match &receiver {
             Value::Class(id) => Some(*id),
             _ => None,
         };
         if let Some(id) = instance_id {
             self.self_stack.push(id);
+        } else {
+            // Builtin-class receiver (`Value::String`/`Array`/...): expose it as `self` in the body.
+            self.self_values.push(receiver.clone());
         }
         let call_env = Env::child(&method.env);
         {
@@ -3275,6 +3454,8 @@ impl Evaluator {
         let result = self.eval_block_tail(&call_env, body);
         if instance_id.is_some() {
             self.self_stack.pop();
+        } else {
+            self.self_values.pop();
         }
         result
     }
@@ -3412,14 +3593,34 @@ impl Evaluator {
         Ok(Value::Class(id))
     }
 
+    /// Dispatch backend for a builtin-class method (spec §18.1): mutating methods write back through
+    /// the receiver binding; `Number`/`Option`/`Result` go through the collapse family; everything
+    /// else is a read-only backend. User classes are always `Plain`.
+    fn method_nature(&self, class: &str, method: &str) -> MethodNature {
+        match class {
+            "Array" if is_mutating_array_method(method) => MethodNature::Mutating,
+            "Dict" if is_mutating_dict_method(method) => MethodNature::Mutating,
+            "Set" if is_mutating_set_method(method) => MethodNature::Mutating,
+            "Array" | "Dict" | "Set" | "Char" | "Tuple" => MethodNature::Backend,
+            "Number" | "Option" | "Result" => MethodNature::Collapse,
+            _ => MethodNature::Plain,
+        }
+    }
+
     /// Build a `ClassDef` from a class statement (spec §4.5): fields and methods.
+    ///
+    /// A method's `@builtin(ON)` annotation (spec §18.4) drives validation: bare `@builtin` (O0) is
+    /// signature-only and must be backed by a registered implementation or a runtime backend
+    /// (`E0055`), with a body rejected as `E0056`; `@builtin(ON)` (`O1..O3`) requires a `.pra`
+    /// fallback body (`E0056`) and an optional Rust fast path. Plain methods with neither a body nor
+    /// an implementation are also `E0055`.
     fn build_class_def(
         &mut self,
         name: &Spanned<String>,
         members: &[prima_syntax::ast::ClassMember],
         docs: Option<&DocComment>,
         env: &EnvRef,
-    ) -> ClassDef {
+    ) -> Result<ClassDef, RuntimeError> {
         let mut def = ClassDef {
             name: name.value.clone(),
             module: self.current_module.clone(),
@@ -3442,15 +3643,49 @@ impl Evaluator {
                     name: mname,
                     params,
                     ret,
+                    annotations,
                     body,
-                    ..
                 } => {
+                    let is_builtin = annotations.iter().any(|a| a.is_builtin());
+                    let level = annotations
+                        .iter()
+                        .map(|a| a.builtin_level())
+                        .max()
+                        .unwrap_or(0);
+                    let nature = self.method_nature(&def.name, &mname.value);
+                    let native = if is_builtin {
+                        crate::stdlib::get_impl(&format!("{}::{}", def.name, mname.value))
+                    } else {
+                        None
+                    };
+                    // Validation (spec §18.4): `E0055` unregistered `@builtin`, `E0056` wrong body.
+                    if is_builtin && level == 0 && body.is_some() {
+                        return crate::error::err(format!(
+                            "`@builtin` method `{}` of `{}` must not have a body (E0056)",
+                            mname.value, def.name
+                        ));
+                    }
+                    if is_builtin && level > 0 && body.is_none() {
+                        return crate::error::err(format!(
+                            "`@builtin(O{level})` method `{}` of `{}` must have a `.pra` fallback body (E0056)",
+                            mname.value, def.name
+                        ));
+                    }
+                    if body.is_none() && native.is_none() && nature == MethodNature::Plain {
+                        return crate::error::err(format!(
+                            "unregistered `@builtin` method `{}` of `{}` (E0055)",
+                            mname.value, def.name
+                        ));
+                    }
                     def.methods.insert(
                         mname.value.clone(),
                         MethodDef {
                             params: params.clone(),
                             ret: ret.clone(),
                             body: body.clone(),
+                            native,
+                            level,
+                            nature,
                             vis: m.vis,
                             env: Rc::clone(env),
                             docs: m.docs.clone(),
@@ -3459,7 +3694,7 @@ impl Evaluator {
                 }
             }
         }
-        def
+        Ok(def)
     }
 
     /// Register a class in the registry (spec §4.7). A later definition with the same name wins.
@@ -3467,195 +3702,162 @@ impl Evaluator {
         self.class_defs.insert(def.name.clone(), def);
     }
 
-    /// Builtin `String` methods (spec §18.1): all string methods operate on a value-semantic copy.
-    fn call_string_method(
+    /// Lazily load a builtin class definition (`String`/`Array`/...) from its embedded `core::<class>`
+    /// module (spec §18.1). The modules are registered by the standard library; without
+    /// `prima_stdlib::init()` the class is unavailable and its methods error out.
+    fn ensure_class(&mut self, class: &str) -> Result<(), RuntimeError> {
+        if self.class_defs.contains_key(class) {
+            return Ok(());
+        }
+        let module_path = format!("core::{}", class.to_ascii_lowercase());
+        let src = crate::stdlib::get_module_source(&module_path).ok_or_else(|| {
+            RuntimeError::Message(format!(
+                "`{class}` methods are unavailable: the standard library is not initialized"
+            ))
+        })?;
+        let program = prima_syntax::parse(src).map_err(|_| {
+            RuntimeError::Message(format!(
+                "internal error: embedded `{module_path}` module does not parse"
+            ))
+        })?;
+        let env = Env::new().into_ref();
+        let prev_module = std::mem::take(&mut self.current_module);
+        self.current_module = module_path.clone();
+        let result = (|| {
+            for stmt in &program.stmts {
+                if let Stmt::ClassDef {
+                    name,
+                    members,
+                    docs,
+                    ..
+                } = stmt
+                    && name.value == class
+                {
+                    let def = self.build_class_def(name, members, docs.as_ref(), &env)?;
+                    self.register_class(def);
+                }
+            }
+            if self.class_defs.contains_key(class) {
+                Ok(())
+            } else {
+                crate::error::err(format!(
+                    "internal error: `{module_path}` does not define `class {class}`"
+                ))
+            }
+        })();
+        self.current_module = prev_module;
+        result
+    }
+
+    /// Look up a builtin-class method, loading the class definition first (spec §18.1). `None` for an
+    /// unknown method; loading fails with a runtime error when the standard library is missing.
+    fn builtin_method(
         &mut self,
-        s: &str,
+        class: &str,
+        method: &str,
+    ) -> Result<Option<MethodDef>, RuntimeError> {
+        self.ensure_class(class)?;
+        Ok(self
+            .class_defs
+            .get(class)
+            .and_then(|d| d.methods.get(method))
+            .cloned())
+    }
+
+    /// Builtin `Char` methods (spec §18.1): predicates, case mapping, and conversion. All are
+    /// zero-argument; `to_upper`/`to_lower` map a single char (a multi-char expansion, e.g. `ß`,
+    /// keeps only the first code point).
+    fn call_char_method(
+        &mut self,
+        c: char,
         name: &str,
         args: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
-        let expect_arity = |n: usize| -> Result<(), RuntimeError> {
+        if !args.is_empty() {
+            return crate::error::err(format!(
+                "`Char.{name}` takes no arguments, got {}",
+                args.len()
+            ));
+        }
+        match name {
+            "len" => Ok(Value::Number(Number::from(1))),
+            "is_digit" => Ok(Value::Bool(c.is_ascii_digit())),
+            "is_alpha" => Ok(Value::Bool(c.is_alphabetic())),
+            "is_alnum" => Ok(Value::Bool(c.is_alphanumeric())),
+            "is_upper" => Ok(Value::Bool(c.is_uppercase())),
+            "is_lower" => Ok(Value::Bool(c.is_lowercase())),
+            "is_space" => Ok(Value::Bool(c.is_whitespace())),
+            "is_ascii" => Ok(Value::Bool(c.is_ascii())),
+            "to_upper" => Ok(Value::Char(c.to_uppercase().next().unwrap_or(c))),
+            "to_lower" => Ok(Value::Char(c.to_lowercase().next().unwrap_or(c))),
+            "to_string" => Ok(Value::String(c.to_string())),
+            "code" => Ok(Value::Number(Number::from(u32::from(c) as i64))),
+            _ => crate::error::err(format!("unknown `Char` method `{name}`")),
+        }
+    }
+
+    /// Builtin `Tuple` methods (spec §18.1): `len`/`get`/`count`/`index`/`first`/`last`.
+    fn call_tuple_method(
+        &mut self,
+        t: &[Value],
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let arity = |n: usize| -> Result<(), RuntimeError> {
             if args.len() == n {
                 Ok(())
             } else {
                 crate::error::err(format!(
-                    "`String.{name}` expects {n} argument(s), got {}",
+                    "`Tuple.{name}` expects {n} argument(s), got {}",
                     args.len()
                 ))
             }
         };
-        let str_arg = |i: usize| -> Result<String, RuntimeError> {
-            match args.get(i) {
-                Some(Value::String(s)) => Ok(s.clone()),
-                Some(other) => crate::error::err(format!(
-                    "`String.{name}` argument {i} must be a string, got {}",
-                    value_type_name(other)
-                )),
-                None => crate::error::err(format!("`String.{name}` missing argument {i}")),
-            }
-        };
-        let int_arg = |i: usize| -> Result<i64, RuntimeError> {
-            match args.get(i) {
-                Some(Value::Number(n)) => n.as_i64().ok_or_else(|| {
-                    RuntimeError::Type(format!(
-                        "`String.{name}` argument {i} must be an integer, got {n}"
-                    ))
-                }),
-                Some(_) => {
-                    crate::error::err(format!("`String.{name}` argument {i} must be an integer"))
-                }
-                None => crate::error::err(format!("`String.{name}` missing argument {i}")),
-            }
-        };
         match name {
             "len" => {
-                expect_arity(0)?;
-                Ok(Value::Number(Number::from(s.chars().count() as i64)))
+                arity(0)?;
+                Ok(Value::Number(Number::from(t.len() as i64)))
             }
-            "is_empty" => {
-                expect_arity(0)?;
-                Ok(Value::Bool(s.is_empty()))
-            }
-            "push" => {
-                expect_arity(1)?;
-                Ok(Value::String(format!("{s}{}", str_arg(0)?)))
-            }
-            "insert" => {
-                expect_arity(2)?;
-                let idx = int_arg(0)?;
-                let sub = str_arg(1)?;
-                let len = s.chars().count() as i64;
-                if idx < 0 || idx > len {
-                    return Ok(Value::Result(Err(format!(
-                        "insert index {idx} out of range (length {len})"
-                    ))));
-                }
-                let idx = idx as usize;
-                let mut out: String = s.chars().take(idx).collect();
-                out.push_str(&sub);
-                out.extend(s.chars().skip(idx));
-                Ok(Value::Result(Ok(Box::new(Value::String(out)))))
-            }
-            "char_at" => {
-                expect_arity(1)?;
-                let idx = int_arg(0)?;
-                if idx < 0 {
-                    return Ok(Value::Option(None));
-                }
-                match s.chars().nth(idx as usize) {
-                    Some(c) => Ok(Value::Option(Some(Box::new(Value::Char(c))))),
-                    None => Ok(Value::Option(None)),
-                }
-            }
-            "substring" => {
-                expect_arity(2)?;
-                let a = int_arg(0)?;
-                let b = int_arg(1)?;
-                if a < 0 {
-                    return crate::error::err("`String.substring` start must be non-negative");
-                }
-                let (a, b) = (a as usize, b as usize);
-                let chars: Vec<char> = s.chars().collect();
-                if a > chars.len() || b > chars.len() || a > b {
-                    return crate::error::err(format!(
-                        "invalid substring range {a}..{b} (length {})",
-                        chars.len()
-                    ));
-                }
-                Ok(Value::String(chars[a..b].iter().collect()))
-            }
-            "contains" => {
-                expect_arity(1)?;
-                Ok(Value::Bool(s.contains(&str_arg(0)?)))
-            }
-            "starts_with" => {
-                expect_arity(1)?;
-                Ok(Value::Bool(s.starts_with(&str_arg(0)?)))
-            }
-            "ends_with" => {
-                expect_arity(1)?;
-                Ok(Value::Bool(s.ends_with(&str_arg(0)?)))
-            }
-            "replace" => {
-                expect_arity(2)?;
-                Ok(Value::String(s.replace(&str_arg(0)?, &str_arg(1)?)))
-            }
-            "trim" => {
-                expect_arity(0)?;
-                Ok(Value::String(s.trim().to_string()))
-            }
-            "strip" => {
-                // Trim any leading/trailing character present in `pat` (spec §18.1, like Python `str.strip`).
-                expect_arity(1)?;
-                let pat = str_arg(0)?;
-                let pat: Vec<char> = pat.chars().collect();
-                Ok(Value::String(
-                    s.trim_matches(|c| pat.contains(&c)).to_string(),
-                ))
-            }
-            "split" => {
-                expect_arity(1)?;
-                let sep = str_arg(0)?;
-                let parts: Vec<Value> = s
-                    .split(&sep)
-                    .map(|p| Value::String(p.to_string()))
-                    .collect();
-                Ok(Value::Array(parts))
-            }
-            "join" => {
-                // Concatenate an `Array<String>` using `self` as the separator (spec §18.1).
-                expect_arity(1)?;
-                let parts = match &args[0] {
-                    Value::Array(parts) => parts,
-                    other => {
-                        return crate::error::err(format!(
-                            "`String.join` expects an array of strings, got {}",
-                            value_type_name(other)
-                        ));
-                    }
+            "get" => {
+                arity(1)?;
+                let i = match &args[0] {
+                    Value::Number(n) => n.as_i64(),
+                    _ => None,
                 };
-                let mut out = String::new();
-                for (i, p) in parts.iter().enumerate() {
-                    if i > 0 {
-                        out.push_str(s);
-                    }
-                    match p {
-                        Value::String(p) => out.push_str(p),
-                        _ => {
-                            return crate::error::err("`String.join` requires an array of strings");
-                        }
-                    }
-                }
-                Ok(Value::String(out))
-            }
-            "find" => {
-                // First byte/char index of `pat` in `self`, or `None` (spec §18.1).
-                expect_arity(1)?;
-                let pat = str_arg(0)?;
-                match s.find(&pat) {
-                    Some(i) => Ok(Value::Option(Some(Box::new(Value::Number(Number::from(
-                        s[..i].chars().count() as i64,
-                    )))))),
+                let Some(i) = i else {
+                    return crate::error::err("`Tuple.get` expects an integer index");
+                };
+                match normalize_index(i, t.len()) {
+                    Some(i) => Ok(Value::Option(Some(Box::new(t[i].clone())))),
                     None => Ok(Value::Option(None)),
                 }
             }
-            "to_upper" => {
-                expect_arity(0)?;
-                Ok(Value::String(s.to_uppercase()))
+            "count" => {
+                arity(1)?;
+                Ok(Value::Number(Number::from(
+                    t.iter().filter(|e| self.value_eq(e, &args[0])).count() as i64,
+                )))
             }
-            "to_lower" => {
-                expect_arity(0)?;
-                Ok(Value::String(s.to_lowercase()))
-            }
-            "repeat" => {
-                expect_arity(1)?;
-                let n = int_arg(0)?;
-                if n < 0 {
-                    return crate::error::err("`String.repeat` count must be non-negative");
+            "index" => {
+                arity(1)?;
+                match t.iter().position(|e| self.value_eq(e, &args[0])) {
+                    Some(i) => Ok(Value::Number(Number::from(i as i64))),
+                    None => crate::error::err("element not found"),
                 }
-                Ok(Value::String(s.repeat(n as usize)))
             }
-            _ => crate::error::err(format!("unknown `String` method `{name}`")),
+            "first" => {
+                arity(0)?;
+                Ok(t.first()
+                    .map(|v| Value::Option(Some(Box::new(v.clone()))))
+                    .unwrap_or(Value::Option(None)))
+            }
+            "last" => {
+                arity(0)?;
+                Ok(t.last()
+                    .map(|v| Value::Option(Some(Box::new(v.clone()))))
+                    .unwrap_or(Value::Option(None)))
+            }
+            _ => crate::error::err(format!("unknown `Tuple` method `{name}`")),
         }
     }
 
@@ -3764,6 +3966,10 @@ impl Evaluator {
                 Ok(a.last()
                     .map(|v| Value::Option(Some(Box::new(v.clone()))))
                     .unwrap_or(Value::Option(None)))
+            }
+            "copy" => {
+                arity(0)?;
+                Ok(Value::Array(a.to_vec()))
             }
             _ => crate::error::err(format!("unknown `Array` method `{name}`")),
         }
@@ -3916,6 +4122,13 @@ impl Evaluator {
                     .map(|v| Value::Option(Some(Box::new(v.clone()))))
                     .unwrap_or(Value::Option(None)))
             }
+            "contains" => {
+                arity(1)?;
+                let key = ValueKey::from_value(&args[0]).ok_or_else(|| {
+                    RuntimeError::Message("dict key must be a hashable value".into())
+                })?;
+                Ok(Value::Bool(d.contains_key(&key)))
+            }
             "keys" => {
                 arity(0)?;
                 Ok(Value::Array(
@@ -4010,6 +4223,30 @@ impl Evaluator {
                 // `d.update(other)` returns the merged dict (spec §11.6 example `let dd = d.update(…)`).
                 Value::Dict(d.clone())
             }
+            "setdefault" => {
+                // Python `dict.setdefault`: return the value for `key`, inserting `default` when absent.
+                arity(2)?;
+                let k = key(0)?;
+                if let Some(v) = d.get(&k).cloned() {
+                    v
+                } else {
+                    let v = args[1].clone();
+                    d.insert(k, v.clone());
+                    v
+                }
+            }
+            "popitem" => {
+                arity(0)?;
+                let k = self
+                    .sorted_dict_keys(&d)
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        RuntimeError::Message("`Dict.popitem` on an empty dict".into())
+                    })?;
+                let v = d.remove(&k).unwrap();
+                Value::Tuple(vec![k.to_value(), v])
+            }
             _ => return crate::error::err(format!("unknown `Dict` method `{name}`")),
         };
         self.write_back(env, &var, Value::Dict(d));
@@ -4045,7 +4282,7 @@ impl Evaluator {
                 })?;
                 Ok(Value::Bool(s.contains(&key)))
             }
-            "union" | "intersection" | "difference" => {
+            "union" | "intersection" | "difference" | "symmetric_difference" => {
                 arity(1)?;
                 let Value::Set(other) = &args[0] else {
                     return crate::error::err("`Set.{name}` expects a set argument");
@@ -4054,9 +4291,27 @@ impl Evaluator {
                     "union" => s.union(other).cloned().collect(),
                     "intersection" => s.intersection(other).cloned().collect(),
                     "difference" => s.difference(other).cloned().collect(),
+                    "symmetric_difference" => s.symmetric_difference(other).cloned().collect(),
                     _ => unreachable!(),
                 };
                 Ok(Value::Set(out))
+            }
+            "issubset" | "issuperset" | "isdisjoint" => {
+                arity(1)?;
+                let Value::Set(other) = &args[0] else {
+                    return crate::error::err("`Set.{name}` expects a set argument");
+                };
+                let out = match name {
+                    "issubset" => s.is_subset(other),
+                    "issuperset" => s.is_superset(other),
+                    "isdisjoint" => s.is_disjoint(other),
+                    _ => unreachable!(),
+                };
+                Ok(Value::Bool(out))
+            }
+            "copy" => {
+                arity(0)?;
+                Ok(Value::Set(s.clone()))
             }
             _ => crate::error::err(format!("unknown `Set` method `{name}`")),
         }
@@ -4112,6 +4367,45 @@ impl Evaluator {
             "discard" => {
                 arity(1)?;
                 s.remove(&key(0)?);
+                Value::Nil
+            }
+            "pop" => {
+                arity(0)?;
+                if let Some(k) = s.iter().next().cloned() {
+                    s.remove(&k);
+                    Value::Option(Some(Box::new(k.to_value())))
+                } else {
+                    Value::Option(None)
+                }
+            }
+            "clear" => {
+                arity(0)?;
+                s.clear();
+                Value::Nil
+            }
+            "update" => {
+                arity(1)?;
+                match &args[0] {
+                    Value::Set(other) => {
+                        for k in other {
+                            s.insert(k.clone());
+                        }
+                    }
+                    Value::Array(elems) => {
+                        for e in elems {
+                            let k = ValueKey::from_value(e).ok_or_else(|| {
+                                RuntimeError::Message("set element must be a hashable value".into())
+                            })?;
+                            s.insert(k);
+                        }
+                    }
+                    other => {
+                        return crate::error::err(format!(
+                            "`Set.update` expects a set or array, got {}",
+                            value_type_name(other)
+                        ));
+                    }
+                }
                 Value::Nil
             }
             _ => return crate::error::err(format!("unknown `Set` method `{name}`")),
@@ -5549,7 +5843,7 @@ fn pattern_is_refutable(p: &Pattern) -> bool {
 }
 
 /// Short display name of a value's type, for error messages.
-fn value_type_name(v: &Value) -> String {
+pub fn value_type_name(v: &Value) -> String {
     match v {
         Value::Nil => "nil".into(),
         Value::Number(_) => "number".into(),
@@ -5835,12 +6129,18 @@ fn is_mutating_array_method(name: &str) -> bool {
 
 /// Mutating dict methods (spec §11.6).
 fn is_mutating_dict_method(name: &str) -> bool {
-    matches!(name, "insert" | "remove" | "clear" | "update")
+    matches!(
+        name,
+        "insert" | "remove" | "clear" | "update" | "setdefault" | "popitem"
+    )
 }
 
 /// Mutating set methods (spec §11.6).
 fn is_mutating_set_method(name: &str) -> bool {
-    matches!(name, "add" | "remove" | "discard")
+    matches!(
+        name,
+        "add" | "remove" | "discard" | "pop" | "clear" | "update"
+    )
 }
 
 /// Map numeric method names to their collapse-family builtin (spec §9): `x.to_f64()`, `x.rounded(3)`, `x.truncated()`, `x.abs()`.
@@ -6023,10 +6323,10 @@ mod tests {
     #[test]
     fn array_get_returns_option() {
         assert_eq!(
-            eval("let v = [1, 2, 3];\nv.get(1)"),
+            eval("let v = [1, 2, 3];\nget(v, 1)"),
             Value::Option(Some(Box::new(Value::Number(Number::from(2)))))
         );
-        assert_eq!(eval("let v = [1, 2, 3];\nv.get(10)"), Value::Option(None));
+        assert_eq!(eval("let v = [1, 2, 3];\nget(v, 10)"), Value::Option(None));
         assert_eq!(
             eval("let v = [1, 2, 3];\nget(v, 0)"),
             Value::Option(Some(Box::new(Value::Number(Number::from(1)))))
@@ -6036,7 +6336,9 @@ mod tests {
     #[test]
     fn if_let_and_match() {
         assert_eq!(
-            eval("let v = [1, 2];\nlet r = 0;\nif let Some(x) = v.get(0) {\n    r = x * 10;\n}\nr"),
+            eval(
+                "let v = [1, 2];\nlet r = 0;\nif let Some(x) = get(v, 0) {\n    r = x * 10;\n}\nr"
+            ),
             Value::Number(Number::from(10))
         );
         let r = eval(
@@ -6170,86 +6472,6 @@ g.greet(1)";
             notes.iter().any(|n| n.contains("Shout a greeting.")),
             "notes: {notes:?}"
         );
-    }
-
-    #[test]
-    fn unknown_native_string_method_attaches_registry_note_and_help() {
-        // Seed the registry with the same values the embedded `core/string.pra` docs use, so the
-        // result is deterministic even if the `docs` module test registered the key first.
-        crate::docs::register_doc(
-            "String::to_upper",
-            crate::docs::MethodDoc {
-                name: "to_upper".into(),
-                sig: "to_upper(self) -> Self".into(),
-                doc: Some("Uppercase the string.".into()),
-                defined_at: "core/string.pra:4:5".into(),
-            },
-        );
-        crate::docs::register_doc(
-            "String",
-            crate::docs::MethodDoc {
-                name: "String".into(),
-                sig: "String".into(),
-                doc: None,
-                defined_at: "core/string.pra:1:1".into(),
-            },
-        );
-        let err = Evaluator::new()
-            .eval_value("let s = \"hi\";\ns.toupper()")
-            .expect_err("expected an unknown-method error");
-        assert!(
-            err.to_string()
-                .contains("unknown `String` method `toupper`"),
-            "unexpected error: {err}"
-        );
-        assert_eq!(err.help().as_deref(), Some("did you mean `to_upper`?"));
-        let notes = err.notes();
-        // The note points at the suggested method's definition (its doc, spec §16.4).
-        assert!(
-            notes.iter().any(|n| n.contains("core/string.pra:4:5")),
-            "notes: {notes:?}"
-        );
-        assert!(
-            notes.iter().any(|n| n.contains("Uppercase the string.")),
-            "notes: {notes:?}"
-        );
-    }
-
-    #[test]
-    fn string_methods() {
-        assert_eq!(
-            eval("let s = \"hello\";\ns.len()"),
-            Value::Number(Number::from(5))
-        );
-        assert_eq!(
-            eval("let s = \"aXb\";\ns.to_lower()"),
-            Value::String("axb".into())
-        );
-        assert_eq!(
-            eval("let s = \"ab\";\ns.push(\"c\")"),
-            Value::String("abc".into())
-        );
-        assert_eq!(
-            eval("let s = \"hello world\";\ns.contains(\"world\")"),
-            Value::Bool(true)
-        );
-        assert_eq!(
-            eval("let s = \"a,b,c\";\ns.split(\",\")"),
-            Value::Array(vec![
-                Value::String("a".into()),
-                Value::String("b".into()),
-                Value::String("c".into()),
-            ])
-        );
-        assert_eq!(
-            eval("let s = \"hi\";\ns.insert(1, \"o\")"),
-            Value::Result(Ok(Box::new(Value::String("hoi".into()))))
-        );
-        assert!(matches!(
-            eval("let s = \"hi\";\ns.insert(9, \"o\")"),
-            Value::Result(Err(_))
-        ));
-        assert_eq!(eval("String::new()"), Value::String(String::new()));
     }
 
     #[test]

@@ -4,6 +4,10 @@
 //! The naming scheme encodes safety properties (spec §9.1): the basic forms raise a runtime error on failure (§9.2),
 //! the try forms return a `Result` (§9.3), the checked forms check for overflow (§9.4), the clamped forms force a range (§9.5), and the rounding forms round in the specified way (§9.6).
 
+use num_bigint::BigInt;
+use num_integer::Integer;
+use num_traits::Zero;
+
 use prima_core::collapse::collapse_value;
 use prima_core::render::{render_latex, render_number};
 use prima_core::{BuiltinSymbols, ExprPool, Number, Real, SymbolTable, Value, ValueKey};
@@ -258,6 +262,12 @@ pub fn call(
         "unwrap" => unwrap(name, args),
         "unwrap_or" => unwrap_or(name, args),
         "expect" => expect(name, args),
+        // ---- `Option`/`Result` predicates and accessors (spec §16.3/§18.1) ----
+        "is_some" => is_some(args),
+        "is_none" => is_none(args),
+        "is_ok" => is_ok(args),
+        "is_err" => is_err(args),
+        "value_or" => value_or(args),
         // ---- Option/Result constructors (spec §4.4) ----
         "Some" => some(args),
         "None" => none(args),
@@ -266,9 +276,188 @@ pub fn call(
         // ---- string/format helpers (spec §18.1); `format` was removed in v2.2 (f-strings) ----
         "to_string" => to_string_call(args, pool),
         "concat" => concat_call(args, pool),
+        // ---- `Number` predicates and accessors (spec §9/§18.1): `x.is_integer()`, `x.abs()`, ... ----
+        "abs" | "sign" | "floor" | "ceil" | "round" | "sqrt" | "numerator" | "denominator"
+        | "real" | "imag" | "bit_length" | "is_integer" | "is_rational" | "is_real"
+        | "is_complex" | "is_positive" | "is_negative" | "is_zero" | "is_even" | "is_odd"
+        | "is_finite" | "is_nan" => {
+            arity(name, args, 1)?;
+            numeric_property(name, &collapse_arg(pool, builtins, &args[0])?)
+        }
         _ => Err(RuntimeError::Message(format!(
             "unknown collapse function `{name}`"
         ))),
+    }
+}
+
+/// `Number` predicates/accessors (spec §9/§18.1), dispatched by method name. Real-domain predicates
+/// reject complex values; `abs`/`sqrt` on complex yield the real magnitude/domain error.
+fn numeric_property(name: &str, n: &Number) -> Result<Value, RuntimeError> {
+    use prima_core::Number as N;
+    match name {
+        "abs" => Ok(Value::Number(match n {
+            N::Complex { re, im } => {
+                let r = re.to_f64_lossy();
+                let i = im.to_f64_lossy();
+                N::Real(Real::F64((r * r + i * i).sqrt()))
+            }
+            other => other.abs(),
+        })),
+        "sqrt" => {
+            ensure_real(name, n)?;
+            if let Some(s) = n.sqrt() {
+                Ok(Value::Number(s))
+            } else {
+                Ok(Value::Number(N::Real(Real::F64(n.to_f64_lossy().sqrt()))))
+            }
+        }
+        "sign" => {
+            ensure_real(name, n)?;
+            let x = n.to_f64_lossy();
+            Ok(Value::Number(N::Integer(BigInt::from(if x > 0.0 {
+                1i8
+            } else if x < 0.0 {
+                -1i8
+            } else {
+                0i8
+            }))))
+        }
+        "is_positive" => {
+            ensure_real(name, n)?;
+            Ok(Value::Bool(n.to_f64_lossy() > 0.0))
+        }
+        "is_negative" => {
+            ensure_real(name, n)?;
+            Ok(Value::Bool(n.to_f64_lossy() < 0.0))
+        }
+        "is_zero" => Ok(Value::Bool(n.is_zero())),
+        "is_integer" => Ok(Value::Bool(n.is_integer_value())),
+        "is_rational" => Ok(Value::Bool(matches!(n, N::Integer(_) | N::Rational(_)))),
+        "is_real" => Ok(Value::Bool(!n.is_complex())),
+        "is_complex" => Ok(Value::Bool(n.is_complex())),
+        "is_even" | "is_odd" => {
+            let i = n.as_bigint().ok_or_else(|| {
+                RuntimeError::Type(format!("`Number.{name}` requires an integer"))
+            })?;
+            let even = (&i % BigInt::from(2u8)).is_zero();
+            Ok(Value::Bool(if name == "is_even" { even } else { !even }))
+        }
+        "is_finite" => Ok(Value::Bool(number_is_finite(n))),
+        "is_nan" => Ok(Value::Bool(number_is_nan(n))),
+        "floor" | "ceil" => {
+            ensure_real(name, n)?;
+            let out = match n {
+                N::Integer(_) => n.clone(),
+                N::Rational(r) => {
+                    let a = r.numer().clone();
+                    let b = r.denom().clone();
+                    if name == "floor" {
+                        N::Integer(a.div_mod_floor(&b).0)
+                    } else {
+                        // ceil(a/b) = -floor(-a/b)
+                        N::Integer(-(-a).div_mod_floor(&b).0)
+                    }
+                }
+                N::Real(Real::F64(f)) => N::Real(Real::F64(if name == "floor" {
+                    f.floor()
+                } else {
+                    f.ceil()
+                })),
+                N::Real(Real::F32(f)) => N::Real(Real::F32(if name == "floor" {
+                    f.floor()
+                } else {
+                    f.ceil()
+                })),
+                other => normalize_property(other),
+            };
+            Ok(Value::Number(out))
+        }
+        "round" => {
+            ensure_real(name, n)?;
+            let out = match n {
+                N::Integer(_) => n.clone(),
+                N::Real(Real::F64(f)) => N::Real(Real::F64(f.round())),
+                N::Real(Real::F32(f)) => N::Real(Real::F32(f.round())),
+                other => N::Integer(BigInt::from(other.to_f64_lossy().round() as i64)),
+            };
+            Ok(Value::Number(out))
+        }
+        "numerator" | "denominator" => {
+            let r = n.as_rational().ok_or_else(|| {
+                RuntimeError::Type(format!("`Number.{name}` requires a rational number"))
+            })?;
+            let part = if name == "numerator" {
+                r.numer().clone()
+            } else {
+                r.denom().clone()
+            };
+            Ok(Value::Number(N::Integer(part)))
+        }
+        "real" | "imag" => {
+            let part = match n {
+                N::Complex { re, im } => {
+                    if name == "real" {
+                        (**re).clone()
+                    } else {
+                        (**im).clone()
+                    }
+                }
+                other if name == "real" => other.clone(),
+                _ => N::Integer(BigInt::from(0)),
+            };
+            Ok(Value::Number(part))
+        }
+        "bit_length" => {
+            let i = n.as_bigint().ok_or_else(|| {
+                RuntimeError::Type("`Number.bit_length` requires an integer".into())
+            })?;
+            Ok(Value::Number(N::Integer(BigInt::from(i.bits() as i64))))
+        }
+        _ => Err(RuntimeError::Message(format!(
+            "unknown numeric method `{name}`"
+        ))),
+    }
+}
+
+/// Normalize a fixed-width collapsed number back to the exact tower for floor/ceil (spec §6.1).
+fn normalize_property(n: &Number) -> Number {
+    match n {
+        Number::I8(i) => Number::Integer(BigInt::from(*i)),
+        Number::I16(i) => Number::Integer(BigInt::from(*i)),
+        Number::I32(i) => Number::Integer(BigInt::from(*i)),
+        Number::I64(i) => Number::Integer(BigInt::from(*i)),
+        Number::I128(i) => Number::Integer(BigInt::from(*i)),
+        Number::Isize(i) => Number::Integer(BigInt::from(*i)),
+        Number::U8(u) => Number::Integer(BigInt::from(*u)),
+        Number::U16(u) => Number::Integer(BigInt::from(*u)),
+        Number::U32(u) => Number::Integer(BigInt::from(*u)),
+        Number::U64(u) => Number::Integer(BigInt::from(*u)),
+        Number::U128(u) => Number::Integer(BigInt::from(*u)),
+        Number::Usize(u) => Number::Integer(BigInt::from(*u)),
+        Number::BigFloat(f) => Number::Real(Real::F64(*f)),
+        other => other.clone(),
+    }
+}
+
+/// Whether a number is finite: real values check their float, everything else is finite.
+fn number_is_finite(n: &Number) -> bool {
+    match n {
+        Number::Real(Real::F64(f)) => f.is_finite(),
+        Number::Real(Real::F32(f)) => f.is_finite(),
+        Number::BigFloat(f) => f.is_finite(),
+        Number::Complex { re, im } => number_is_finite(re) && number_is_finite(im),
+        _ => true,
+    }
+}
+
+/// Whether a number is `NaN`: real values check their float, everything else is not.
+fn number_is_nan(n: &Number) -> bool {
+    match n {
+        Number::Real(Real::F64(f)) => f.is_nan(),
+        Number::Real(Real::F32(f)) => f.is_nan(),
+        Number::BigFloat(f) => f.is_nan(),
+        Number::Complex { re, im } => number_is_nan(re) || number_is_nan(im),
+        _ => false,
     }
 }
 
@@ -707,6 +896,42 @@ fn expect(name: &str, args: &[Value]) -> Result<Value, RuntimeError> {
         Value::Option(None) => Err(RuntimeError::Message(msg)),
         other => Err(RuntimeError::Type(format!(
             "`{name}` expects a `Result` or `Option` value, got {other:?}"
+        ))),
+    }
+}
+
+/// `is_some` (spec §18.1): `true` for `Option::Some`.
+fn is_some(args: &[Value]) -> Result<Value, RuntimeError> {
+    arity("is_some", args, 1)?;
+    Ok(Value::Bool(matches!(&args[0], Value::Option(Some(_)))))
+}
+
+/// `is_none` (spec §18.1): `true` for `Option::None`.
+fn is_none(args: &[Value]) -> Result<Value, RuntimeError> {
+    arity("is_none", args, 1)?;
+    Ok(Value::Bool(matches!(&args[0], Value::Option(None))))
+}
+
+/// `is_ok` (spec §18.1): `true` for `Result::Ok`.
+fn is_ok(args: &[Value]) -> Result<Value, RuntimeError> {
+    arity("is_ok", args, 1)?;
+    Ok(Value::Bool(matches!(&args[0], Value::Result(Ok(_)))))
+}
+
+/// `is_err` (spec §18.1): `true` for `Result::Err`.
+fn is_err(args: &[Value]) -> Result<Value, RuntimeError> {
+    arity("is_err", args, 1)?;
+    Ok(Value::Bool(matches!(&args[0], Value::Result(Err(_)))))
+}
+
+/// `value_or` (spec §16.3/§18.1): the `Ok` value or `default` on `Err` (non-panicking `unwrap_or`).
+fn value_or(args: &[Value]) -> Result<Value, RuntimeError> {
+    arity("value_or", args, 2)?;
+    match &args[0] {
+        Value::Result(Ok(v)) => Ok((**v).clone()),
+        Value::Result(Err(_)) => Ok(args[1].clone()),
+        other => Err(RuntimeError::Type(format!(
+            "`value_or` expects a `Result` value, got {other:?}"
         ))),
     }
 }

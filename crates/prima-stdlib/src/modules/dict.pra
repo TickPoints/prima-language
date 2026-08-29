@@ -1,0 +1,39 @@
+//! The `Dict` type and its method set (spec §11.6).
+//!
+//! Method list and usage are maintained here; the `///` comments are the single source of truth
+//! and feed `prima doc` and diagnostic notes (spec §4.1/§16.4). The method set follows the stable
+//! Python 3 `dict` methods, adapted to Prima naming. Read-only methods are native; mutating methods
+//! write back through the receiver binding (spec §11.6); `copy` is layered (`@builtin(O2)`, spec
+//! §18.4) with a `.pra` fallback of the same semantics.
+
+/// An unordered key → value mapping with hashable keys (spec §11.6); mutating methods write back.
+class Dict {
+    /// Returns the number of entries in `self`.
+    pub fn len(self) -> Integer @builtin,
+    /// The value for `key`, or `None` when absent.
+    pub fn get(self, key: Value) -> Option<Value> @builtin,
+    /// Returns `true` when `key` is present.
+    pub fn contains(self, key: Value) -> Bool @builtin,
+    /// The keys of `self` in canonical order.
+    pub fn keys(self) -> Array<Value> @builtin,
+    /// The values of `self` in canonical key order.
+    pub fn values(self) -> Array<Value> @builtin,
+    /// The `(key, value)` pairs of `self` in canonical order.
+    pub fn items(self) -> Array<Value> @builtin,
+    /// A shallow copy of `self`.
+    pub fn copy(self) -> Dict @builtin(O2) {
+        { k: self[k] for k in self }
+    },
+    /// Insert or replace `key` with `value`.
+    pub fn insert(self, key: Value, value: Value) -> Nil @builtin,
+    /// Remove `key`, returning its value, or `None` when absent.
+    pub fn remove(self, key: Value) -> Option<Value> @builtin,
+    /// Remove every entry from `self`.
+    pub fn clear(self) -> Nil @builtin,
+    /// Merge `other` into `self` and return the merged dict.
+    pub fn update(self, other: Dict) -> Dict @builtin,
+    /// The value for `key`, inserting `default` when absent (and returning it).
+    pub fn setdefault(self, key: Value, default: Value) -> Value @builtin,
+    /// Remove and return an arbitrary `(key, value)` pair; errors when empty.
+    pub fn popitem(self) -> Tuple<Value> @builtin,
+}

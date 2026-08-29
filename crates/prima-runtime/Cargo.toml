@@ -13,6 +13,7 @@ prima-core = { path = "../prima-core", version = "0.2.4-beta" }
 prima-jit = { path = "../prima-jit", version = "0.2.4-beta" }
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
+num-integer = { workspace = true }
 thiserror = { workspace = true }
 rayon = { workspace = true }
 wide = "1.7"

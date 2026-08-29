@@ -3,6 +3,7 @@ use prima_core::Value;
 use prima_runtime::Evaluator;
 
 fn eval(src: &str) -> Value {
+    prima_stdlib::init();
     Evaluator::new().eval_value(src).expect("eval failed")
 }
 

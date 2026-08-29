@@ -1,0 +1,36 @@
+//! The `Char` type and its method set (spec §18.1).
+//!
+//! Method list and usage are maintained here; the `///` comments are the single source of truth
+//! and feed `prima doc` and diagnostic notes (spec §4.1/§16.4). `is_digit` is layered
+//! (`@builtin(O2)`, spec §18.4): its `.pra` fallback is `self.code() >= 48 && self.code() <= 57`,
+//! matching the native ASCII-digit predicate.
+
+/// A single Unicode scalar value (spec §4.6).
+class Char {
+    /// `1` (a char is one scalar value).
+    pub fn len(self) -> Integer @builtin,
+    /// `true` when `self` is an ASCII decimal digit (`0`–`9`).
+    pub fn is_digit(self) -> Bool @builtin(O2) {
+        self.code() >= 48 && self.code() <= 57
+    },
+    /// `true` when `self` is an alphabetic character.
+    pub fn is_alpha(self) -> Bool @builtin,
+    /// `true` when `self` is alphanumeric.
+    pub fn is_alnum(self) -> Bool @builtin,
+    /// `true` when `self` is an uppercase character.
+    pub fn is_upper(self) -> Bool @builtin,
+    /// `true` when `self` is a lowercase character.
+    pub fn is_lower(self) -> Bool @builtin,
+    /// `true` when `self` is whitespace.
+    pub fn is_space(self) -> Bool @builtin,
+    /// `true` when `self` is an ASCII character.
+    pub fn is_ascii(self) -> Bool @builtin,
+    /// The uppercase form of `self` (first code point of a multi-char expansion).
+    pub fn to_upper(self) -> Char @builtin,
+    /// The lowercase form of `self` (first code point of a multi-char expansion).
+    pub fn to_lower(self) -> Char @builtin,
+    /// `self` as a one-character string.
+    pub fn to_string(self) -> String @builtin,
+    /// The Unicode scalar value of `self` (`ord`).
+    pub fn code(self) -> Integer @builtin,
+}

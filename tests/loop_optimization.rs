@@ -5,6 +5,7 @@ use prima_core::Number;
 use prima_runtime::Evaluator;
 
 fn eval(src: &str) -> prima_core::Value {
+    prima_stdlib::init();
     Evaluator::new().eval_value(src).expect("eval failed")
 }
 
