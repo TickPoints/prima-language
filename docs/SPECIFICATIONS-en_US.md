@@ -4,7 +4,7 @@
 > **Notice**: This specification is the official language specification v2.3 of the **Prima language** and is the final authority for unified design and implementation.
 > **v2.0 change summary**: ① error handling switched to Rust-style `Result`/`?`/`match` (`try/catch` removed); ② statements uniformly separated by `;` (newline separation enters the deprecation process, to be removed gradually); ③ Rust-style patterns and destructuring introduced (`if let`/`while let`/`match` full patterns); ④ Class and ownership semantics introduced; ⑤ numbered error/warning code table established (English, Appendix C); ⑥ full string support and `format`; ⑦ post-collapse numeric types correspond one-to-one with Rust basic numeric types; ⑧ interop (`@c_api::extern` exporting C ABI, `@builtin` Rust implementations); ⑨ standard library extended with `sys`/`time`/`num`/`ops`.
 > **v2.1 change summary (base-type usability enhancements, Python-flavored)**: ⑩`Array` changed to **variable-length** sequence, supporting `push`/`pop`/`append`/`insert`/`remove`/`extend`/slice assignment/concatenation/membership testing (`in`)/negative indices/nestable (as data); ⑪new **mapping type `Dict`** and **set type `Set`** (literals, indexing, methods, iteration); ⑫common collection convenience functions: `len`/`enumerate`/`sorted`/`reversed`/`sum`/`prod`/`min`/`max`/`all`/`any`/`join`/`count`, etc.; ⑬`print` and `println` **distinguished** (the former does not add a newline, the latter does); ⑭console input `input`/`read_line`; ⑮list/dict/set **comprehensions** (`[x^2 for x in v if x > 0]`); ⑯symbolic differentiation primitives `derivative`/`partial`/`grad`/`limit` added to core (§19).
-> **v2.2 change summary**: ⑰**`format` removed, replaced by Python-style f-strings** `f"a={a}"`; strings also support the `"..."`/`'...'` delimiters and raw strings `r"..."` (§18.1); ⑱**doc comments stabilized**: `///`/`//!` become normative comments and are incorporated into the AST, `prima doc` covers the built-in standard library, and when a method call fails the diagnostic note carries the method definition and documentation (§4.1/16.4); ⑲**`@builtin(O1)` layered optimization**: switching between a Rust implementation and the `.pra` original implementation according to the optimization level (§18.4); ⑳**optimization-level system**: a new `opt_level` policy (`O0`–`O3`), each level corresponding to a set of optimization passes (§10.2/13.2); ㉑**built-in method system**: the method sets of common classes such as `String` reference the stable Python methods, with the list and documentation uniformly maintained in the doc comments of the embedded `.pra` modules (§18.1); ㉒**standard library expansion**: `math` numeric tools (factorization, Taylor expansion), `physics` common formulas (Rust implementations), system interaction, and `plot`/`render` plotting and formula rendering (§18); ㉓**host-layer memory switched to GC**, with the standard library providing `mem::Arc` for explicit reference counting (§12.3/12.4).
+> **v2.2 change summary**: ⑰**`format` removed, replaced by Python-style f-strings** `f"a={a}"`; strings also support the `"..."`/`'...'` delimiters and raw strings `r"..."` (§18.1); ⑱**doc comments stabilized**: `///`/`//!` become normative comments and are incorporated into the AST, `prima doc` covers the built-in standard library, and when a method call fails the diagnostic note carries the method definition and documentation (§4.1/16.4); ⑲**`@builtin(O1)` layered optimization**: switching between a Rust implementation and the `.pra` original implementation according to the optimization level (§18.4); ⑳**optimization-level system**: a new `opt_level` policy (`O0`–`O3`), each level corresponding to a set of optimization passes (§10.2/13.2); ㉑**built-in method system**: the method sets of `String` and every builtin type (`Array`/`Dict`/`Set`/`Number`/`Char`/`Tuple`/`Option`/`Result`) reference the stable Python methods, with the list and documentation uniformly maintained in the doc comments of the embedded `.pra` modules (§18.1); ㉒**standard library expansion**: `math` numeric tools (factorization, Taylor expansion), `physics` common formulas (Rust implementations), system interaction, and `plot`/`render` plotting and formula rendering (§18); ㉓**host-layer memory switched to GC**, with the standard library providing `mem::Arc` for explicit reference counting (§12.3/12.4).
 > **v2.3 change summary**: ㉔**`|>` pipeline removed**: using `|>` is now a parse error (`E0010 syntax_error`); use class method chains/direct calls instead (§9.7); ㉕**newline-separated statements removed**: statements must be separated by `;` (§4.2); a statement not terminated by `;` (other than before end-of-file or a block-closing `}`) is now the hard error `E0011 expected_separator` (§16.4); the deprecation warnings `W0001`/`W0002` are deleted (§16.5).
 
 ## Identification
@@ -889,6 +889,9 @@ print(s);                      // LaTeX output: \sum_{i=1}^{n} i
 let s_eval = to_f64(s);        // only now is it numerically evaluated (requires n bound to a concrete value)
 ```
 
+### 9.11 Numeric method set (v2.2 landing)
+
+Besides the collapse family (§9.2–9.6, method syntax `x.to_f64()`/`x.rounded(3)`), `Number` provides **predicate and accessor methods** (`is_integer`/`is_rational`/`is_real`/`is_complex`/`is_positive`/`is_negative`/`is_zero`/`is_even`/`is_odd`/`is_finite`/`is_nan`/`abs`/`sign`/`floor`/`ceil`/`round`/`sqrt`/`numerator`/`denominator`/`real`/`imag`/`bit_length`); `floor`/`ceil`/`round` on reals return `F64` (keeping the float domain), everything else returns in the exact layer. The full list and docs are authoritative in the embedded `core/number.pra` `///` comments (§18.1 same-source principle).
 ## 10. Evaluation Semantics and Optimization
 
 ### 10.1 Evaluation Semantics
@@ -1047,6 +1050,8 @@ let m = min(v);               // → 1
 let M = max(v);               // → 3
 ```
 
+> **Method system (v2.2 landing)**: the full `Array` method set (including the layered `copy()`, `sort`/`reverse`/`clear`, …) is authoritative in the embedded `core/array.pra` `///` doc comments (§18.1 same-source principle); `remove(i)` removes **by index** (negative counts from the end), not Python's `list.remove(value)`.
+
 #### Out-of-bounds Handling
 
 ```prima
@@ -1174,6 +1179,8 @@ let u = s ∪ {5, 6};           // union (∪ is a Set-specific operator)
 let i = s ∩ {2, 3};           // intersection
 let diff = s \ {3};           // difference
 ```
+
+> **Method system (v2.2 landing)**: the full `Dict`/`Set` method sets (`Dict.contains`/`setdefault`/`popitem`/`copy`; `Set.symmetric_difference`/`issubset`/`issuperset`/`isdisjoint`/`copy`/`pop`/`clear`/`update`, …) are authoritative in the embedded `core/dict.pra` and `core/set.pra` `///` doc comments (§18.1 same-source principle).
 
 #### Iteration and Generic Convenience
 
@@ -1921,6 +1928,9 @@ pub class String {
 ```
 
 - **Performance layering**: hot methods (`split`/`replace`/`to_upper`/`to_lower`, etc.) are provided as Rust implementations via `@builtin(O1)`/`@builtin(O2)`; low-frequency methods are written directly in `.pra` (§18.4's layered-optimization mechanism).
+- **Implementation ownership (v2.2 landing finalization)**: the method sets of `String` and every other builtin type (`Array`/`Dict`/`Set`/`Number`/`Char`/`Tuple`/`Option`/`Result`) are implemented by the embedded executable `core::*` stdlib modules and pre-imported with standard-library initialization (§4.5/§18.4, same-source principle); **without standard-library initialization the methods are unavailable** (the host reports a clear error).
+- **`split("")`**: returns the **array of `self`'s single characters** (like Python `list(s)`), rather than erroring or yielding per-character empty strings.
+- `casefold` is simplified lowercase (Python's `casefold` folds more strongly, e.g. `ß`→`ss`; the deviation is noted); `is_digit` uses Unicode `Numeric`.
 
 ### 18.1b Console Output and Input (core-preimported, v2.1)
 

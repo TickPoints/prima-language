@@ -5,6 +5,16 @@ All notable changes to the Prima toolchain are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Builtin method system for every core type (spec §18.1/§11.3/§11.6/§9, Phase 10).** The embedded `core::<class>` `.pra` modules (`String`/`Array`/`Dict`/`Set`/`Number`/`Char`/`Tuple`/`Option`/`Result`) are now the single source of truth for each type's method set and `///` docs, and builtin-value method calls dispatch through their class definitions with the `@builtin(ON)` layering (spec §18.4): the registered Rust fast path runs at `opt_level >= N` and the `.pra` fallback body is the semantic authority. `String` gains the full Python-`str`-inspired set (~50 methods: predicates, case transforms, padding, `count`/`rfind`/`removeprefix`/`removesuffix`/`splitlines`/`expandtabs`/`partition`/…; `split("")` yields the single characters); `Array`/`Dict`/`Set` fill the Python gaps (`copy`, `setdefault`, `popitem`, `symmetric_difference`, `issubset`/`issuperset`/`isdisjoint`, `pop`/`clear`/`update`); `Number` adds predicates/accessors (`is_integer`/`abs`/`sign`/`floor`/`ceil`/`round`/`sqrt`/`numerator`/`denominator`/`real`/`imag`/`bit_length`/`is_*`); `Char`/`Tuple`/`Option`/`Result` get their full small method sets (`is_*`/`code`/`count`/`get`/`is_some`/`is_ok`/`value_or`/…). `prima doc --stdlib` and failed-call diagnostics now cover every core type. Builtin-class method definitions live in the standard library; without `prima_stdlib::init()` the methods are unavailable (the interpreter reports a clear error).
+
+### Fixed
+
+- **Windows io tests.** `crates/prima-stdlib/tests/io.rs` embedded the temp-file path directly into a Prima string literal; on Windows the path's backslashes (e.g. `\U` in `C:\Users\...`) were read as invalid escape sequences and every test failed with `syntax error: invalid escape sequence`. Paths are now escaped with `primed_str` (doubling backslashes, quoting double-quotes, spec §18.1) before interpolation.
+
 ## [0.2.4-beta] - 2026-08-28
 
 ### Added

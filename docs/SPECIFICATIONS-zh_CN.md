@@ -3,7 +3,7 @@
 > **声明**：本规范为 **Prima 语言** 的正式语言规范 v2.3，是设计与实现统一的最终依据。
 > **v2.0 变更摘要**：①错误处理改为 Rust 式 `Result`/`?`/`match`（移除 `try/catch`）；②语句统一以 `;` 划分（换行分隔进入弃用流程，逐步移除）；③引入 Rust 式模式与解构（`if let`/`while let`/`match` 全模式）；④引入 Class（类）与所有权语义；⑤建立编号错误/警告码表（英文，附录 C）；⑥完整字符串支持与 `format`；⑦坍缩后数值类型与 Rust 基本数值类型一一对应；⑧互操作（`@c_api::extern` 导出 C ABI、`@builtin` Rust 实现）；⑨标准库扩充 `sys`/`time`/`num`/`ops`。
 > **v2.1 变更摘要（基础类型可用性增强，偏向 Python 风格）**：⑩`Array` 改为**可变长度**序列，支持 `push`/`pop`/`append`/`insert`/`remove`/`extend`/切片赋值/拼接/成员测试（`in`）/负索引/可嵌套（作为数据）；⑪新增**映射类型 `Dict`** 与**集合类型 `Set`**（字面量、索引、方法、迭代）；⑫常用集合便捷函数：`len`/`enumerate`/`sorted`/`reversed`/`sum`/`prod`/`min`/`max`/`all`/`any`/`join`/`count` 等；⑬`print` 与 `println` **区分**（前者不换行，后者换行）；⑭控制台输入 `input`/`read_line`；⑮列表/字典/集合**推导式**（`[x^2 for x in v if x > 0]`）；⑯符号微分原语 `derivative`/`partial`/`grad`/`limit` 纳入 core（§十九）。
-> **v2.2 变更摘要**：⑰**`format` 移除，改用 Python 式 f-string** `f"a={a}"`；字符串同时支持 `"..."` / `'...'` 定界与原始字符串 `r"..."`（§18.1）；⑱**文档注释稳定化**：`///`/`//!` 成为规范注释并纳入 AST，`prima doc` 覆盖内置标准库，方法调用出错时在诊断 note 中附带方法定义与文档（§4.1/16.4）；⑲**`@builtin(O1)` 分层优化**：按优化等级在 Rust 实现与 `.pra` 原实现之间切换（§18.4）；⑳**优化等级体系**：新增 `opt_level` 策略（`O0`–`O3`），各等级对应优化通道（§10.2/13.2）；㉑**内置方法体系**：`String` 等常用类方法集以 Python 稳定方法为参照，清单与文档统一维护于内嵌 `.pra` 模块的文档注释（§18.1）；㉒**标准库扩充**：`math` 数值工具（因式分解、泰勒展开）、`physics` 常用公式（Rust 实现）、系统交互、`plot`/`render` 绘图与公式渲染（§十八）；㉓**宿主层内存改为 GC**，标准库提供 `mem::Arc` 显式引用计数（§12.3/12.4）。
+> **v2.2 变更摘要**：⑰**`format` 移除，改用 Python 式 f-string** `f"a={a}"`；字符串同时支持 `"..."` / `'...'` 定界与原始字符串 `r"..."`（§18.1）；⑱**文档注释稳定化**：`///`/`//!` 成为规范注释并纳入 AST，`prima doc` 覆盖内置标准库，方法调用出错时在诊断 note 中附带方法定义与文档（§4.1/16.4）；⑲**`@builtin(O1)` 分层优化**：按优化等级在 Rust 实现与 `.pra` 原实现之间切换（§18.4）；⑳**优化等级体系**：新增 `opt_level` 策略（`O0`–`O3`），各等级对应优化通道（§10.2/13.2）；㉑**内置方法体系**：`String` 及全部内置类型（`Array`/`Dict`/`Set`/`Number`/`Char`/`Tuple`/`Option`/`Result`）的方法集以 Python 稳定方法为参照，清单与文档统一维护于内嵌 `.pra` 模块的文档注释（§18.1）；㉒**标准库扩充**：`math` 数值工具（因式分解、泰勒展开）、`physics` 常用公式（Rust 实现）、系统交互、`plot`/`render` 绘图与公式渲染（§十八）；㉓**宿主层内存改为 GC**，标准库提供 `mem::Arc` 显式引用计数（§12.3/12.4）。
 > **v2.3 变更摘要**：㉔**`|>` 管道移除**：使用 `|>` 即解析错误（`E0010 syntax_error`），改用类方法链/直接调用（§9.7）；㉕**换行分隔语句移除**：语句必须以 `;` 分隔（§4.2），未以 `;` 结尾的语句（块级语句后/文件末尾除外）为硬错误 `E0011 expected_separator`（§16.4）；同步删除弃用警告 `W0001`/`W0002`（§16.5）。
 
 ## 标识
@@ -888,6 +888,10 @@ print(s);                      // LaTeX 输出：\sum_{i=1}^{n} i
 let s_eval = to_f64(s);        // 此时才数值求值（需 n 已绑定具体值）
 ```
 
+### 9.11 数值方法集（v2.2 落地）
+
+`Number` 除坍缩函数族（§9.2–9.6，方法语法 `x.to_f64()`/`x.rounded(3)`）外，提供**谓词与访问器**方法（`is_integer`/`is_rational`/`is_real`/`is_complex`/`is_positive`/`is_negative`/`is_zero`/`is_even`/`is_odd`/`is_finite`/`is_nan`/`abs`/`sign`/`floor`/`ceil`/`round`/`sqrt`/`numerator`/`denominator`/`real`/`imag`/`bit_length`）；对 Real 的 `floor`/`ceil`/`round` 返回 `F64`（保持浮点域），其余按精确层返回。完整清单与文档以内嵌 `core/number.pra` 的 `///` 注释为准（§18.1 同源原则）。
+
 ## 十、求值语义与优化
 
 ### 10.1 求值语义
@@ -1046,6 +1050,8 @@ let m = min(v);               // → 1
 let M = max(v);               // → 3
 ```
 
+> **方法体系（v2.2 落地）**：`Array` 完整方法集（含 `copy()` 分层、`sort/reverse/clear` 等）以内嵌 `core/array.pra` 的 `///` 文档注释为准（§18.1 同源原则）；`remove(i)` 为**索引删除**（负索引从末尾数），非 Python `list.remove(value)`。
+
 #### 越界处理
 
 ```prima
@@ -1173,6 +1179,8 @@ let u = s ∪ {5, 6};           // 并集（∪ 为 Set 专属算符）
 let i = s ∩ {2, 3};           // 交集
 let diff = s \ {3};           // 差集
 ```
+
+> **方法体系（v2.2 落地）**：`Dict`/`Set` 完整方法集（`Dict.contains/setdefault/popitem/copy`，`Set.symmetric_difference/issubset/issuperset/isdisjoint/copy/pop/clear/update` 等）以内嵌 `core/dict.pra`、`core/set.pra` 的 `///` 文档注释为准（§18.1 同源原则）。
 
 #### 迭代与通用便捷
 
@@ -1920,6 +1928,9 @@ pub class String {
 ```
 
 - **性能分层**：热点方法（`split`/`replace`/`to_upper`/`to_lower` 等）以 `@builtin(O1)`/`@builtin(O2)` 提供 Rust 实现；低频方法直接以 `.pra` 书写（§18.4 分层优化机制）。
+- **实现归属（v2.2 落地定稿）**：`String` 及其他内置类型（`Array`/`Dict`/`Set`/`Number`/`Char`/`Tuple`/`Option`/`Result`）的方法集由**标准库内嵌 `core::*` 可执行模块**实现并随标准库初始化预导入（§4.5/§18.4 同源原则）；**无标准库初始化时方法不可用**（宿主报明确错误）。
+- **`split("")`**：返回 `self` 的**单字符数组**（等价 Python `list(s)`），而非报错或每字符空串。
+- `casefold` 为简化小写（Python `casefold` 对 `ß`→`ss` 等更强折叠，此处标注差异）；`is_digit` 采用 Unicode `Numeric`。
 
 ### 18.1b 控制台输出与输入（core 预导入，v2.1）
 
