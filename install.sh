@@ -143,8 +143,20 @@ TMPDIR="${TMPDIR:-/tmp}"
 WORK="$(mktemp -d "$TMPDIR/prima-install.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
+# Download a URL to a file. Show curl's progress bar when stderr is a terminal
+# (interactive session) so the user can watch the transfer; otherwise (CI,
+# pipes, logs) stay quiet. curl emits the meter on stderr, leaving stdout clean.
+fetch() {
+  local url="$1" out="$2"
+  if [ -t 2 ]; then
+    curl -fL --progress-bar "$url" -o "$out"
+  else
+    curl -fsSL "$url" -o "$out"
+  fi
+}
+
 echo "==> downloading $ARTIFACT"
-if ! curl -fsSL "$URL" -o "$WORK/prima$EXT"; then
+if ! fetch "$URL" "$WORK/prima$EXT"; then
   echo "error: download failed — check that release '$VERSION' provides a '$TARGET' asset:" >&2
   echo "  $URL" >&2
   exit 1
@@ -157,12 +169,17 @@ fi
 
 echo "==> verifying SHA-256"
 if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$WORK" && sha256sum -c prima.sha256 >/dev/null)
+  if ! (cd "$WORK" && sha256sum -c prima.sha256 >/dev/null); then
+    echo "error: SHA-256 checksum mismatch — aborting for safety" >&2
+    exit 1
+  fi
 elif command -v shasum >/dev/null 2>&1; then
-  (cd "$WORK" && shasum -a 256 -c prima.sha256 >/dev/null)
+  if ! (cd "$WORK" && shasum -a 256 -c prima.sha256 >/dev/null); then
+    echo "error: SHA-256 checksum mismatch — aborting for safety" >&2
+    exit 1
+  fi
 else
-  echo "error: neither sha256sum nor shasum is available" >&2
-  exit 1
+  echo "warning: no checksum tool found (need sha256sum or shasum); skipping SHA-256 verification" >&2
 fi
 
 # --- Install ---------------------------------------------------------------
