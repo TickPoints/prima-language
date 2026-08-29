@@ -1,0 +1,20 @@
+//! The `Tuple` type and its method set (spec §4.4/§18.1).
+//!
+//! Method list and usage are maintained here; the `///` comments are the single source of truth
+//! and feed `prima doc` and diagnostic notes (spec §4.1/§16.4).
+
+/// An immutable, fixed-length sequence of values (spec §4.4).
+class Tuple {
+    /// The number of elements in `self`.
+    pub fn len(self) -> Integer @builtin,
+    /// The element at `index` (negative counts from the end), or `None`.
+    pub fn get(self, index: Integer) -> Option<Value> @builtin,
+    /// The number of occurrences of `value` in `self`.
+    pub fn count(self, value: Value) -> Integer @builtin,
+    /// The index of the first occurrence of `value`, or an error when absent.
+    pub fn index(self, value: Value) -> Integer @builtin,
+    /// The first element, or `None` when empty.
+    pub fn first(self) -> Option<Value> @builtin,
+    /// The last element, or `None` when empty.
+    pub fn last(self) -> Option<Value> @builtin,
+}

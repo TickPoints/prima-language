@@ -8,6 +8,7 @@ use prima_runtime::Evaluator;
 /// last value. The default (no config) is `O2`.
 fn eval_at(opt_level: &str, src: &str) -> Value {
     let program = format!("config {{ opt_level := {opt_level} }}\n{src}");
+    prima_stdlib::init();
     Evaluator::new().eval_value(&program).expect("eval failed")
 }
 

@@ -1,0 +1,31 @@
+// Collection method sets (spec §11.3/§11.6, Phase 10): `Array`/`Dict`/`Set` methods, maintained in
+// core/array.pra, core/dict.pra, and core/set.pra.
+let a = [3, 1, 2, 1];
+println(a.len());                       // → 4
+println(a.get(-1));                     // → Some(1) (negative counts from the end)
+println(a.index(2));                    // → 2
+println(a.count(1));                    // → 2
+println(a.copy());                      // → [3, 1, 2, 1]
+a.sort();
+println(a);                             // → [1, 1, 2, 3]
+
+let d = { "a": 1, "b": 2 };
+println(d.contains("a"));               // → true
+println(d.setdefault("c", 3));          // → 3 (inserts when absent)
+println(d.len());                       // → 3
+println(d.keys());                      // → [a, b, c]
+let (k, v) = d.popitem();
+println(k);                             // → a
+println(d.copy());                      // → {b: 2, c: 3}
+
+let s = {1, 2, 3};
+println(s.union({3, 4}));               // → {1, 2, 3, 4}
+println(s.intersection({2, 3}));        // → {2, 3}
+println(s.difference({2}));             // → {1, 3}
+println(s.symmetric_difference({3, 4}));// → {1, 2, 4}
+println(s.issubset({1, 2, 3, 4}));      // → true
+println(s.issuperset({1, 2}));          // → true
+println(s.isdisjoint({9}));             // → true
+s.add(4);
+s.discard(99);
+println(s.len());                       // → 4

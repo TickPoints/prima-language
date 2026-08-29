@@ -1,0 +1,49 @@
+//! The `Array` type and its method set (spec §11.3).
+//!
+//! Method list and usage are maintained here; the `///` comments are the single source of truth
+//! and feed `prima doc` and diagnostic notes (spec §4.1/§16.4). The method set follows the stable
+//! Python 3 `list` methods, adapted to Prima naming. Read-only methods are native; mutating methods
+//! write back through the receiver binding (spec §11.3); `copy` is layered (`@builtin(O2)`, spec
+//! §18.4) with a `.pra` fallback of the same semantics.
+
+/// A heterogeneous, growable array (spec §11.3): value-semantic copies; mutating methods write back.
+class Array {
+    /// Returns the number of elements in `self`.
+    pub fn len(self) -> Integer @builtin,
+    /// Returns `true` when `self` has no elements.
+    pub fn is_empty(self) -> Bool @builtin,
+    /// The element at `index` (negative counts from the end), or `None` when out of range.
+    pub fn get(self, index: Integer) -> Option<Value> @builtin,
+    /// Returns `true` when `self` contains `value` (element equality).
+    pub fn contains(self, value: Value) -> Bool @builtin,
+    /// The index of the first occurrence of `value`, or an error when absent.
+    pub fn index(self, value: Value) -> Integer @builtin,
+    /// The number of occurrences of `value` in `self`.
+    pub fn count(self, value: Value) -> Integer @builtin,
+    /// The first element, or `None` when empty.
+    pub fn first(self) -> Option<Value> @builtin,
+    /// The last element, or `None` when empty.
+    pub fn last(self) -> Option<Value> @builtin,
+    /// A shallow copy of `self`.
+    pub fn copy(self) -> Array<Value> @builtin(O2) {
+        [e for e in self]
+    },
+    /// Append `value` to the end of `self`.
+    pub fn push(self, value: Value) -> Nil @builtin,
+    /// Remove and return the last element, or `None` when empty.
+    pub fn pop(self) -> Option<Value> @builtin,
+    /// Append `value` to the end of `self` (alias of `push`).
+    pub fn append(self, value: Value) -> Nil @builtin,
+    /// Append every element of `other` to the end of `self`.
+    pub fn extend(self, other: Array<Value>) -> Nil @builtin,
+    /// Insert `value` at `index`, shifting later elements right.
+    pub fn insert(self, index: Integer, value: Value) -> Nil @builtin,
+    /// Remove the element at `index` (negative counts from the end); errors when out of range.
+    pub fn remove(self, index: Integer) -> Nil @builtin,
+    /// Remove every element from `self`.
+    pub fn clear(self) -> Nil @builtin,
+    /// Sort `self` in place (spec §11.3).
+    pub fn sort(self) -> Nil @builtin,
+    /// Reverse `self` in place (spec §11.3).
+    pub fn reverse(self) -> Nil @builtin,
+}

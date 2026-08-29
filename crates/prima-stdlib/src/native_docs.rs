@@ -1,64 +1,92 @@
-//! Populate the runtime doc registry for the native `String` class (spec §4.1/§16.4).
+//! Populate the runtime doc registry for the native builtin classes (`String`/`Array`/`Dict`/`Set`/
+//! `Number`/`Char`/`Tuple`/`Option`/`Result`, spec §18.1) from their embedded `core::<class>` modules.
 //!
-//! The embedded `modules/string.pra` source is the single source of truth: its `///` comments and
-//! signatures are parsed once at startup and registered under `String::<method>` keys (plus the
-//! class-level `String` key) so diagnostics can attach a signature, definition location, and doc
-//! note to a failed call (spec §16.4) and `prima doc` lists them offline (spec §20).
+//! Each `modules/*.pra` source is the single source of truth: its `///` comments and signatures are
+//! parsed once at startup and registered under `<Class>::<method>` keys (plus the class-level
+//! `<Class>` key) so diagnostics can attach a signature, definition location, and doc note to a
+//! failed call (spec §16.4) and `prima doc` lists them offline (spec §20).
 
 use prima_runtime::docs::{MethodDoc, register_doc};
 use prima_syntax::ast::{ClassMemberKind, Stmt, Type};
 use prima_syntax::parse;
 
-/// Display path used for `defined_at` (the module is embedded, not read from disk).
-const DISPLAY_PATH: &str = "core/string.pra";
+/// All embedded builtin-class modules, as `(class name, display path, source)`.
+const CLASS_MODULES: &[(&str, &str, &str)] = &[
+    (
+        "String",
+        "core/string.pra",
+        include_str!("modules/string.pra"),
+    ),
+    ("Array", "core/array.pra", include_str!("modules/array.pra")),
+    ("Dict", "core/dict.pra", include_str!("modules/dict.pra")),
+    ("Set", "core/set.pra", include_str!("modules/set.pra")),
+    (
+        "Number",
+        "core/number.pra",
+        include_str!("modules/number.pra"),
+    ),
+    ("Char", "core/char.pra", include_str!("modules/char.pra")),
+    ("Tuple", "core/tuple.pra", include_str!("modules/tuple.pra")),
+    (
+        "Option",
+        "core/option.pra",
+        include_str!("modules/option.pra"),
+    ),
+    (
+        "Result",
+        "core/result.pra",
+        include_str!("modules/result.pra"),
+    ),
+];
 
-/// Parse `modules/string.pra`, walk `class String`, and register one `MethodDoc` per member.
+/// Parse every embedded builtin-class module and register one `MethodDoc` per member.
 ///
 /// A parse failure is non-fatal: `init` must never panic on a broken embedded source, so the
-/// registry is simply left empty in that case.
+/// registry is simply left empty for that module.
 pub fn register() {
-    let src = include_str!("modules/string.pra");
-    let Ok(program) = parse(src) else { return };
-    for stmt in &program.stmts {
-        let Stmt::ClassDef {
-            name,
-            members,
-            docs,
-            ..
-        } = stmt
-        else {
-            continue;
-        };
-        if name.value != "String" {
-            continue;
-        }
-        // Class-level doc (spec §4.1): the `///` above `class String`.
-        register_doc(
-            "String",
-            MethodDoc {
-                name: "String".into(),
-                sig: "String".into(),
-                doc: docs.as_ref().map(|d| d.text()),
-                defined_at: format!("{DISPLAY_PATH}:1:1"),
-            },
-        );
-        for member in members {
-            let ClassMemberKind::Method {
-                name, params, ret, ..
-            } = &member.kind
+    for (class, display, src) in CLASS_MODULES {
+        let Ok(program) = parse(src) else { continue };
+        for stmt in &program.stmts {
+            let Stmt::ClassDef {
+                name,
+                members,
+                docs,
+                ..
+            } = stmt
             else {
                 continue;
             };
-            let key = format!("String::{}", name.value);
+            if name.value != *class {
+                continue;
+            }
+            // Class-level doc (spec §4.1): the `///` above `class <Class>`.
             register_doc(
-                key,
+                *class,
                 MethodDoc {
-                    name: name.value.clone(),
-                    sig: render_sig(&name.value, params, ret),
-                    doc: member.docs.as_ref().map(|d| d.text()),
-                    defined_at: line_col(src, member.span.start),
+                    name: (*class).into(),
+                    sig: (*class).into(),
+                    doc: docs.as_ref().map(|d| d.text()),
+                    defined_at: format!("{display}:1:1"),
                 },
             );
+            for member in members {
+                let ClassMemberKind::Method {
+                    name, params, ret, ..
+                } = &member.kind
+                else {
+                    continue;
+                };
+                let key = format!("{class}::{}", name.value);
+                register_doc(
+                    key,
+                    MethodDoc {
+                        name: name.value.clone(),
+                        sig: render_sig(&name.value, params, ret),
+                        doc: member.docs.as_ref().map(|d| d.text()),
+                        defined_at: line_col(display, src, member.span.start),
+                    },
+                );
+            }
         }
     }
 }
@@ -174,9 +202,9 @@ fn render_type_list(types: &[Type], out: &mut String) {
     }
 }
 
-/// Render `core/string.pra:<line>:<col>` for a byte offset (both 1-based): line counts newlines
-/// before the offset, column counts characters since the last newline.
-fn line_col(src: &str, offset: u32) -> String {
+/// Render `<display>:<line>:<col>` for a byte offset (both 1-based): line counts newlines before
+/// the offset, column counts characters since the last newline.
+fn line_col(display: &str, src: &str, offset: u32) -> String {
     let offset = (offset as usize).min(src.len());
     let before = &src[..offset];
     let line = before.bytes().filter(|&b| b == b'\n').count() + 1;
@@ -184,5 +212,5 @@ fn line_col(src: &str, offset: u32) -> String {
         .rfind('\n')
         .map(|i| before[i + 1..].chars().count() + 1)
         .unwrap_or(before.chars().count() + 1);
-    format!("{DISPLAY_PATH}:{line}:{col}")
+    format!("{display}:{line}:{col}")
 }

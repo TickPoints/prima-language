@@ -1,0 +1,177 @@
+//! The `Number` type and its method set (spec §9/§18.1).
+//!
+//! Method list and usage are maintained here; the `///` comments are the single source of truth
+//! and feed `prima doc` and diagnostic notes (spec §4.1/§16.4). The conversions and rounding forms
+//! are the collapse family (spec §9.2–9.6) also available as free functions (`to_f64(x)`); the
+//! predicates/accessors (`is_integer`/`abs`/`numerator`/...) are numeric methods (spec §18.1).
+//! Numeric methods are native: they are the compute hotspots and mostly not expressible in `.pra`.
+
+/// A number in the exact tower `Integer < Rational < Real < Complex` or a fixed-width collapse.
+class Number {
+    /// Collapse to a 32-bit float (spec §9.2).
+    pub fn to_f32(self) -> F32 @builtin,
+    /// Collapse to a 64-bit float (spec §9.2).
+    pub fn to_f64(self) -> F64 @builtin,
+    /// Collapse to an arbitrary-precision integer (spec §9.2).
+    pub fn to_bigint(self) -> Integer @builtin,
+    /// Collapse to an arbitrary-precision rational (spec §9.2).
+    pub fn to_rational(self) -> Rational @builtin,
+    /// Collapse to a 64-bit float (spec §9.2, legacy).
+    pub fn to_bigfloat(self) -> F64 @builtin,
+    /// Promote to a complex number (spec §9.2).
+    pub fn to_complex(self) -> Complex @builtin,
+    /// Collapse to `I8`, erroring on overflow or non-integral values (spec §9.2).
+    pub fn to_i8(self) -> I8 @builtin,
+    /// Collapse to `I16`, erroring on overflow or non-integral values (spec §9.2).
+    pub fn to_i16(self) -> I16 @builtin,
+    /// Collapse to `I32`, erroring on overflow or non-integral values (spec §9.2).
+    pub fn to_i32(self) -> I32 @builtin,
+    /// Collapse to `I64`, erroring on overflow or non-integral values (spec §9.2).
+    pub fn to_i64(self) -> I64 @builtin,
+    /// Collapse to `I128`, erroring on overflow or non-integral values (spec §9.2).
+    pub fn to_i128(self) -> I128 @builtin,
+    /// Collapse to `U8`, erroring on overflow or non-integral values (spec §9.2).
+    pub fn to_u8(self) -> U8 @builtin,
+    /// Collapse to `U16`, erroring on overflow or non-integral values (spec §9.2).
+    pub fn to_u16(self) -> U16 @builtin,
+    /// Collapse to `U32`, erroring on overflow or non-integral values (spec §9.2).
+    pub fn to_u32(self) -> U32 @builtin,
+    /// Collapse to `U64`, erroring on overflow or non-integral values (spec §9.2).
+    pub fn to_u64(self) -> U64 @builtin,
+    /// Collapse to `U128`, erroring on overflow or non-integral values (spec §9.2).
+    pub fn to_u128(self) -> U128 @builtin,
+    /// Collapse to `Isize`, erroring on overflow or non-integral values (spec §9.2).
+    pub fn to_isize(self) -> Isize @builtin,
+    /// Collapse to `Usize`, erroring on overflow or non-integral values (spec §9.2).
+    pub fn to_usize(self) -> Usize @builtin,
+    /// Collapse to `F64`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_f64(self) -> Result<F64, String> @builtin,
+    /// Collapse to `F32`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_f32(self) -> Result<F32, String> @builtin,
+    /// Collapse to `I8`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_i8(self) -> Result<I8, String> @builtin,
+    /// Collapse to `I16`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_i16(self) -> Result<I16, String> @builtin,
+    /// Collapse to `I32`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_i32(self) -> Result<I32, String> @builtin,
+    /// Collapse to `I64`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_i64(self) -> Result<I64, String> @builtin,
+    /// Collapse to `I128`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_i128(self) -> Result<I128, String> @builtin,
+    /// Collapse to `U8`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_u8(self) -> Result<U8, String> @builtin,
+    /// Collapse to `U16`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_u16(self) -> Result<U16, String> @builtin,
+    /// Collapse to `U32`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_u32(self) -> Result<U32, String> @builtin,
+    /// Collapse to `U64`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_u64(self) -> Result<U64, String> @builtin,
+    /// Collapse to `U128`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_u128(self) -> Result<U128, String> @builtin,
+    /// Collapse to `Isize`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_isize(self) -> Result<Isize, String> @builtin,
+    /// Collapse to `Usize`, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_usize(self) -> Result<Usize, String> @builtin,
+    /// Collapse to an integer, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_bigint(self) -> Result<Integer, String> @builtin,
+    /// Collapse to a rational, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_rational(self) -> Result<Rational, String> @builtin,
+    /// Collapse to a complex number, returning a `Result` instead of erroring (spec §9.3).
+    pub fn try_complex(self) -> Result<Complex, String> @builtin,
+    /// `I8` collapse that reports overflow, returning a `Result` (spec §9.4).
+    pub fn checked_i8(self) -> Result<I8, String> @builtin,
+    /// `I16` collapse that reports overflow, returning a `Result` (spec §9.4).
+    pub fn checked_i16(self) -> Result<I16, String> @builtin,
+    /// `I32` collapse that reports overflow, returning a `Result` (spec §9.4).
+    pub fn checked_i32(self) -> Result<I32, String> @builtin,
+    /// `I64` collapse that reports overflow, returning a `Result` (spec §9.4).
+    pub fn checked_i64(self) -> Result<I64, String> @builtin,
+    /// `I128` collapse that reports overflow, returning a `Result` (spec §9.4).
+    pub fn checked_i128(self) -> Result<I128, String> @builtin,
+    /// `U8` collapse that reports overflow, returning a `Result` (spec §9.4).
+    pub fn checked_u8(self) -> Result<U8, String> @builtin,
+    /// `U16` collapse that reports overflow, returning a `Result` (spec §9.4).
+    pub fn checked_u16(self) -> Result<U16, String> @builtin,
+    /// `U32` collapse that reports overflow, returning a `Result` (spec §9.4).
+    pub fn checked_u32(self) -> Result<U32, String> @builtin,
+    /// `U64` collapse that reports overflow, returning a `Result` (spec §9.4).
+    pub fn checked_u64(self) -> Result<U64, String> @builtin,
+    /// `U128` collapse that reports overflow, returning a `Result` (spec §9.4).
+    pub fn checked_u128(self) -> Result<U128, String> @builtin,
+    /// Integer addition that reports overflow, returning a `Result` (spec §9.4).
+    pub fn checked_add(self, other: Integer) -> Result<Integer, String> @builtin,
+    /// Integer multiplication that reports overflow, returning a `Result` (spec §9.4).
+    pub fn checked_mul(self, other: Integer) -> Result<Integer, String> @builtin,
+    /// Clamp to `I8`, forcing the value into range (spec §9.5).
+    pub fn clamped_i8(self) -> I8 @builtin,
+    /// Clamp to `I16`, forcing the value into range (spec §9.5).
+    pub fn clamped_i16(self) -> I16 @builtin,
+    /// Clamp to `I32`, forcing the value into range (spec §9.5).
+    pub fn clamped_i32(self) -> I32 @builtin,
+    /// Clamp to `I64`, forcing the value into range (spec §9.5).
+    pub fn clamped_i64(self) -> I64 @builtin,
+    /// Clamp to `I128`, forcing the value into range (spec §9.5).
+    pub fn clamped_i128(self) -> I128 @builtin,
+    /// Clamp to `U8`, forcing the value into range (spec §9.5).
+    pub fn clamped_u8(self) -> U8 @builtin,
+    /// Clamp to `U16`, forcing the value into range (spec §9.5).
+    pub fn clamped_u16(self) -> U16 @builtin,
+    /// Clamp to `U32`, forcing the value into range (spec §9.5).
+    pub fn clamped_u32(self) -> U32 @builtin,
+    /// Clamp to `U64`, forcing the value into range (spec §9.5).
+    pub fn clamped_u64(self) -> U64 @builtin,
+    /// Clamp to `U128`, forcing the value into range (spec §9.5).
+    pub fn clamped_u128(self) -> U128 @builtin,
+    /// Clamp to `F32`, forcing the value into range (spec §9.5).
+    pub fn clamped_f32(self) -> F32 @builtin,
+    /// Clamp to `F64`, forcing the value into range (spec §9.5).
+    pub fn clamped_f64(self) -> F64 @builtin,
+    /// Round to `digits` decimal places (spec §9.6).
+    pub fn rounded(self, digits: Integer) -> F64 @builtin,
+    /// Truncate toward zero to an integer (spec §9.6).
+    pub fn truncated(self) -> Integer @builtin,
+    /// The absolute value; for complex numbers the magnitude.
+    pub fn abs(self) -> Number @builtin,
+    /// `-1`/`0`/`1` for negative/zero/positive (real numbers only).
+    pub fn sign(self) -> Integer @builtin,
+    /// The largest integer `<= self`.
+    pub fn floor(self) -> Number @builtin,
+    /// The smallest integer `>= self`.
+    pub fn ceil(self) -> Number @builtin,
+    /// The nearest integer (half away from zero).
+    pub fn round(self) -> Number @builtin,
+    /// The square root (exact where possible, otherwise a float); complex errors.
+    pub fn sqrt(self) -> Number @builtin,
+    /// The numerator of `self` as a rational.
+    pub fn numerator(self) -> Integer @builtin,
+    /// The denominator of `self` as a rational.
+    pub fn denominator(self) -> Integer @builtin,
+    /// The real part of `self`.
+    pub fn real(self) -> Number @builtin,
+    /// The imaginary part of `self`.
+    pub fn imag(self) -> Number @builtin,
+    /// The number of bits in the two's-complement representation of an integer.
+    pub fn bit_length(self) -> Integer @builtin,
+    /// `true` when `self` is an integer value.
+    pub fn is_integer(self) -> Bool @builtin,
+    /// `true` when `self` is an exact integer or rational.
+    pub fn is_rational(self) -> Bool @builtin,
+    /// `true` when `self` is not complex.
+    pub fn is_real(self) -> Bool @builtin,
+    /// `true` when `self` is complex.
+    pub fn is_complex(self) -> Bool @builtin,
+    /// `true` when `self` is greater than zero (real numbers only).
+    pub fn is_positive(self) -> Bool @builtin,
+    /// `true` when `self` is less than zero (real numbers only).
+    pub fn is_negative(self) -> Bool @builtin,
+    /// `true` when `self` is zero.
+    pub fn is_zero(self) -> Bool @builtin,
+    /// `true` when `self` is an even integer.
+    pub fn is_even(self) -> Bool @builtin,
+    /// `true` when `self` is an odd integer.
+    pub fn is_odd(self) -> Bool @builtin,
+    /// `true` when `self` is finite (not `±Inf`/`NaN`).
+    pub fn is_finite(self) -> Bool @builtin,
+    /// `true` when `self` is `NaN`.
+    pub fn is_nan(self) -> Bool @builtin,
+}

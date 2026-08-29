@@ -1,0 +1,45 @@
+//! The `Set` type and its method set (spec §11.6).
+//!
+//! Method list and usage are maintained here; the `///` comments are the single source of truth
+//! and feed `prima doc` and diagnostic notes (spec §4.1/§16.4). The method set follows the stable
+//! Python 3 `set` methods, adapted to Prima naming. Read-only methods are native; mutating methods
+//! write back through the receiver binding (spec §11.6); `symmetric_difference` is layered
+//! (`@builtin(O2)`, spec §18.4) with a `.pra` fallback of the same semantics.
+
+/// A deduplicated collection of hashable elements (spec §11.6); mutating methods write back.
+class Set {
+    /// Returns the number of elements in `self`.
+    pub fn len(self) -> Integer @builtin,
+    /// Returns `true` when `value` is an element.
+    pub fn contains(self, value: Value) -> Bool @builtin,
+    /// The union of `self` and `other`.
+    pub fn union(self, other: Set) -> Set @builtin,
+    /// The intersection of `self` and `other`.
+    pub fn intersection(self, other: Set) -> Set @builtin,
+    /// The elements of `self` not in `other`.
+    pub fn difference(self, other: Set) -> Set @builtin,
+    /// The symmetric difference of `self` and `other`.
+    pub fn symmetric_difference(self, other: Set) -> Set @builtin(O2) {
+        (self \ other) ∪ (other \ self)
+    },
+    /// `true` when every element of `self` is in `other`.
+    pub fn issubset(self, other: Set) -> Bool @builtin,
+    /// `true` when every element of `other` is in `self`.
+    pub fn issuperset(self, other: Set) -> Bool @builtin,
+    /// `true` when `self` and `other` share no elements.
+    pub fn isdisjoint(self, other: Set) -> Bool @builtin,
+    /// A shallow copy of `self`.
+    pub fn copy(self) -> Set @builtin,
+    /// Insert `value`.
+    pub fn add(self, value: Value) -> Nil @builtin,
+    /// Remove `value`; errors when absent (R0013).
+    pub fn remove(self, value: Value) -> Nil @builtin,
+    /// Remove `value` if present (silent when absent).
+    pub fn discard(self, value: Value) -> Nil @builtin,
+    /// Remove and return an arbitrary element, or `None` when empty.
+    pub fn pop(self) -> Option<Value> @builtin,
+    /// Remove every element from `self`.
+    pub fn clear(self) -> Nil @builtin,
+    /// Add every element of the given set or array to `self`.
+    pub fn update(self, other: Value) -> Nil @builtin,
+}

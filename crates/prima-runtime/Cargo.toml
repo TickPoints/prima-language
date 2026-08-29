@@ -8,11 +8,12 @@ license.workspace = true
 description = "Prima interpreter, module system and config policies"
 
 [dependencies]
-prima-syntax = { path = "../prima-syntax", version = "0.2.4-beta" }
-prima-core = { path = "../prima-core", version = "0.2.4-beta" }
-prima-jit = { path = "../prima-jit", version = "0.2.4-beta" }
+prima-syntax = { path = "../prima-syntax", version = "0.3.0" }
+prima-core = { path = "../prima-core", version = "0.3.0" }
+prima-jit = { path = "../prima-jit", version = "0.3.0" }
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
+num-integer = { workspace = true }
 thiserror = { workspace = true }
 rayon = { workspace = true }
 wide = "1.7"

@@ -141,6 +141,9 @@ fn run_all_examples_succeed() {
         "opt_levels.pra",
         "builtin_layers.pra",
         "capi.pra",
+        "strings.pra",
+        "collections.pra",
+        "number_methods.pra",
     ];
     for name in examples {
         Command::cargo_bin("prima")
@@ -273,6 +276,9 @@ fn doc_stdlib_outputs_module_docs() {
         .success()
         .stdout(predicate::str::contains("core::string"))
         .stdout(predicate::str::contains("to_upper"))
+        .stdout(predicate::str::contains("core::array"))
+        .stdout(predicate::str::contains("core::number"))
+        .stdout(predicate::str::contains("symmetric_difference"))
         .stdout(predicate::str::contains("linalg"));
 }
 

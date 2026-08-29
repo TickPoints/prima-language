@@ -1,0 +1,21 @@
+//! The `Result` type and its method set (spec §16.1/§16.3/§18.1).
+//!
+//! Method list and usage are maintained here; the `///` comments are the single source of truth
+//! and feed `prima doc` and diagnostic notes (spec §4.1/§16.4). All methods are native (the
+//! collapse family, spec §9.3): `unwrap`/`unwrap_or`/`expect` discard the error per spec §16.3.
+
+/// A success (`Ok(v)`) or failure (`Err(msg)`) value (spec §4.4/§16.1).
+class Result {
+    /// `true` when `self` is `Ok`.
+    pub fn is_ok(self) -> Bool @builtin,
+    /// `true` when `self` is `Err`.
+    pub fn is_err(self) -> Bool @builtin,
+    /// The `Ok` value, panicking on `Err`.
+    pub fn unwrap(self) -> Value @builtin,
+    /// The `Ok` value, or `default` on `Err`.
+    pub fn unwrap_or(self, default: Value) -> Value @builtin,
+    /// The `Ok` value, panicking with `message` on `Err`.
+    pub fn expect(self, message: String) -> Value @builtin,
+    /// The `Ok` value, or `default` on `Err` (a non-panicking `unwrap_or`).
+    pub fn value_or(self, default: Value) -> Value @builtin,
+}

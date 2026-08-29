@@ -7,12 +7,14 @@ use prima_core::{Number, Value};
 use prima_runtime::Evaluator;
 
 fn eval(src: &str) -> Value {
+    prima_stdlib::init();
     Evaluator::new()
         .eval_value(src)
         .unwrap_or_else(|e| panic!("eval failed for {src:?}: {e}"))
 }
 
 fn eval_ok(src: &str) {
+    prima_stdlib::init();
     Evaluator::new()
         .eval_value(src)
         .unwrap_or_else(|e| panic!("eval failed for {src:?}: {e}"));

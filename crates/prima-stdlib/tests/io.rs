@@ -15,6 +15,12 @@ fn ok_of(v: Value) -> Value {
     }
 }
 
+/// Escape a path so it can be embedded in a Prima `"..."` literal (spec §18.1):
+/// backslashes in Windows paths must be doubled, and quotes escaped.
+fn primed_str(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 #[test]
 fn json_parse_object_with_array() {
     let v = ok_of(eval(
@@ -164,7 +170,7 @@ fn csv_parse_unterminated_quote_is_err() {
 fn write_read_file_roundtrip() {
     let dir = std::env::temp_dir();
     let path = dir.join(format!("prima_io_test_{}.txt", std::process::id()));
-    let path_str = path.to_string_lossy().to_string();
+    let path_str = primed_str(&path.to_string_lossy());
     // `write_file` returns a `Result`; unwrap it to a plain success so the test asserts Ok.
     assert!(matches!(
         eval(&format!(
@@ -183,7 +189,7 @@ fn write_read_file_roundtrip() {
 fn exists_on_file_and_missing() {
     let dir = std::env::temp_dir();
     let path = dir.join(format!("prima_io_exists_{}.txt", std::process::id()));
-    let path_str = path.to_string_lossy().to_string();
+    let path_str = primed_str(&path.to_string_lossy());
     std::fs::write(&path, "x").expect("write temp file");
     assert_eq!(
         eval(&format!("import io;\nio::exists(\"{path_str}\")")),
@@ -203,7 +209,7 @@ io::exists("/nonexistent/prima_xyz")"#
 fn read_lines_splits_content() {
     let dir = std::env::temp_dir();
     let path = dir.join(format!("prima_io_lines_{}.txt", std::process::id()));
-    let path_str = path.to_string_lossy().to_string();
+    let path_str = primed_str(&path.to_string_lossy());
     std::fs::write(&path, "a\nb\nc\n").expect("write temp file");
     assert_eq!(
         ok_of(eval(&format!("import io;\nio::read_lines(\"{path_str}\")"))),
@@ -231,7 +237,7 @@ io::read_file("/nonexistent/prima_xyz")"#
 fn read_write_json_roundtrip() {
     let dir = std::env::temp_dir();
     let path = dir.join(format!("prima_io_{}.json", std::process::id()));
-    let path_str = path.to_string_lossy().to_string();
+    let path_str = primed_str(&path.to_string_lossy());
     assert!(matches!(
         eval(&format!(
             "import io;\nio::write_json(\"{path_str}\", {{ \"k\": [1, 2] }})"
@@ -256,7 +262,7 @@ fn read_write_json_roundtrip() {
 fn read_write_csv_roundtrip() {
     let dir = std::env::temp_dir();
     let path = dir.join(format!("prima_io_{}.csv", std::process::id()));
-    let path_str = path.to_string_lossy().to_string();
+    let path_str = primed_str(&path.to_string_lossy());
     assert!(matches!(
         eval(&format!(
             "import io;\nio::write_csv(\"{path_str}\", [[\"a\", \"b\"], [\"1\", \"x, y\"]])"

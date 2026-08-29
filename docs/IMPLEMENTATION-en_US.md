@@ -710,6 +710,14 @@ Each Phase ends with runnable acceptance commands. Phases 0–9 are all delivere
   cargo test                         # layering: same method agrees at O0 and O2
   ```
 
+> **Phase 10 implementation record (2026-08, v2.2)**: complete, with the scope expanded (per the user) to a **method system for every builtin type**. Deviations/final decisions vs. this doc:
+>
+> - **Ownership**: every builtin-type method module (`core/{string,array,dict,set,number,char,tuple,option,result}.pra`) is an embedded *executable* stdlib source; the runtime's `ensure_class` lazily loads the class definition from `get_module_source("core::<class>")` (per-method `@builtin` validation `E0055`/`E0056`, `@builtin(ON)` layering), and `dispatch_builtin_method` dispatches uniformly. **Without `prima_stdlib::init()` the builtin-type methods are unavailable** (a clear "standard library is not initialized" error); runtime tests that used builtin-method syntax were migrated to the root `tests/`.
+> - **Layering (the Phase 9 mechanism)**: hot methods are `@builtin(O2)` and the Rust fast path and `.pra` fallback body agree at O0/O2 (`method_layers.rs`); `String.split/replace/strip/find/join`, `Array.copy`, `Dict.copy`, `Set.symmetric_difference`, `Char.is_digit`. Methods not expressible in `.pra` (`to_upper`/`to_lower`, …) stay native O0; numeric types are native-leaning per the user.
+> - **Method-level `@builtin` annotations in a class come after the signature** (e.g. `pub fn split(self, sep: String) -> Array<String> @builtin(O2) { … }`), matching the parser's existing `parse_annotations` position.
+> - **`split("")` semantics**: returns the single-character array (like Python `list(s)`, finalized in spec §18.1); `casefold` is simplified lowercase (deviation noted); `is_digit` uses Unicode `Numeric`; `Array.remove` keeps index semantics (existing behavior); `Tuple.count` is native (its `.pra` fallback could not safely compare heterogeneous tuple elements); `Number.floor/ceil/round` return `F64` for reals.
+> - **Method-set scale**: String ~50, Array 18, Dict 13, Set 16, Number ~60, Char 12, Tuple 6, Option 5, Result 6; all `///`-documented; `prima doc --stdlib` and failed-call diagnostics cover every builtin type (`native_docs.rs` registers them uniformly).
+
 ### Phase 11: Standard library expansion (v2.2, spec §18.6, priority high)
 
 **Work item 6** (`math` numeric utilities, `physics` common formulas, `sys` interaction, `plot`/`render` rendering).

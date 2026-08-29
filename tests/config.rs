@@ -2,6 +2,7 @@ use prima_core::{Number, Real, Value};
 use prima_runtime::Evaluator;
 
 fn eval(src: &str) -> Value {
+    prima_stdlib::init();
     Evaluator::new().eval_value(src).expect("eval failed")
 }
 
@@ -84,6 +85,7 @@ fn custom_zero_div_black_magic() {
 
 #[test]
 fn unknown_config_key_rejected() {
+    prima_stdlib::init();
     assert!(
         Evaluator::new()
             .eval_value("config { nonsense := true }\n1")

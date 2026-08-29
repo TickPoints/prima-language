@@ -3,6 +3,7 @@ use prima_core::{Number, Value};
 use prima_runtime::Evaluator;
 
 fn eval(src: &str) -> Value {
+    prima_stdlib::init();
     Evaluator::new().eval_value(src).expect("eval failed")
 }
 
@@ -211,5 +212,68 @@ fn fixed_width_collapse_round_trips() {
     assert!(
         Evaluator::new().eval_value("to_u8(256)").is_err(),
         "u8 overflow must error"
+    );
+}
+
+#[test]
+fn string_method_basics() {
+    // Moved from the runtime crate's unit tests: the `String` class lives in the standard library.
+    assert_eq!(
+        eval("let s = \"hello\";\ns.len()"),
+        Value::Number(Number::from(5))
+    );
+    assert_eq!(
+        eval("let s = \"aXb\";\ns.to_lower()"),
+        Value::String("axb".into())
+    );
+    assert_eq!(
+        eval("let s = \"ab\";\ns.push(\"c\")"),
+        Value::String("abc".into())
+    );
+    assert_eq!(
+        eval("let s = \"hello world\";\ns.contains(\"world\")"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        eval("let s = \"a,b,c\";\ns.split(\",\")"),
+        Value::Array(vec![
+            Value::String("a".into()),
+            Value::String("b".into()),
+            Value::String("c".into()),
+        ])
+    );
+    assert_eq!(
+        eval("let s = \"hi\";\ns.insert(1, \"o\")"),
+        Value::Result(Ok(Box::new(Value::String("hoi".into()))))
+    );
+    assert!(matches!(
+        eval("let s = \"hi\";\ns.insert(9, \"o\")"),
+        Value::Result(Err(_))
+    ));
+    assert_eq!(eval("String::new()"), Value::String(String::new()));
+}
+
+#[test]
+fn unknown_string_method_attaches_registry_note_and_help() {
+    // Moved from the runtime crate's unit tests: the doc registry is seeded from `core/string.pra`.
+    prima_stdlib::init();
+    let err = Evaluator::new()
+        .eval_value("let s = \"hi\";\ns.toupper()")
+        .expect_err("expected an unknown-method error");
+    assert!(
+        err.to_string()
+            .contains("unknown `String` method `toupper`"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(err.help().as_deref(), Some("did you mean `to_upper`?"));
+    let notes = err.notes();
+    // The note points at the suggested method's definition (its doc, spec §16.4).
+    assert!(
+        notes.iter().any(|n| n.contains("core/string.pra")),
+        "notes: {notes:?}"
+    );
+    assert!(
+        notes.iter().any(|n| n.contains("uppercase")),
+        "notes: {notes:?}"
     );
 }

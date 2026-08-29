@@ -709,6 +709,14 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
   cargo test                         # 分层：同一方法 O0 与 O2 输出一致
   ```
 
+> **Phase 10 落地记录（2026-08，v2.2）**：全部完成，且范围按用户确认扩展为**全部内置类型**的方法体系。与本文档的偏差/定稿：
+>
+> - **归属**：所有内置类型方法模块（`core/{string,array,dict,set,number,char,tuple,option,result}.pra`）均为 stdlib 内嵌**可执行**源；runtime 的 `ensure_class` 从 `get_module_source("core::<class>")` 惰性加载类定义（方法级 `@builtin` 校验 E0055/E0056、`@builtin(ON)` 分层），`dispatch_builtin_method` 统一分派。**无 `prima_stdlib::init()` 时内置类型方法不可用**（报「standard library is not initialized」）；runtime 自身用到内置方法语法的单测/集成测试迁至根 `tests/`。
+> - **分层（Phase 9 机制）**：热点分层 `@builtin(O2)` 且 Rust 快路径与 `.pra` 回退体 O0/O2 输出一致（`method_layers.rs`）；`String.split/replace/strip/find/join`、`Array.copy`、`Dict.copy`、`Set.symmetric_difference`、`Char.is_digit`。`to_upper/to_lower` 等不可 `.pra` 表达者保持原生 O0；数值类型按用户意见原生为主。
+> - **方法级 `@builtin` 注解在类成员内位于签名之后**（如 `pub fn split(self, sep: String) -> Array<String> @builtin(O2) { … }`），与解析器 `parse_annotations` 的既有位置一致。
+> - **`split("")` 语义**：返回单字符数组（对齐 Python `list(s)`，规范 §18.1 定稿）；`casefold` 为简化 lowercase（标注与 Python 差异）；`is_digit` 用 Unicode `Numeric`；`Array.remove` 保持索引语义（既有行为）；`Tuple.count` 原生（`.pra` 回退无法安全比较异质元组元素）；`Number.floor/ceil/round` 对 Real 返回 F64。
+> - **方法集规模**：String ~50、Array 18、Dict 13、Set 16、Number ~60、Char 12、Tuple 6、Option 5、Result 6；全部 `///` 文档化，`prima doc --stdlib` 与失败调用诊断 note 覆盖全部内置类型（`native_docs.rs` 统一注册）。
+
 ### Phase 11：标准库扩充（v2.2，规范 §18.6，优先级 high）
 
 **对应工作项 6**（`math` 数值工具、`physics` 常用公式、`sys` 交互、`plot`/`render` 渲染）。
