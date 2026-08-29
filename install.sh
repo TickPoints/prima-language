@@ -168,18 +168,27 @@ if ! curl -fsSL "$SHA_URL" -o "$WORK/prima.sha256"; then
 fi
 
 echo "==> verifying SHA-256"
+# The release .sha256 file is "<hash>  <asset-name>" (the release asset label, e.g.
+# prima-v0.3.0-x86_64-unknown-linux-gnu), not the local filename we downloaded to.
+# Compare the reported hash against the actual bytes directly rather than relying on
+# `sha256sum -c`, which would look for a file named after the asset and fail.
+expected="$(awk '{print $1}' "$WORK/prima.sha256")"
 if command -v sha256sum >/dev/null 2>&1; then
-  if ! (cd "$WORK" && sha256sum -c prima.sha256 >/dev/null); then
-    echo "error: SHA-256 checksum mismatch — aborting for safety" >&2
-    exit 1
-  fi
+  actual="$(sha256sum "$WORK/prima$EXT" | awk '{print $1}')"
 elif command -v shasum >/dev/null 2>&1; then
-  if ! (cd "$WORK" && shasum -a 256 -c prima.sha256 >/dev/null); then
-    echo "error: SHA-256 checksum mismatch — aborting for safety" >&2
-    exit 1
-  fi
+  actual="$(shasum -a 256 "$WORK/prima$EXT" | awk '{print $1}')"
 else
   echo "warning: no checksum tool found (need sha256sum or shasum); skipping SHA-256 verification" >&2
+  actual=""
+fi
+if [ -n "$actual" ]; then
+  if [ "$expected" != "$actual" ]; then
+    echo "error: SHA-256 checksum mismatch — aborting for safety" >&2
+    echo "       expected $expected" >&2
+    echo "       got      $actual" >&2
+    exit 1
+  fi
+  echo "==> checksum verified"
 fi
 
 # --- Install ---------------------------------------------------------------
