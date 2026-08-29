@@ -14,6 +14,12 @@ fn tmp(name: &str) -> PathBuf {
     std::env::temp_dir().join(name)
 }
 
+/// Escape a filesystem path for embedding in a Prima string literal (spec §18.1):
+/// backslashes in Windows paths must be doubled, and quotes escaped.
+fn primed_str(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 fn remove(path: &PathBuf) {
     let _ = fs::remove_file(path);
 }
@@ -28,7 +34,7 @@ fn plot_savefig_writes_svg() {
          plot::xlabel(\"x\");\n\
          plot::plot([0.0, 1.0], [0.0, 1.0], \"line\");\n\
          plot::savefig(\"{}\");",
-        path.display()
+        primed_str(&path.to_string_lossy())
     );
     assert!(run(&src), "program failed");
     let content = fs::read_to_string(&path).expect("svg file should exist");
@@ -54,8 +60,8 @@ fn plot_clear_then_plot_again() {
          plot::clear();\n\
          plot::plot([0.0, 2.0], [0.0, 4.0]);\n\
          plot::savefig(\"{}\");",
-        p1.display(),
-        p2.display()
+        primed_str(&p1.to_string_lossy()),
+        primed_str(&p2.to_string_lossy())
     );
     assert!(run(&src), "program failed");
     assert!(p1.exists(), "first figure missing");
@@ -72,7 +78,7 @@ fn plot_savefig_rejects_non_svg_extension() {
         "import plot;\n\
          plot::plot([0.0, 1.0], [0.0, 1.0]);\n\
          plot::savefig(\"{}\");",
-        path.display()
+        primed_str(&path.to_string_lossy())
     );
     assert!(!run(&src), "png extension must be rejected");
     assert!(
@@ -89,7 +95,7 @@ fn plot_savefig_rejects_non_svg_format() {
         "import plot;\n\
          plot::plot([0.0, 1.0], [0.0, 1.0]);\n\
          plot::savefig(\"{}\", \"png\");",
-        path.display()
+        primed_str(&path.to_string_lossy())
     );
     assert!(!run(&src), "format png must be rejected");
     assert!(
@@ -108,7 +114,7 @@ fn plot_scatter_and_bar_render() {
          plot::bar([0.0, 1.0, 2.0], [1.0, 2.0, 3.0]);\n\
          plot::grid(true);\n\
          plot::savefig(\"{}\");",
-        path.display()
+        primed_str(&path.to_string_lossy())
     );
     assert!(run(&src), "program failed");
     let content = fs::read_to_string(&path).expect("svg file should exist");

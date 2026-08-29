@@ -14,8 +14,8 @@
 # Overridable via environment variables:
 #   PRIMA_VERSION      release tag to install (default: latest)
 #   PRIMA_TARGET       target triple, e.g. x86_64-apple-darwin (default: detected)
-#   PRIMA_LIBC         "gnu" (default) or "musl" on Linux
-#   PRIMA_INSTALL_DIR  install directory (default: $HOME/.local/bin)
+#   PRIMA_LIBC         "gnu" (default) or "musl" on Linux; Termux/Android auto-selects musl
+#   PRIMA_INSTALL_DIR  install directory (default: $HOME/.local/bin, $PREFIX/bin on Termux)
 #   PRIMA_REPO         "owner/repo" (default: TickPoints/prima-language)
 
 set -euo pipefail
@@ -23,7 +23,20 @@ set -euo pipefail
 REPO="${PRIMA_REPO:-TickPoints/prima-language}"
 VERSION=""
 TARGET=""
-INSTALL_DIR="${PRIMA_INSTALL_DIR:-$HOME/.local/bin}"
+# Termux and other Android-on-Linux environments use bionic libc, so glibc/Linux-GNU
+# binaries will not load; only static musl builds run there. Detect Termux via its
+# `$PREFIX`/`$TERMUX_VERSION` markers and default the libc to musl.
+is_termux() {
+  [ "$(uname -s)" = "Linux" ] || return 1
+  [ -n "${TERMUX_VERSION:-}" ] && return 0
+  [ -n "${PREFIX:-}" ] && [ -d "${PREFIX:-}" ]
+}
+if is_termux; then
+  DEFAULT_DIR="${PREFIX:-$HOME}/bin"
+else
+  DEFAULT_DIR="$HOME/.local/bin"
+fi
+INSTALL_DIR="${PRIMA_INSTALL_DIR:-$DEFAULT_DIR}"
 
 usage() {
   sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'
@@ -77,7 +90,11 @@ map_target() {
       echo "${arch}-pc-windows-msvc"
       ;;
     linux)
-      local libc="${PRIMA_LIBC:-gnu}"
+      local libc="${PRIMA_LIBC:-}"
+      if [ -z "$libc" ] && is_termux; then
+        libc="musl"
+      fi
+      libc="${libc:-gnu}"
       case "$arch:$libc" in
         x86_64:gnu) echo x86_64-unknown-linux-gnu ;;
         x86_64:musl) echo x86_64-unknown-linux-musl ;;
