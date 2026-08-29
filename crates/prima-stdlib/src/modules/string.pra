@@ -252,7 +252,10 @@ class String {
             return self;
         }
         let extra = width - n;
-        let left = extra / 2;
+        let mut left = extra;
+        while left * 2 > extra {
+            left -= 1;
+        }
         let right = extra - left;
         let mut out = "";
         let mut i = 0;

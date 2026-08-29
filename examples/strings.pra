@@ -1,0 +1,40 @@
+// String method set (spec §18.1, Phase 10): the full `String` class, maintained in core/string.pra.
+let s = "héllo world";
+
+// Case conversion and predicates.
+println(s.to_upper());                 // → HÉLLO WORLD
+println(s.to_lower());                 // → héllo world
+println("aXb".swapcase());             // → AxB
+println("hÉllo".capitalize());         // → Héllo
+println("hello world".title());        // → Hello World
+println("ABC123".is_upper());          // → true
+println("".is_ascii());                // → true
+
+// Search, replace, and find.
+println("hello".contains("ell"));      // → true
+println("banana".count("an"));         // → 2
+println("hello".find("ll"));           // → Some(2)
+println("hello".rfind("l"));           // → Some(3)
+println("ababa".replace("aba", "X"));  // → Xba
+println("hello".removeprefix("he"));   // → llo
+println("hello".removesuffix("lo"));   // → hel
+
+// Splitting and joining.
+println("a,b,,c".split(","));          // → [a, b, , c]
+println("abc".split(""));              // → [a, b, c] (single characters)
+println("a\nb\nc".splitlines());       // → [a, b, c]
+println("-".join(["x", "y"]));         // → x-y
+
+// Padding and trimming.
+println("hi".center(7, "-"));          // → --hi---
+println("hi".ljust(5, "."));           // → hi...
+println("hi".rjust(5, "."));           // → ...hi
+println("42".zfill(5));                // → 00042
+println("  xxy  ".strip(" x"));        // → y
+println("  hi  ".trim());              // → hi
+
+// Partitioning and accessors.
+println("hello world".partition(" ")); // → (hello,  , world)
+println("héllo".len());                // → 5 (Unicode scalar values, not bytes)
+println("héllo".char_at(1));           // → Some(é)
+println("héllo".substring(1, 3));      // → él

@@ -1,8 +1,7 @@
 //! The `Tuple` type and its method set (spec §4.4/§18.1).
 //!
 //! Method list and usage are maintained here; the `///` comments are the single source of truth
-//! and feed `prima doc` and diagnostic notes (spec §4.1/§16.4). `count` is layered
-//! (`@builtin(O2)`, spec §18.4) with a `.pra` fallback of the same semantics.
+//! and feed `prima doc` and diagnostic notes (spec §4.1/§16.4).
 
 /// An immutable, fixed-length sequence of values (spec §4.4).
 class Tuple {
@@ -11,17 +10,7 @@ class Tuple {
     /// The element at `index` (negative counts from the end), or `None`.
     pub fn get(self, index: Integer) -> Option<Value> @builtin,
     /// The number of occurrences of `value` in `self`.
-    pub fn count(self, value: Value) -> Integer @builtin(O2) {
-        let mut n = 0;
-        let mut i = 0;
-        while i < self.len() {
-            if self.get(i).unwrap() == value {
-                n += 1;
-            }
-            i += 1;
-        }
-        n
-    },
+    pub fn count(self, value: Value) -> Integer @builtin,
     /// The index of the first occurrence of `value`, or an error when absent.
     pub fn index(self, value: Value) -> Integer @builtin,
     /// The first element, or `None` when empty.

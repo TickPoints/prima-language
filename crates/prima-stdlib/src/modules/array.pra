@@ -38,8 +38,8 @@ class Array {
     pub fn extend(self, other: Array<Value>) -> Nil @builtin,
     /// Insert `value` at `index`, shifting later elements right.
     pub fn insert(self, index: Integer, value: Value) -> Nil @builtin,
-    /// Remove the first occurrence of `value`; errors when absent.
-    pub fn remove(self, value: Value) -> Nil @builtin,
+    /// Remove the element at `index` (negative counts from the end); errors when out of range.
+    pub fn remove(self, index: Integer) -> Nil @builtin,
     /// Remove every element from `self`.
     pub fn clear(self) -> Nil @builtin,
     /// Sort `self` in place (spec §11.3).

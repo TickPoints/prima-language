@@ -1,0 +1,41 @@
+// Numeric method set (spec §9/§18.1, Phase 10): collapse-family conversions plus predicates and
+// accessors, maintained in core/number.pra.
+let x = 3.7;
+println(x.to_f64());                    // → 3.7 (collapse family, spec §9)
+println(x.floor());                     // → 3
+println(x.ceil());                      // → 4
+println(x.round());                     // → 4
+println((-5).abs());                    // → 5
+println((-5).sign());                   // → -1
+println((7/2).numerator());             // → 7
+println((7/2).denominator());           // → 2
+println(x.is_integer());                // → false
+println(4.is_integer());                // → true
+println(5.is_positive());               // → true
+println((-5).is_negative());            // → true
+println(0.is_zero());                   // → true
+println(4.is_even());                   // → true
+println(3.is_odd());                    // → true
+println(10.bit_length());               // → 4
+println(to_f64(4).sqrt());              // → 2
+println(to_complex(3).real());          // → 3
+println(to_complex(3).is_complex());    // → true
+
+// Char (spec §18.1, core/char.pra).
+println('5'.is_digit());                // → true
+println('a'.is_alpha());                // → true
+println('A'.to_lower());                // → a
+println('\u{3c0}'.code());              // → 960
+
+// Tuple (spec §4.4/§18.1, core/tuple.pra).
+let t = (1, "a", 1);
+println(t.len());                       // → 3
+println(t.count(1));                    // → 2
+println(t.first());                     // → Some(1)
+
+// Option/Result (spec §16.3/§18.1, core/option.pra, core/result.pra).
+println(Some(5).is_some());             // → true
+println(None().is_none());              // → true
+let r = Ok(9);
+println(r.is_ok());                     // → true
+println(Err("x").value_or(0));          // → 0
