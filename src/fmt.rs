@@ -22,6 +22,8 @@ mod ty;
 use std::path::Path;
 use std::process::ExitCode;
 
+use anyhow::Context;
+
 use prima_syntax::ast::Program;
 use prima_syntax::parse;
 
@@ -39,45 +41,38 @@ use text::format_doc_lines;
 
 /// CLI entry for `prima fmt` (spec §20): parse, format, and either write back
 /// (`--write`), verify formatting (`--check`), or print to stdout.
-pub fn run(path: &Path, write: bool, check: bool) -> ExitCode {
-    let source = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => {
-            diagnostics::print_colored_error(&format!("cannot read {}: {e}", path.display()));
-            return ExitCode::FAILURE;
-        }
-    };
+pub fn run(path: &Path, write: bool, check: bool) -> anyhow::Result<ExitCode> {
+    let source = std::fs::read_to_string(path)
+        .with_context(|| format!("cannot read {}", path.display()))?;
     let program = match parse(&source) {
         Ok(p) => p,
         Err(errors) => {
             diagnostics::report_syntax_errors(path, &source, &errors);
-            return ExitCode::FAILURE;
+            return Ok(ExitCode::FAILURE);
         }
     };
     let formatted = format_program(&program);
 
     if check {
         if formatted == source {
-            return ExitCode::SUCCESS;
+            return Ok(ExitCode::SUCCESS);
         }
         diagnostics::print_colored_error(&format!(
             "{} is not formatted (spec §20 `fmt --check`)",
             path.display()
         ));
-        return ExitCode::FAILURE;
+        return Ok(ExitCode::FAILURE);
     }
     if write {
-        if formatted != source
-            && let Err(e) = std::fs::write(path, &formatted)
-        {
-            diagnostics::print_colored_error(&format!("cannot write {}: {e}", path.display()));
-            return ExitCode::FAILURE;
+        if formatted != source {
+            std::fs::write(path, &formatted)
+                .with_context(|| format!("cannot write {}", path.display()))?;
         }
-        return ExitCode::SUCCESS;
+        return Ok(ExitCode::SUCCESS);
     }
     // Plain mode prints even when the output is identical (idempotent formatting).
     print!("{formatted}");
-    ExitCode::SUCCESS
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Render a parsed program as canonical source text (spec §20).

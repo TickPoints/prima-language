@@ -10,6 +10,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+use anyhow::Context;
 use prima_syntax::ast::{ClassMemberKind, DocComment, Program, Stmt};
 use prima_syntax::parse;
 
@@ -17,7 +18,7 @@ use crate::fmt;
 use crate::{diagnostics, read_src};
 
 /// Emit documentation for one file, or for every embedded stdlib module (`stdlib == true`).
-pub fn run(path: Option<&Path>, output: Option<&Path>, stdlib: bool) -> ExitCode {
+pub fn run(path: Option<&Path>, output: Option<&Path>, stdlib: bool) -> anyhow::Result<ExitCode> {
     let mut out = String::new();
     if stdlib {
         for (module_path, source) in prima_runtime::stdlib::all_module_sources() {
@@ -30,28 +31,23 @@ pub fn run(path: Option<&Path>, output: Option<&Path>, stdlib: bool) -> ExitCode
                 diagnostics::print_colored_error(
                     "`prima doc` needs a `.pra` file, or `--stdlib` for the built-in modules",
                 );
-                return ExitCode::FAILURE;
+                return Ok(ExitCode::FAILURE);
             }
         };
-        let source = match read_src(path) {
-            Ok(s) => s,
-            Err(code) => return code,
-        };
+        let source = read_src(path)?;
         let label = path.to_string_lossy().into_owned();
         out = render_module(&label, &source, &label);
     }
 
     match output {
-        Some(path) => match std::fs::write(path, &out) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                diagnostics::print_colored_error(&format!("cannot write {}: {e}", path.display()));
-                ExitCode::FAILURE
-            }
-        },
+        Some(path) => {
+            std::fs::write(path, &out)
+                .with_context(|| format!("cannot write {}", path.display()))?;
+            Ok(ExitCode::SUCCESS)
+        }
         None => {
             print!("{out}");
-            ExitCode::SUCCESS
+            Ok(ExitCode::SUCCESS)
         }
     }
 }

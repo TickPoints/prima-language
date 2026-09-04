@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use anyhow::Context;
 use prima_runtime::Evaluator;
 
 /// Default test root when no path is given (spec §20 tool command).
@@ -12,17 +13,13 @@ pub const DEFAULT_DIR: &str = "examples";
 
 /// Run all `.pra` files under `dir` (recursively, sorted). Prints `ok`/`FAIL` per
 /// file and a summary; exits failure if any file failed or the directory is empty.
-pub fn run(dir: &Path) -> ExitCode {
-    let files = match collect_pra_files(dir) {
-        Ok(files) => files,
-        Err(e) => {
-            eprintln!("error: cannot read {}: {e}", dir.display());
-            return ExitCode::FAILURE;
-        }
-    };
+pub fn run(dir: &Path) -> anyhow::Result<ExitCode> {
+    let files = collect_pra_files(dir).with_context(|| {
+        format!("cannot read {}", dir.display())
+    })?;
     if files.is_empty() {
         eprintln!("no test files found under {}", dir.display());
-        return ExitCode::FAILURE;
+        return Ok(ExitCode::FAILURE);
     }
 
     let mut passed = 0usize;
@@ -57,9 +54,9 @@ pub fn run(dir: &Path) -> ExitCode {
     }
     println!("{passed} passed, {failed} failed, {skipped} skipped");
     if failed > 0 {
-        ExitCode::FAILURE
+        Ok(ExitCode::FAILURE)
     } else {
-        ExitCode::SUCCESS
+        Ok(ExitCode::SUCCESS)
     }
 }
 

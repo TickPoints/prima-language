@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`anyhow` error propagation at the CLI (spec §16).** The root `prima-language` crate now depends on `anyhow`: every CLI subcommand (`run`/`parse`/`check`/`compile`/`repl`/`fmt`/`test`/`doc`) returns `anyhow::Result<ExitCode>`, and `read_src` plus the I/O/build steps in `cabi`/`fmt`/`doc` carry a contextual `source` chain (rendered as `caused by:` lines). The library crates keep structured `thiserror` enums (`RuntimeError`/`SyntaxError`/`CoreError`) and the rustc-style diagnostics renderer still owns source-level output, so the numbered error/warning-code surface is unchanged.
+
 - **Bytecode VM scaffold (spec §19.5, gated, default off).** New `prima-runtime` `vm` module directory (`op`/`comp`/`exec`) with a stack instruction set and `Chunk`/`Program` IR, a `vm := true` config policy (default `false`) added to the spec's `opt_level`-independent execution policy table, and phased AST-fallback wiring. The VM is validated incrementally behind the gate; the AST interpreter remains authoritative until the flag flips.
 
 ### Changed
