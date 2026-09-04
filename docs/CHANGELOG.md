@@ -13,7 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Memory-strategy docs reconciled to reference counting (spec §12.3/12.4).** The spec and implementation docs no longer plan a host-layer tracing GC: class instances are `Rc<RefCell<ClassInstance>>` (matching the implementation), the `mem::collect()` mutation/GC control is removed, and `mem::Arc` remains a planned explicit-reference-counting wrapper (Phase 12). The ADR, risk table, W_host memory row, and `mem` stdlib rows were updated in both the Chinese (authoritative) and English mirror docs. `docs/AGENTS.md` now records the "spec-first" priority rule (conflict → ask → `SPECIFICATIONS → IMPLEMENTATION → code`).
+
 - **Modularized the interpreter (spec §4.8).** The single 6.5k-line `prima-runtime` `eval.rs` god module is split into a `src/eval/` module directory with one cohesive file per concern: `env` (environment/function values), `helpers` (stateless diagnostic & numeric helpers), `entry` (construction + module system), `stmt` (statement/control-flow), `expr` (expression + numeric ops), `call` (call dispatch/JIT/higher-order), `class` (classes & builtin value-type methods), `apply` (indexing/function application/broadcast/SIMD), `pattern` (match/pattern-routing), and `builtin` (builtins + I/O). `eval.rs` now holds only the module root (type/`Flow`/re-exports). All 607 tests pass unchanged; no behavior, formatting, or public API changed.
+
 
 ## [0.3.0] - 2026-08-29
 

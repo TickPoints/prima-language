@@ -4,7 +4,7 @@
 > **Notice**: This specification is the official language specification v2.3 of the **Prima language** and is the final authority for unified design and implementation.
 > **v2.0 change summary**: ① error handling switched to Rust-style `Result`/`?`/`match` (`try/catch` removed); ② statements uniformly separated by `;` (newline separation enters the deprecation process, to be removed gradually); ③ Rust-style patterns and destructuring introduced (`if let`/`while let`/`match` full patterns); ④ Class and ownership semantics introduced; ⑤ numbered error/warning code table established (English, Appendix C); ⑥ full string support and `format`; ⑦ post-collapse numeric types correspond one-to-one with Rust basic numeric types; ⑧ interop (`@c_api::extern` exporting C ABI, `@builtin` Rust implementations); ⑨ standard library extended with `sys`/`time`/`num`/`ops`.
 > **v2.1 change summary (base-type usability enhancements, Python-flavored)**: ⑩`Array` changed to **variable-length** sequence, supporting `push`/`pop`/`append`/`insert`/`remove`/`extend`/slice assignment/concatenation/membership testing (`in`)/negative indices/nestable (as data); ⑪new **mapping type `Dict`** and **set type `Set`** (literals, indexing, methods, iteration); ⑫common collection convenience functions: `len`/`enumerate`/`sorted`/`reversed`/`sum`/`prod`/`min`/`max`/`all`/`any`/`join`/`count`, etc.; ⑬`print` and `println` **distinguished** (the former does not add a newline, the latter does); ⑭console input `input`/`read_line`; ⑮list/dict/set **comprehensions** (`[x^2 for x in v if x > 0]`); ⑯symbolic differentiation primitives `derivative`/`partial`/`grad`/`limit` added to core (§19).
-> **v2.2 change summary**: ⑰**`format` removed, replaced by Python-style f-strings** `f"a={a}"`; strings also support the `"..."`/`'...'` delimiters and raw strings `r"..."` (§18.1); ⑱**doc comments stabilized**: `///`/`//!` become normative comments and are incorporated into the AST, `prima doc` covers the built-in standard library, and when a method call fails the diagnostic note carries the method definition and documentation (§4.1/16.4); ⑲**`@builtin(O1)` layered optimization**: switching between a Rust implementation and the `.pra` original implementation according to the optimization level (§18.4); ⑳**optimization-level system**: a new `opt_level` policy (`O0`–`O3`), each level corresponding to a set of optimization passes (§10.2/13.2); ㉑**built-in method system**: the method sets of `String` and every builtin type (`Array`/`Dict`/`Set`/`Number`/`Char`/`Tuple`/`Option`/`Result`) reference the stable Python methods, with the list and documentation uniformly maintained in the doc comments of the embedded `.pra` modules (§18.1); ㉒**standard library expansion**: `math` numeric tools (factorization, Taylor expansion), `physics` common formulas (Rust implementations), system interaction, and `plot`/`render` plotting and formula rendering (§18); ㉓**host-layer memory switched to GC**, with the standard library providing `mem::Arc` for explicit reference counting (§12.3/12.4).
+> **v2.2 change summary**: ⑰**`format` removed, replaced by Python-style f-strings** `f"a={a}"`; strings also support the `"..."`/`'...'` delimiters and raw strings `r"..."` (§18.1); ⑱**doc comments stabilized**: `///`/`//!` become normative comments and are incorporated into the AST, `prima doc` covers the built-in standard library, and when a method call fails the diagnostic note carries the method definition and documentation (§4.1/16.4); ⑲**`@builtin(O1)` layered optimization**: switching between a Rust implementation and the `.pra` original implementation according to the optimization level (§18.4); ⑳**optimization-level system**: a new `opt_level` policy (`O0`–`O3`), each level corresponding to a set of optimization passes (§10.2/13.2); ㉑**built-in method system**: the method sets of `String` and every builtin type (`Array`/`Dict`/`Set`/`Number`/`Char`/`Tuple`/`Option`/`Result`) reference the stable Python methods, with the list and documentation uniformly maintained in the doc comments of the embedded `.pra` modules (§18.1); ㉒**standard library expansion**: `math` numeric tools (factorization, Taylor expansion), `physics` common formulas (Rust implementations), system interaction, and `plot`/`render` plotting and formula rendering (§18); ㉓**host-layer memory strategy finalized**: class instances are managed by reference counting (`Rc<RefCell>`), and the standard library provides `mem::Arc` for explicit reference counting (§12.3/12.4).
 > **v2.3 change summary**: ㉔**`|>` pipeline removed**: using `|>` is now a parse error (`E0010 syntax_error`); use class method chains/direct calls instead (§9.7); ㉕**newline-separated statements removed**: statements must be separated by `;` (§4.2); a statement not terminated by `;` (other than before end-of-file or a block-closing `}`) is now the hard error `E0011 expected_separator` (§16.4); the deprecation warnings `W0001`/`W0002` are deleted (§16.5).
 
 ## Identification
@@ -82,7 +82,7 @@ AST
 |-------|------|----------|------------|---------------|-----------------|
 | **W_symbol** | Symbol World | Expressions, symbols, simplification | `ExprId` (hash-consed DAG, immutable) | hash-consing interner + thread-local cache | exact, simplifiable, thread-safe |
 | **W_numeric** | Numeric World | Basic numerics (i8…f64, BigInt, complex), matrices, arrays | stack value types | stack + linear memory (BLAS) | native speed |
-| **W_host** | Host World | Control flow, Class objects, I/O | user objects (class instances) | GC (tracing, shallow-copy sharing) + value semantics (deep copy); `mem::Arc` for explicit reference counting (§12.4) | functional |
+| **W_host** | Host World | Control flow, Class objects, I/O | user objects (class instances) | reference counting (`Rc<RefCell>`, shallow-copy sharing) + value semantics (deep copy); `mem::Arc` for explicit reference counting (§12.4) | functional |
 
 **Core rule**: for an expression to leave the symbol world and enter the numeric/host world, it **must** pass through an explicit collapse function (§9); **no implicit conversion** (except for the exceptions allowed by §13 policies). **Fallible operations do not panic (unless explicitly `unwrap`/`to_*`); they always propagate as a `Result` return value.**
 
@@ -1241,31 +1241,25 @@ let d: Number = 0;            // explicit type annotation
 
 ### 12.3 Ownership (Class semantics)
 
-**Class instance ownership** (GC-handle semantics; use `mem::Arc` (§12.4) when a deterministic lifetime is needed):
+**Class instance ownership** (reference-counting semantics; wrap the whole handle in a `mem::Arc` (§12.4) when a deterministic lifetime is needed):
 
-- **Default value semantics**: class instances are managed by the host-layer **GC**; **assignment, argument passing, and returning an instance** are all **shallow copies** (handles sharing the underlying object, with no counting overhead).
-- **`self` parameter**: a method receiving `self` receives a **shallow copy of the object itself**; reading `self` fields inside the method is a shared read.
-- **Deep copy**: when a method **returns a primitive-value field** (`Expr`/`Number`/`String` and other scalar/immutable values), the value passed out is held independently (these primitive values are themselves immutable, so a deep copy just duplicates a handle/buffer). Returning a class instance keeps sharing.
+- **Default value semantics**: class instances are managed by host-layer **reference counting** (`Rc<RefCell>`); **assignment, argument passing, and returning an instance** are all **shallow copies** (handles sharing the underlying object, with their own counting overhead).
+- **`self` parameter**: a method receives `self` as a **shallow copy of the object itself**; reading `self`'s fields within the method is a shared read.
+- **Deep copy**: when a method **returns a basic-value field** (`Expr`/`Number`/`String`, etc. scalar/immutable values), the handed-out value is independently owned (these basic values are immutable, so a deep copy copies the handle/buffer). Returning a class instance keeps sharing.
 - **Struct literal**: `Test { a, b }` creates a new instance (owning new field values).
-- **No manual ownership syntax**: Rust-style borrowing syntax such as `&`/`move` is not exposed (`let mut` is kept to mark mutable bindings). Mutating class fields is done by explicitly constructing a new instance or via `mut self` methods.
-- **GC is semantically transparent**: the GC automatically reclaims unreachable instances (including **reference cycles**); no destructor timing is exposed. For **deterministic release/destructor hooks** or keeping instances alive across FFI, use the standard library `mem::Arc` (explicit reference counting, `mem::Arc::new(x)`/`x.strong_count()`).
-- **`ExprId` is a `Copy` value handle** and is naturally shared; the underlying `ExprPool` is read-only and concurrency-safe.
+- **No manual ownership syntax**: Rust-style borrowing (`&`/`move`) is not exposed (`let mut` is kept to indicate mutable bindings). Mutable class fields are changed by explicitly constructing a new instance or via a `mut self` method.
+- **Reference cycles**: reference counting cannot reclaim instances involved in cycles; for a deterministic lifetime or keeping instances alive across FFI, use the standard library `mem::Arc` (a layer of explicit reference counting, `mem::Arc::new(x)`/`x.strong_count()`).
+- **`ExprId` is a `Copy` value handle**, naturally shared; the underlying `ExprPool` is read-only and concurrency-safe.
 
-### 12.4 Memory Strategy
+### 12.4 Memory strategy
 
-  Layer | Strategy |
+ Layer | Strategy |
 ----|------|
-  W_symbol | hash-consing `ExprPool` (thread-local cache + global `DashMap`, shareable, acyclic, O(1) equality) |
-  W_numeric | stack values + nalgebra + batched algorithms (BLAS) |
-  W_host | **GC (tracing, mark-sweep/generational)** manages class instances and host values (shallow-copy sharing + deep copy for primitive values); `String` buffers inline/SSO; `mem::Arc` for explicit reference counting |
+ W_symbol | hash-consed `ExprPool` (thread-local cache + global `DashMap`, shareable, acyclic, O(1) equality) |
+ W_numeric | stack values + nalgebra + bulk algorithms (BLAS) |
+ W_host | **reference counting** (`Rc<RefCell>`) manages class instances (shallow-copy sharing + deep copy for basic values); `String` buffers inline/SSO; `mem::Arc` for explicit reference counting |
 
-**GC design points (v2.2, §Implementation Plan Phase 12)**:
-
-- GC scope: class instances and collection buffers in the **host world (W_host)**; the symbolic layer (`ExprPool`) and the numeric layer (stack values) are not involved.
-- Trigger: collection is triggered by watermark at safe collection points inside the evaluator (block/function/loop boundaries); no asynchronous scanning thread is introduced (single-threaded GC, prioritizing determinism).
-- Root set: the environment chain `EnvRef` + the current evaluation stack + the module table; instances reachable from the roots through the `Value` graph are traced.
-- No destructor trap: GC-managed instances do not provide destructors; use `mem::Arc` for deterministic release.
-- Parallel evaluation (`parfor`/`@parallel`) gives each task its own GC heap, reclaiming the whole heap when the task finishes.
+> Note: the host layer does not use a tracing GC. Reference counting already covers shallow-copy sharing of class instances; `mem::Arc` provides an explicit reference-counting path (deterministic release/across FFI), and neither introduces destructor hooks (§12.3).
 
 ---
 
@@ -1886,7 +1880,7 @@ parfor i in 0..rows {
  **time** | Time system: `now`, `Duration`, formatting, clocks | Explicit |
  **num** | More complex numeric types (`BigInt` algorithmic extensions, `Complex` utilities) and additional numeric operations | Explicit |
  **ops** | Operator overloading interface (`impl Add for T` etc., §18.5) | Explicit |
- **mem** | **Memory (v2.2)**: `mem::Arc` explicit reference counting (§12.3/12.4); GC control (`collect`) | Explicit |
+ **mem** | **Memory (v2.2)**: `mem::Arc` explicit reference counting (§12.3/12.4) | Explicit |
  **c_api** | C ABI types (`int`/`uint`/`float`/`double`/`bool`/`char`/`ptr`…) and `@c_api::extern` export support (§18.4) | Explicit |
 
 ### 18.1 Strings (the core-preimported `String` class and f-strings)
@@ -2141,7 +2135,7 @@ with config { overload_policy := deny } {    // using it is an error
 - `render::to_terminal(expr)`: a terminal-text formula (ASCII/Unicode math); **the optional terminal formula rendering when `print` outputs formulas is provided via a cargo feature** (§Implementation Plan §1).
 - Both use the `print_format` policy as the default style.
 
-**`mem`**: `mem::Arc` explicit reference counting (§12.3/12.4), `mem::collect()` to trigger the GC manually.
+**`mem`**: `mem::Arc` explicit reference counting (§12.3/12.4).
 
 ---
 
@@ -2455,7 +2449,7 @@ prima doc --stdlib               # outputs only the built-in standard library (i
  2 | Indeterminate and undefined | `Indeterminate` is reducible in the symbolic layer; `Undefined` raises an error in the numeric layer (§6.2) |
  3 | Result output | LaTeX by default, preserving exactness (§10) |
  4 | Forced evaluation | The collapse function family: `to_<type>()`/`try_<type>()`/`checked_<type>()`, etc. (§9) |
- 5 | Memory | Hash-consed symbolic layer (thread-local cache + global pool) + stack-value numeric layer + RC/GC host layer (§8.1/12.4) |
+ 5 | Memory | Hash-consed symbolic layer (thread-local cache + global pool) + stack-value numeric layer + reference-counted host layer (§8.1/12.4) |
  6 | Compilation | Interpreter + symbolic engine → LLVM JIT → optional AOT (§19) |
  7 | Execution | Divided into three layers: W_symbol/W_numeric/W_host (§2) |
  8 | Special values | `Indeterminate` is reducible in the symbolic layer; `Undefined` cannot enter operations; `NaN/Inf` exist only after collapse (§6.2) |
@@ -2503,7 +2497,7 @@ prima doc --stdlib               # outputs only the built-in standard library (i
  50 | Optimization levels (v2.2) | **The `opt_level` policy (`O0`–`O3`, default `O2`) controls the set of optimization passes; aggressive passes such as SIMD recognition live at `O3`** (§10.2/13.2) |
  51 | `@builtin(O1)` (v2.2) | **Layered optimization: when `opt_level ≥ N`, the Rust implementation is used; otherwise the `.pra` original implementation is evaluated; the original `@builtin(O0)` semantics are retained** (§18.4) |
  52 | Standard-library list (v2.2) | **A module's method-level list has the `.pra` `///` doc comments as its sole source; the spec/implementation docs maintain only the module catalog** (§18) |
- 53 | Memory (v2.2) | **Host-layer GC replaces reference counting; `mem::Arc` provides explicit reference counting, `mem::collect()` for manual GC** (§12.3/12.4) |
+ 53 | Memory (v2.2) | **Host-layer reference counting (`Rc<RefCell>`) manages class instances; `mem::Arc` provides explicit reference counting** (§12.3/12.4) |
 
 ---
 
