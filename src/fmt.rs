@@ -42,8 +42,8 @@ use text::format_doc_lines;
 /// CLI entry for `prima fmt` (spec §20): parse, format, and either write back
 /// (`--write`), verify formatting (`--check`), or print to stdout.
 pub fn run(path: &Path, write: bool, check: bool) -> anyhow::Result<ExitCode> {
-    let source = std::fs::read_to_string(path)
-        .with_context(|| format!("cannot read {}", path.display()))?;
+    let source =
+        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
     let program = match parse(&source) {
         Ok(p) => p,
         Err(errors) => {

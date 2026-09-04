@@ -14,9 +14,7 @@ pub const DEFAULT_DIR: &str = "examples";
 /// Run all `.pra` files under `dir` (recursively, sorted). Prints `ok`/`FAIL` per
 /// file and a summary; exits failure if any file failed or the directory is empty.
 pub fn run(dir: &Path) -> anyhow::Result<ExitCode> {
-    let files = collect_pra_files(dir).with_context(|| {
-        format!("cannot read {}", dir.display())
-    })?;
+    let files = collect_pra_files(dir).with_context(|| format!("cannot read {}", dir.display()))?;
     if files.is_empty() {
         eprintln!("no test files found under {}", dir.display());
         return Ok(ExitCode::FAILURE);
