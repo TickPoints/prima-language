@@ -2,11 +2,12 @@
 //! program. The walkers live in child modules (`signature`/`error`/`collect`/`infer`).
 
 use prima_syntax::Span;
-use prima_syntax::parse;
+use prima_syntax::{SyntaxWarning, parse};
 
 mod collect;
 mod error;
 mod infer;
+mod names;
 mod signature;
 
 /// A statically decidable type error (located via `--> file:line:col` per spec §16.4).
@@ -61,6 +62,41 @@ pub fn check_src(src: &str) -> Vec<TypeError> {
     errors
 }
 
+/// Statically check source code, returning type errors plus non-fatal warnings (spec §16.5).
+/// Warnings collected here are the `W0003` unused-binding class from `names`.
+pub fn check_src_checked(src: &str) -> (Vec<TypeError>, Vec<SyntaxWarning>) {
+    let program = match parse(src) {
+        Ok(program) => program,
+        Err(syntax_errors) => {
+            let errors = syntax_errors
+                .iter()
+                .map(|e| {
+                    let (line, column) = line_col(src, e.span.start);
+                    TypeError {
+                        line,
+                        column,
+                        span: e.span,
+                        message: e.message.clone(),
+                        notes: Vec::new(),
+                    }
+                })
+                .collect();
+            return (errors, Vec::new());
+        }
+    };
+
+    let sigs = signature::build_signature_table(&program);
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let ctx = Ctx { allow_try: false };
+    for stmt in &program.stmts {
+        collect::collect_stmt_errors(src, stmt, &mut errors, ctx, false, &sigs);
+    }
+    names::check_program_names(src, &program, &mut errors, &mut warnings);
+    errors.sort_by_key(|e| (e.line, e.column));
+    (errors, warnings)
+}
+
 /// Byte offset → 1-based line/column (column counted in characters, spec §16.4 location).
 pub(crate) fn line_col(src: &str, offset: u32) -> (usize, usize) {
     let offset = usize::try_from(offset).unwrap_or(usize::MAX).min(src.len());
@@ -80,6 +116,7 @@ mod tests {
     use prima_syntax::parse;
 
     use super::check_src;
+    use super::check_src_checked;
     use super::infer::{assignable, infer};
 
     /// Embedded signature module with a `///`-documented `inverse`, for the `E0050` note test.
@@ -259,5 +296,77 @@ mod tests {
             "Array<Integer>"
         ));
         assert!(assignable(&Type::Option(Box::new(Type::Integer)), "option"));
+    }
+
+    // ————— name-resolution checks (spec §16.2 / appendix C) —————
+
+    #[test]
+    fn e0040_undefined_name_is_detected() {
+        let (errors, _) = check_src_checked("let x = missing_name;");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("E0040"), "got: {errors:?}");
+        assert!(errors[0].message.contains("missing_name"));
+    }
+
+    #[test]
+    fn e0040_is_not_raised_for_core_builtins_or_constructors() {
+        let (errors, _) = check_src_checked("let a = sqrt(2); let b = Some(1); let c = print;");
+        assert!(
+            errors.is_empty(),
+            "core names must not be reported undefined: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn e0040_binding_in_scope_is_ok() {
+        let (errors, _) = check_src_checked("let a = 1; let b = a + 2;");
+        assert!(errors.is_empty(), "got: {errors:?}");
+    }
+
+    #[test]
+    fn e0080_return_outside_fun_is_detected() {
+        let (errors, _) = check_src_checked("return 1;");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("E0080"), "got: {errors:?}");
+    }
+
+    #[test]
+    fn e0080_return_inside_fun_is_ok() {
+        let (errors, _) = check_src_checked("fn f() -> Integer { return 1; }");
+        assert!(errors.is_empty(), "got: {errors:?}");
+    }
+
+    #[test]
+    fn e0062_self_outside_method_is_detected() {
+        let (errors, _) = check_src_checked("let x = self;");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("E0062"), "got: {errors:?}");
+    }
+
+    #[test]
+    fn w0003_unused_binding_is_reported() {
+        let (_, warnings) = check_src_checked("let a = 1; let b = a + 2;\nlet unused = 3;");
+        let has = warnings
+            .iter()
+            .any(|w| w.code == "W0003" && w.message.contains("unused"));
+        assert!(has, "warnings: {warnings:?}");
+    }
+
+    #[test]
+    fn w0003_used_binding_is_not_reported() {
+        let (errors, warnings) =
+            check_src_checked("let a = 1; let b = a + 2; let c = b + a; println(c);");
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        assert!(
+            warnings.iter().all(|w| w.code != "W0003"),
+            "warnings: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn qualified_module_paths_are_not_undefined() {
+        let (errors, _) = check_src_checked("import linalg; let x = linalg::det([1]);");
+        // `linalg`/`det` are module/constructor refs, not single-segment vars, so no E0040.
+        assert!(errors.is_empty(), "got: {errors:?}");
     }
 }

@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use prima_runtime::Evaluator;
-use prima_runtime::check::check_src;
+use prima_runtime::check::check_src_checked;
 use prima_syntax::parse_checked;
 
 mod cabi;
@@ -154,13 +154,19 @@ fn run_file(file: &Path) -> Result<ExitCode> {
 // set is promoted to an error and makes the check fail.
 fn check_file(file: &Path, deny: &[String]) -> Result<ExitCode> {
     let source = read_src(file)?;
-    let (_, syntax_errors, warnings) = parse_checked(&source);
+    let (_, syntax_errors, parse_warnings) = parse_checked(&source);
     if !syntax_errors.is_empty() {
         diagnostics::report_syntax_errors(file, &source, &syntax_errors);
         return Ok(ExitCode::FAILURE);
     }
 
-    let errors = check_src(&source);
+    // Static check (spec §6.3/§16.2): type errors plus compiler-collected warnings (e.g. `W0003`
+    // unused binding). Parse-time warnings from `parse_checked` are merged with these.
+    let (errors, check_warnings) = check_src_checked(&source);
+    // The visitor warnings may carry zero-width spans; filter those that overlap the file.
+    let mut warnings = parse_warnings;
+    warnings.extend(check_warnings);
+
     let denied: Vec<_> = warnings
         .iter()
         .filter(|w| deny.iter().any(|d| d == w.code))
@@ -218,9 +224,8 @@ fn compile_headers(file: &Path, output: Option<&Path>) -> Result<ExitCode> {
         prima_runtime::capi::render_header(&prima_runtime::capi::collect_exports(&program));
     match output {
         Some(path) => {
-            std::fs::write(path, &header).with_context(|| {
-                format!("cannot write {}", path.display())
-            })?;
+            std::fs::write(path, &header)
+                .with_context(|| format!("cannot write {}", path.display()))?;
             Ok(ExitCode::SUCCESS)
         }
         None => {
