@@ -55,6 +55,7 @@ pub(crate) static DEFAULT_CONFIG: Config = Config {
     num_to_big: true,
     print_format: crate::config::PrintFormat::Latex,
     overload_policy: OverloadPolicy::Warn,
+    vm: false,
 };
 
 /// Minimum array length for which a `@parallel` MFn broadcast is split across rayon threads (spec §17.1);

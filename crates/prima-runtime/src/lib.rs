@@ -14,6 +14,7 @@ pub mod module;
 pub mod opt;
 pub mod simd;
 pub mod stdlib;
+pub mod vm;
 
 pub use builtins::Builtin;
 pub use class::{ClassDef, ClassInstance, FieldDef, MethodDef, MethodNature};

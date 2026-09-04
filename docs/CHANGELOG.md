@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Bytecode VM scaffold (spec §19.5, gated, default off).** New `prima-runtime` `vm` module directory (`op`/`comp`/`exec`) with a stack instruction set and `Chunk`/`Program` IR, a `vm := true` config policy (default `false`) added to the spec's `opt_level`-independent execution policy table, and phased AST-fallback wiring. The VM is validated incrementally behind the gate; the AST interpreter remains authoritative until the flag flips.
+
 ### Changed
 
 - **Modularized the interpreter (spec §4.8).** The single 6.5k-line `prima-runtime` `eval.rs` god module is split into a `src/eval/` module directory with one cohesive file per concern: `env` (environment/function values), `helpers` (stateless diagnostic & numeric helpers), `entry` (construction + module system), `stmt` (statement/control-flow), `expr` (expression + numeric ops), `call` (call dispatch/JIT/higher-order), `class` (classes & builtin value-type methods), `apply` (indexing/function application/broadcast/SIMD), `pattern` (match/pattern-routing), and `builtin` (builtins + I/O). `eval.rs` now holds only the module root (type/`Flow`/re-exports). All 607 tests pass unchanged; no behavior, formatting, or public API changed.
