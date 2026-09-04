@@ -5,6 +5,12 @@ All notable changes to the Prima toolchain are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Modularized the interpreter (spec §4.8).** The single 6.5k-line `prima-runtime` `eval.rs` god module is split into a `src/eval/` module directory with one cohesive file per concern: `env` (environment/function values), `helpers` (stateless diagnostic & numeric helpers), `entry` (construction + module system), `stmt` (statement/control-flow), `expr` (expression + numeric ops), `call` (call dispatch/JIT/higher-order), `class` (classes & builtin value-type methods), `apply` (indexing/function application/broadcast/SIMD), `pattern` (match/pattern-routing), and `builtin` (builtins + I/O). `eval.rs` now holds only the module root (type/`Flow`/re-exports). All 607 tests pass unchanged; no behavior, formatting, or public API changed.
+
 ## [0.3.0] - 2026-08-29
 
 ### Added
