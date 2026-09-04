@@ -10,6 +10,7 @@ use prima_syntax::parse_checked;
 mod cabi;
 mod diagnostics;
 mod doc;
+mod doctest;
 mod fmt;
 mod repl;
 mod testcmd;
@@ -65,6 +66,13 @@ enum Command {
         /// Document the embedded stdlib modules instead of a file (spec §20).
         #[arg(long)]
         stdlib: bool,
+        /// Validate `///` doc code blocks: statically check each ```pra block (and run it when
+        /// `--run` is given). Reported as a `doc-test` outcome (spec §20).
+        #[arg(long)]
+        test: bool,
+        /// With `--test`: also execute each doc block and compare to its `// expect:` line.
+        #[arg(long)]
+        run: bool,
     },
 }
 
@@ -113,7 +121,9 @@ fn dispatch(cli: Cli) -> Result<ExitCode> {
             path,
             output,
             stdlib,
-        } => doc::run(path.as_deref(), output.as_deref(), stdlib),
+            test,
+            run,
+        } => doc::run(path.as_deref(), output.as_deref(), stdlib, test, run),
     }
 }
 

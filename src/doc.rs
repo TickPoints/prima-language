@@ -14,11 +14,20 @@ use anyhow::Context;
 use prima_syntax::ast::{ClassMemberKind, DocComment, Program, Stmt};
 use prima_syntax::parse;
 
+use crate::doctest;
 use crate::fmt;
 use crate::{diagnostics, read_src};
 
 /// Emit documentation for one file, or for every embedded stdlib module (`stdlib == true`).
-pub fn run(path: Option<&Path>, output: Option<&Path>, stdlib: bool) -> anyhow::Result<ExitCode> {
+/// When `test` is set, also validate `///` doc code blocks (static check; `run` executes them);
+/// `doc` mode renders Markdown regardless.
+pub fn run(
+    path: Option<&Path>,
+    output: Option<&Path>,
+    stdlib: bool,
+    test: bool,
+    run: bool,
+) -> anyhow::Result<ExitCode> {
     let mut out = String::new();
     if stdlib {
         for (module_path, source) in prima_runtime::stdlib::all_module_sources() {
@@ -37,6 +46,9 @@ pub fn run(path: Option<&Path>, output: Option<&Path>, stdlib: bool) -> anyhow::
         let source = read_src(path)?;
         let label = path.to_string_lossy().into_owned();
         out = render_module(&label, &source, &label);
+        if test {
+            return doctest::run_doc_tests(path, &source, run);
+        }
     }
 
     match output {
@@ -117,9 +129,55 @@ fn stmt_docs(stmt: &Stmt) -> Option<&DocComment> {
     }
 }
 
-/// Render a doc comment as Markdown: the collected `///` text, one paragraph per blank-separated block.
+/// Render a doc comment as Markdown: paragraphs of the `///` text, with any fenced
+/// ```pra code blocks preserved verbatim as Markdown fenced blocks (so they render as code and
+/// are the input for `prima doc --test`, spec §20 / doctest). Blank-separated text is one
+/// paragraph; a line starting with `# ` / `* ` / `- ` / `[` is passed through as Markdown.
 fn render_doc(docs: &DocComment) -> String {
-    docs.text()
+    render_doc_text(&docs.text())
+}
+
+/// Render the concatenated `///` text as Markdown, preserving ```lang fenced code blocks verbatim.
+fn render_doc_text(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        // A fenced code block opener ``` <lang>: emit it and every subsequent line verbatim
+        // until the closing ```.
+        if let Some(lang) = line.strip_prefix("```") {
+            let lang = lang.trim();
+            out.push('\n');
+            out.push_str(&format!("```{lang}\n"));
+            i += 1;
+            while i < lines.len() {
+                out.push_str(lines[i]);
+                out.push('\n');
+                if lines[i].trim() == "```" {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            out.push('\n');
+            continue;
+        }
+        // Blank line: paragraph separator.
+        if line.trim().is_empty() {
+            // Collapse consecutive blanks into one blank line.
+            while i < lines.len() && lines[i].trim().is_empty() {
+                i += 1;
+            }
+            out.push('\n');
+            continue;
+        }
+        // A Markdown list item, heading, blockquote, or plain paragraph is passed through as-is.
+        let trimmed = line.trim_start();
+        out.push_str(&format!("{trimmed}\n"));
+        i += 1;
+    }
+    out
 }
 
 fn render_definition(stmt: &Stmt, is_pub: bool) -> String {
