@@ -8,6 +8,7 @@
 
 pub mod comp;
 pub mod exec;
+pub mod helpers;
 pub mod op;
 
 pub use op::{Chunk, Const, Op, Program};

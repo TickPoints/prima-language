@@ -5,7 +5,7 @@ All notable changes to the Prima toolchain are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.5] - 2026-09-05
 
 ### Added
 
@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`anyhow` error propagation at the CLI (spec §16).** The root `prima-language` crate now depends on `anyhow`: every CLI subcommand (`run`/`parse`/`check`/`compile`/`repl`/`fmt`/`test`/`doc`) returns `anyhow::Result<ExitCode>`, and `read_src` plus the I/O/build steps in `cabi`/`fmt`/`doc` carry a contextual `source` chain (rendered as `caused by:` lines). The library crates keep structured `thiserror` enums (`RuntimeError`/`SyntaxError`/`CoreError`) and the rustc-style diagnostics renderer still owns source-level output, so the numbered error/warning-code surface is unchanged.
 
-- **Bytecode VM scaffold (spec §19.5, gated, default off).** New `prima-runtime` `vm` module directory (`op`/`comp`/`exec`) with a stack instruction set and `Chunk`/`Program` IR, a `vm := true` config policy (default `false`) added to the spec's `opt_level`-independent execution policy table, and phased AST-fallback wiring. The VM is validated incrementally behind the gate; the AST interpreter remains authoritative until the flag flips.
+- **Bytecode VM execution path (spec §19.5, gated, default off).** A working stack bytecode VM in `prima-runtime` `vm/` (`op` instruction set + `Chunk`/`Program` IR, `comp` AST→bytecode compiler, `exec` dispatch loop, `helpers` value-level utilities). `compile_program`/`compile_function_body` lower a numeric/control-flow/function-call subset (literals, local/name loads, binary/unary ops, `let`/assignment/`if`/`while`/`for`/`return`, array/tuple literals, indexing, calls by name and methods); the executor delegates every value-producing op to the `Evaluator` (`eval_binary`/`eval_compare`/`call_method`/`apply_function`) so VM results equal AST results by construction. `Evaluator::vm_call_function` exposes an explicit VM entry. Unsupported constructs cause a whole-function fallback to the AST interpreter (the authoritative path). On the benchmark kernels the VM is ≈1.5–1.8× faster than the AST interpreter (`benches/RESULTS.md`), with `sieve`/`dot` (mutating array methods) at parity via fallback.
 
 ### Changed
 

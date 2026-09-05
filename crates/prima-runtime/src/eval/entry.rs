@@ -258,6 +258,25 @@ impl Evaluator {
         self.apply_function(&func, args)
     }
 
+    /// Invoke a `fn` by name through the bytecode VM (spec §19.5), bypassing the `vm` config gate so
+    /// callers (benchmarks, C-ABI) can opt into the VM explicitly. Falls back to the AST interpreter
+    /// when the body is outside the compiled subset.
+    pub fn vm_call_function(
+        &mut self,
+        env: &EnvRef,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let func = env
+            .borrow()
+            .get_func(name)
+            .ok_or_else(|| RuntimeError::Message(format!("unknown function `{name}`")))?;
+        if let Some(v) = self.try_vm_call(&func, args.clone())? {
+            return Ok(v);
+        }
+        self.apply_function(&func, args)
+    }
+
     pub(crate) fn eval_root(
         &mut self,
         env: &EnvRef,

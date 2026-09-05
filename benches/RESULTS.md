@@ -12,11 +12,14 @@ see the milestone notes and docs/IMPLEMENTATION-zh_CN.md §5 for the tracked del
 
 Regenerate with `cargo bench --bench bench_suite` (see benches/bench_suite.rs).
 
-| workload | n | Prima (ns) | Python (ns) | Rust (ns) | Python × | Rust × |
-|---|---|---|---|---|---|---|
-| sumsq | 200000 | 204219589 ns | 17182000 ns | 91842 ns | 11.9× | 2223.60× |
-| pi | 100000 | 217219645 ns | 12106000 ns | 111147 ns | 17.9× | 1954.35× |
-| fib | 30 | 43535 ns | 4000 ns | 60 ns | 10.9× | 725.58× |
-| sieve | 5000 | 1808824084 ns | 508000 ns | 7778 ns | 3560.7× | 232556.45× |
-| dot | 3000 | 854925454 ns | 831000 ns | 9913 ns | 1028.8× | 86242.86× |
-| poly | 50000 | 142997222 ns | 8880000 ns | 100672 ns | 16.1× | 1420.43× |
+The `Prima VM` column runs the same kernel through the bytecode VM (spec §19.5);
+`VM/AST ×` is how much faster the VM is than the AST interpreter on that kernel.
+
+| workload | n | Prima AST (ns) | Prima VM (ns) | Python (ns) | Rust (ns) | VM/AST × | Python × | Rust × |
+|---|---|---|---|---|---|---|---|---|
+| sumsq | 200000 | 205053757 ns | 134652475 ns | 17378000 ns | 91723 ns | 1.5× | 11.8× | 2235.58× |
+| pi | 100000 | 228598088 ns | 126169498 ns | 12235000 ns | 111144 ns | 1.8× | 18.7× | 2056.77× |
+| fib | 30 | 45788 ns | 24401 ns | 4000 ns | 54 ns | 1.9× | 11.4× | 847.93× |
+| sieve | 5000 | 2138133073 ns | 2152143601 ns | 514000 ns | 4691 ns | 1.0× | 4159.8× | 455794.73× |
+| dot | 3000 | 892532463 ns | 885742769 ns | 832000 ns | 10949 ns | 1.0× | 1072.8× | 81517.26× |
+| poly | 50000 | 145225355 ns | 100168679 ns | 8622000 ns | 100707 ns | 1.4× | 16.8× | 1442.06× |

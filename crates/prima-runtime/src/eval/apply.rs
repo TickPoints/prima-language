@@ -186,7 +186,16 @@ impl Evaluator {
                 ret: _,
                 body,
                 env: f_env,
-            } => self.apply_host(params, body, f_env, args),
+            } => {
+                // Bytecode VM fast path (spec §19.5, gated): when `vm` is enabled and the body is
+                // inside the compiled subset, run the chunk; otherwise fall back to the AST path.
+                if self.current_config().vm
+                    && let Some(v) = self.try_vm_single(params, body, f_env, args.clone())?
+                {
+                    return Ok(v);
+                }
+                self.apply_host(params, body, f_env, args)
+            }
             // A `@builtin(ON)` layered fn (spec §18.4): the Rust implementation is used when the
             // active `opt_level` is at least the declared tier and it is registered; otherwise the
             // `.pra` fallback body is evaluated (host semantics, so TCO applies at `O2`).

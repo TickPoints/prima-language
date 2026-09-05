@@ -51,19 +51,25 @@ fn time_median(mut func: impl FnMut(), samples: u32, warmup: u32) -> Duration {
     times.sort();
     times[times.len() / 2]
 }
-/// Time one Prima workload at a fixed parameter `n` (in-process, warm). Returns the wall time and
-/// the kernel's result value so the harness can cross-check all three languages agree.
-fn time_prima(pra: &str, n: i64, samples: u32, warmup: u32) -> (Duration, f64) {
+/// Time one Prima workload at a fixed parameter `n`. When `vm` is true, the kernel is run through
+/// the bytecode VM (spec §19.5) via `Evaluator::vm_call_function`; otherwise the AST interpreter runs
+/// it via `call_function`. Both run in-process and warm, so parsing/module loading are excluded.
+/// Returns the median wall time and the kernel's result value for cross-language verification.
+fn time_prima(pra: &str, n: i64, samples: u32, warmup: u32, vm: bool) -> (Duration, f64) {
     let mut ev = Evaluator::with_sink(|_| {});
-    let path = Path::new(pra);
-    let env = ev.eval_file_keep_env(path).expect("kernel file must parse");
+    let env = ev
+        .eval_file_keep_env(Path::new(pra))
+        .expect("kernel file must parse");
     let arg = Value::Number(Number::from(n));
     let mut result = 0.0f64;
     let d = time_median(
         || {
-            let v = ev
-                .call_function(&env, "main", vec![arg.clone()])
-                .expect("kernel must run");
+            let v = if vm {
+                ev.vm_call_function(&env, "main", vec![arg.clone()])
+            } else {
+                ev.call_function(&env, "main", vec![arg.clone()])
+            }
+            .expect("kernel must run");
             result = value_to_f64(&v);
         },
         samples,
@@ -293,10 +299,20 @@ fn main() {
     );
     table.push_str("NOTE: this is the AST-interpreter baseline. `vm := true` (bytecode VM, spec §19.5) and the\n");
     table.push_str("JIT hot path (spec §19.2) are the mechanisms targeted at closing the gap to Python/Rust;\n");
-    table.push_str("see the milestone notes and docs/IMPLEMENTATION-zh_CN.md §5 for the tracked deltas.\n\n");
-    table.push_str("Regenerate with `cargo bench --bench bench_suite` (see benches/bench_suite.rs).\n\n");
-    table.push_str("| workload | n | Prima (ns) | Python (ns) | Rust (ns) | Python × | Rust × |\n");
-    table.push_str("|---|---|---|---|---|---|---|\n");
+    table.push_str(
+        "see the milestone notes and docs/IMPLEMENTATION-zh_CN.md §5 for the tracked deltas.\n\n",
+    );
+    table.push_str(
+        "Regenerate with `cargo bench --bench bench_suite` (see benches/bench_suite.rs).\n\n",
+    );
+    table.push_str(
+        "The `Prima VM` column runs the same kernel through the bytecode VM (spec §19.5);\n",
+    );
+    table.push_str(
+        "`VM/AST ×` is how much faster the VM is than the AST interpreter on that kernel.\n\n",
+    );
+    table.push_str("| workload | n | Prima AST (ns) | Prima VM (ns) | Python (ns) | Rust (ns) | VM/AST × | Python × | Rust × |\n");
+    table.push_str("|---|---|---|---|---|---|---|---|---|\n");
 
     println!(
         "running {} workloads ({SAMPLES} samples, {WARMUP} warmup)...",
@@ -304,7 +320,8 @@ fn main() {
     );
 
     for w in &wl {
-        let (p, pv) = time_prima(w.pra, w.n, SAMPLES, WARMUP);
+        let (p, pv) = time_prima(w.pra, w.n, SAMPLES, WARMUP, false);
+        let (pv_t, pv_v) = time_prima(w.pra, w.n, SAMPLES, WARMUP, true);
         let (py, pyv) = time_python(&py_file, w.py, w.n, SAMPLES);
         let rv = (w.rust)(w.n);
         let r = time_rust(w.rust, w.n, SAMPLES, WARMUP);
@@ -323,23 +340,33 @@ fn main() {
             "{}: prima={pv} rust={rv} disagree",
             name
         );
+        assert!(
+            (pv - pv_v).abs() / pv.abs().max(1e-12) < 1e-6,
+            "{}: ast={pv} vm={pv_v} disagree",
+            name
+        );
 
+        let vm_ast = p.as_secs_f64() / pv_t.as_secs_f64();
         let py_mult = p.as_secs_f64() / py.as_secs_f64();
         let rust_mult = p.as_secs_f64() / r.as_secs_f64();
         println!(
-            "{:<8} prima={:<14} python={:<14} rust={:<14}",
+            "{:<8} ast={:<14} vm={:<14} python={:<14} rust={:<14} vm/ast={:.1}×",
             w.name,
             fmt_ns(p),
+            fmt_ns(pv_t),
             fmt_ns(py),
-            fmt_ns(r)
+            fmt_ns(r),
+            vm_ast
         );
         table.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {:.1}× | {:.2}× |\n",
+            "| {} | {} | {} | {} | {} | {} | {:.1}× | {:.1}× | {:.2}× |\n",
             w.name,
             w.n,
             fmt_ns(p),
+            fmt_ns(pv_t),
             fmt_ns(py),
             fmt_ns(r),
+            vm_ast,
             py_mult,
             rust_mult
         ));

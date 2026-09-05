@@ -81,13 +81,16 @@ pub enum Op {
     IndexStore,
     /// `SetLocal` for an array slot write-back (receiver mutation, spec §11.3).
     // ————— calls —————
-    /// Call a function value on the stack with the top `n` arguments (args pushed in order);
+    /// Call a function value on the stack with the top `argc` arguments (args pushed in order);
     /// the callee is immediately below the args.
-    Call(u16),
-    /// Call a method `name` (const pool index) on the receiver below the args.
-    Method(u16),
-    /// Call a function name resolved through the lexical env.
-    CallName(Reg),
+    Call { argc: u16 },
+    /// Call a method by name constant index with `argc` arguments pushed above the receiver.
+    Method { name: Reg, argc: u16 },
+    /// Call a function name (const pool `Const::Name` index) with `argc` arguments pushed above it.
+    CallName { name: Reg, argc: u16 },
+    /// Push a global/builtin name reference (const pool `Const::Name` index), resolved against the
+    /// environment at runtime. Used for non-local symbols and builtins.
+    LoadName(Reg),
     // —— control flow ——
     /// Jump by the signed offset.
     Jump(i32),
@@ -178,6 +181,40 @@ impl Chunk {
         self.constants.push(Const::Value(v));
         (self.constants.len() - 1) as Reg
     }
+
+    /// Intern a `Value` constant, returning its index (re-exposed for clarity).
+    pub fn add_const(&mut self, v: prima_core::Value) -> Reg {
+        self.add_value(v)
+    }
+
+    /// Emit an unconditional `Jump` with a placeholder offset, returning the instruction index for
+    /// later `patch_jump`.
+    pub fn emit_jump(&mut self, line: u32) -> usize {
+        let i = self.code.len();
+        self.emit(Op::Jump(0), line);
+        i
+    }
+
+    /// Patch a prior `Jump` placeholder to the given absolute code offset (as a relative offset).
+    pub fn patch_jump(&mut self, at: usize, target: usize) {
+        if let Some(Op::Jump(off)) = self.code.get_mut(at) {
+            *off = target as i32 - at as i32;
+        }
+    }
+
+    /// Emit a `JumpIfFalse` with a placeholder offset, returning the instruction index.
+    pub fn emit_jump_if_false(&mut self, line: u32) -> usize {
+        let i = self.code.len();
+        self.emit(Op::JumpIfFalse(0), line);
+        i
+    }
+
+    /// Patch a prior `JumpIfFalse` placeholder to the given absolute code offset.
+    pub fn patch_jump_if_false(&mut self, at: usize, target: usize) {
+        if let Some(Op::JumpIfFalse(off)) = self.code.get_mut(at) {
+            *off = target as i32 - at as i32;
+        }
+    }
 }
 
 impl Default for Chunk {
@@ -186,10 +223,13 @@ impl Default for Chunk {
     }
 }
 
-/// A compiled VM program entry: the root chunk and the set of function chunks (indexed by function id).
+/// A compiled VM program entry: the root chunk, the set of function chunks (indexed by function id),
+/// and the function-name → chunk-index table.
 #[derive(Debug, Clone)]
 pub struct Program {
     pub root: Chunk,
     /// All non-root function/method/closure chunks, keyed by function id (`u32`).
     pub functions: Vec<Chunk>,
+    /// Name → index into `functions` for the VM's call dispatch.
+    pub names: std::collections::HashMap<String, u32>,
 }
