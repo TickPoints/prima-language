@@ -79,7 +79,8 @@ fn call(kernel: &str, args: Vec<Value>, vm: bool) -> Value {
     // tests write/truncate the same path concurrently and corrupt the kernel (mismatched or
     // partially-written input). NamedTempFile is atomically created and deleted on drop.
     let mut tmp = NamedTempFile::new().expect("cannot create temp kernel");
-    tmp.write_all(kernel.as_bytes()).expect("cannot write temp kernel");
+    tmp.write_all(kernel.as_bytes())
+        .expect("cannot write temp kernel");
     let path = tmp.path().to_path_buf();
     let mut ev = Evaluator::new();
     let env = ev
