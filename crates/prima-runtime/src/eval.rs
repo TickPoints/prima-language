@@ -38,6 +38,7 @@ pub use helpers::value_type_name;
 pub(crate) use helpers::{stmt_span, syntax_err};
 
 use env::BuiltinBackend;
+pub(crate) use env::BuiltinBackend as EvalBackend;
 pub use env::{Env, EnvRef, Function, HotState, JIT_CALL_THRESHOLD, NamespaceItem, NativeCall};
 
 /// The `core` builtins pre-imported into the root environment (spec §15.5), in declaration order.
