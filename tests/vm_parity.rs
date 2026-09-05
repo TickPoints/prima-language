@@ -3,8 +3,11 @@
 //! and assert both produce the same scalar result. The VM is gated off by default, so the AST path is
 //! the authoritative reference; the VM fast-path is entered through the `vm` config gate.
 
+use std::io::Write;
+
 use prima_core::{Number, Value};
 use prima_runtime::Evaluator;
+use tempfile::NamedTempFile;
 
 const KERNEL_SUMSQ: &str = r#"pub fn main(n: Integer) -> Integer {
     let mut s = 0;
@@ -72,12 +75,12 @@ const KERNEL_DOT: &str = r#"pub fn main(n: Integer) -> F64 {
 /// `vm_call_function` (bytecode VM, spec §19.5).
 fn call(kernel: &str, args: Vec<Value>, vm: bool) -> Value {
     prima_stdlib::init();
-    let path = std::env::temp_dir().join(format!(
-        "prima_vm_parity_{}_{}.pra",
-        std::process::id(),
-        if vm { "vm" } else { "ast" }
-    ));
-    std::fs::write(&path, kernel).expect("cannot write temp kernel");
+    // Unique per-invocation temp file: tests run in parallel, so a fixed name would let multiple
+    // tests write/truncate the same path concurrently and corrupt the kernel (mismatched or
+    // partially-written input). NamedTempFile is atomically created and deleted on drop.
+    let mut tmp = NamedTempFile::new().expect("cannot create temp kernel");
+    tmp.write_all(kernel.as_bytes()).expect("cannot write temp kernel");
+    let path = tmp.path().to_path_buf();
     let mut ev = Evaluator::new();
     let env = ev
         .eval_file_keep_env(&path)
@@ -88,7 +91,7 @@ fn call(kernel: &str, args: Vec<Value>, vm: bool) -> Value {
         ev.call_function(&env, "main", args)
     }
     .expect("main must run");
-    let _ = std::fs::remove_file(&path);
+    drop(tmp);
     v
 }
 

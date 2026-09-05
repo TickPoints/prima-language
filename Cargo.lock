@@ -1141,6 +1141,7 @@ dependencies = [
  "prima-syntax",
  "proptest",
  "rustyline",
+ "tempfile",
 ]
 
 [[package]]
