@@ -8,8 +8,8 @@ license.workspace = true
 description = "Prima cranelift JIT for numeric hot paths (spec §19.2)"
 
 [dependencies]
-prima-syntax = { path = "../prima-syntax", version = "0.3.0" }
-prima-core = { path = "../prima-core", version = "0.3.0" }
+prima-syntax = { path = "../prima-syntax", version = "0.3.5" }
+prima-core = { path = "../prima-core", version = "0.3.5" }
 cranelift-codegen = "0.135"
 cranelift-frontend = "0.135"
 cranelift-jit = "0.135"
