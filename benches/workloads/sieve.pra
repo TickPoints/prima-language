@@ -1,0 +1,25 @@
+// Sieve of Eratosthenes — count primes <= n (spec §11.3 arrays, §14 loops). Benchmark kernel.
+pub fn main(n: Integer) -> Integer {
+    let mut prime = [];
+    for k in 0..(n + 1) {
+        prime.push(true);
+    }
+    prime[0] = false;
+    prime[1] = false;
+    let mut i = 2;
+    while i * i <= n {
+        if prime[i] {
+            let mut j = i * i;
+            while j <= n {
+                prime[j] = false;
+                j += i;
+            }
+        }
+        i += 1;
+    }
+    let mut c = 0;
+    for k in 0..(n + 1) {
+        if prime[k] { c += 1; }
+    }
+    c
+}

@@ -1,0 +1,10 @@
+// Integer accumulation sum_{i=0}^{n-1} i^2 (spec §7 numeric layer). Benchmark kernel.
+pub fn main(n: Integer) -> Integer {
+    let mut s = 0;
+    let mut i = 0;
+    while i < n {
+        s = s + i * i;
+        i += 1;
+    }
+    s
+}

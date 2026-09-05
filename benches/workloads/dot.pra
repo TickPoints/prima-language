@@ -1,0 +1,14 @@
+// Sparse-ish dot product over index-modulo arrays (spec §11.3 arrays, §11.4 broadcast). Benchmark kernel.
+pub fn main(n: Integer) -> F64 {
+    let mut x = [];
+    let mut y = [];
+    for i in 0..n {
+        x.push(to_f64(i % 13));
+        y.push(to_f64((i * 3 + 1) % 17));
+    }
+    let mut s = 0.0;
+    for i in 0..n {
+        s = s + x[i] * y[i];
+    }
+    to_f64(s)
+}
