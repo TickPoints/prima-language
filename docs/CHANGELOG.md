@@ -5,6 +5,27 @@ All notable changes to the Prima toolchain are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Cross-language benchmark suite (benches/RESULTS.md).** A new `cargo bench --bench bench_suite` (harness-free) measures six deterministic, scalar-valued kernels (integer accumulation, Leibniz π, iterative Fibonacci, Sieve of Eratosthenes, sparse dot-product, Horner polynomial) across three implementations of identical semantics: Prima (in-process, warm `Evaluator::call_function`), CPython (`bench_ref.py`, kernel timed with `perf_counter` to exclude startup), and a native Rust closure. Each run verifies the three results agree (cross-language correctness), then writes a Markdown table to `benches/RESULTS.md`. This is the AST-interpreter baseline; the `vm := true` bytecode VM (spec §19.5) and JIT hot path (spec §19.2) are the mechanisms tracked against it.
+
+- **Doc-test support in `prima doc` (spec §20 / §4.1).** `prima doc --test` extracts ```pra fenced code blocks from `///`/`//!` doc comments, statically checks each with `check_src_checked`, and (`--run`) executes them and compares captured `print`/`println` output to a trailing `// expect: <text>` line — Rust doc-test style. The Markdown renderer now preserves fenced code blocks verbatim plus Markdown list/heading lines, and reports per-block pass/fail with correct exit codes.
+
+- **Conservative name/scope checks in `prima check` (spec §16.2 / appendix C).** A new `check`/`names` pass detects statically-decidable name errors without evaluating: `E0040 undefined_name` (single-segment path/symbol outside scope), `E0080 return_outside_fn`, `E0062 self_outside_method`, and the `W0003 unused_binding` warning, with the pre-imported `core` builtins and primitive type names seeded into the root scope to avoid false positives. `prima check` emits these via a new `check_src_checked` API that also returns warnings, and `--deny W0003` promotes them.
+
+- **`anyhow` error propagation at the CLI (spec §16).** The root `prima-language` crate now depends on `anyhow`: every CLI subcommand (`run`/`parse`/`check`/`compile`/`repl`/`fmt`/`test`/`doc`) returns `anyhow::Result<ExitCode>`, and `read_src` plus the I/O/build steps in `cabi`/`fmt`/`doc` carry a contextual `source` chain (rendered as `caused by:` lines). The library crates keep structured `thiserror` enums (`RuntimeError`/`SyntaxError`/`CoreError`) and the rustc-style diagnostics renderer still owns source-level output, so the numbered error/warning-code surface is unchanged.
+
+- **Bytecode VM scaffold (spec §19.5, gated, default off).** New `prima-runtime` `vm` module directory (`op`/`comp`/`exec`) with a stack instruction set and `Chunk`/`Program` IR, a `vm := true` config policy (default `false`) added to the spec's `opt_level`-independent execution policy table, and phased AST-fallback wiring. The VM is validated incrementally behind the gate; the AST interpreter remains authoritative until the flag flips.
+
+### Changed
+
+- **Memory-strategy docs reconciled to reference counting (spec §12.3/12.4).** The spec and implementation docs no longer plan a host-layer tracing GC: class instances are `Rc<RefCell<ClassInstance>>` (matching the implementation), the `mem::collect()` mutation/GC control is removed, and `mem::Arc` remains a planned explicit-reference-counting wrapper (Phase 12). The ADR, risk table, W_host memory row, and `mem` stdlib rows were updated in both the Chinese (authoritative) and English mirror docs. `docs/AGENTS.md` now records the "spec-first" priority rule (conflict → ask → `SPECIFICATIONS → IMPLEMENTATION → code`).
+
+- **Modularized the interpreter (spec §4.8).** The single 6.5k-line `prima-runtime` `eval.rs` god module is split into a `src/eval/` module directory with one cohesive file per concern: `env` (environment/function values), `helpers` (stateless diagnostic & numeric helpers), `entry` (construction + module system), `stmt` (statement/control-flow), `expr` (expression + numeric ops), `call` (call dispatch/JIT/higher-order), `class` (classes & builtin value-type methods), `apply` (indexing/function application/broadcast/SIMD), `pattern` (match/pattern-routing), and `builtin` (builtins + I/O). `eval.rs` now holds only the module root (type/`Flow`/re-exports). All 607 tests pass unchanged; no behavior, formatting, or public API changed.
+
+
 ## [0.3.0] - 2026-08-29
 
 ### Added

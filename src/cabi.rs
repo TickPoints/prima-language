@@ -14,6 +14,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+use anyhow::Context;
+
 /// C type string → Rust wrapper signature type. All types come from `std::os::raw`, so the
 /// generated crate needs no external dependencies beyond `prima-runtime`/`prima-core`.
 fn c_type_rust(cty: &str) -> String {
@@ -363,22 +365,19 @@ fn build_shell_crate(temp: &Path, target_dir: &Path) -> bool {
 /// `prima compile --emit-c-abi`: build a shared library + C header for the file's `@c_api::extern`
 /// exports (spec §18.4/§19.3). Both `--emit-c-abi` and `--emit-headers` are honored together:
 /// this path always writes the header.
-pub(crate) fn run(file: &Path, output: Option<&Path>) -> ExitCode {
-    let source = match crate::read_src(file) {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
+pub(crate) fn run(file: &Path, output: Option<&Path>) -> anyhow::Result<ExitCode> {
+    let source = crate::read_src(file)?;
     let program = match prima_syntax::parse(&source) {
         Ok(p) => p,
         Err(errors) => {
             crate::diagnostics::report_syntax_errors(file, &source, &errors);
-            return ExitCode::FAILURE;
+            return Ok(ExitCode::FAILURE);
         }
     };
     let exports = prima_runtime::capi::collect_exports(&program);
     if exports.is_empty() {
         crate::diagnostics::print_colored_error("no `@c_api::extern` exports found");
-        return ExitCode::FAILURE;
+        return Ok(ExitCode::FAILURE);
     }
 
     let base = output
@@ -392,13 +391,8 @@ pub(crate) fn run(file: &Path, output: Option<&Path>) -> ExitCode {
 
     // C header (spec §18.4).
     let header_path = with_extension(&base, "h");
-    if let Err(e) = std::fs::write(&header_path, prima_runtime::capi::render_header(&exports)) {
-        crate::diagnostics::print_colored_error(&format!(
-            "cannot write {}: {e}",
-            header_path.display()
-        ));
-        return ExitCode::FAILURE;
-    }
+    std::fs::write(&header_path, prima_runtime::capi::render_header(&exports))
+        .with_context(|| format!("cannot write {}", header_path.display()))?;
 
     // Shell crate sources. The embedded source path is the canonicalized absolute path, so the
     // runtime can re-evaluate the module by path on first call.
@@ -408,13 +402,7 @@ pub(crate) fn run(file: &Path, output: Option<&Path>) -> ExitCode {
     let runtime_path = manifest_dir.join("crates/prima-runtime");
     let core_path = manifest_dir.join("crates/prima-core");
 
-    let temp = match make_temp_dir() {
-        Ok(t) => t,
-        Err(e) => {
-            crate::diagnostics::print_colored_error(&format!("cannot create temp dir: {e}"));
-            return ExitCode::FAILURE;
-        }
-    };
+    let temp = make_temp_dir().context("cannot create the export shell crate temp dir")?;
     let write = |rel: &str, content: &str| -> bool {
         let p = temp.join(rel);
         if let Some(parent) = p.parent()
@@ -433,7 +421,7 @@ pub(crate) fn run(file: &Path, output: Option<&Path>) -> ExitCode {
             "cannot write the export shell crate to the temp dir",
         );
         let _ = std::fs::remove_dir_all(&temp);
-        return ExitCode::FAILURE;
+        return Ok(ExitCode::FAILURE);
     }
 
     // Build (release, offline-first) inside the temp dir so the workspace `target/` is untouched.
@@ -444,7 +432,7 @@ pub(crate) fn run(file: &Path, output: Option<&Path>) -> ExitCode {
             file.display()
         ));
         let _ = std::fs::remove_dir_all(&temp);
-        return ExitCode::FAILURE;
+        return Ok(ExitCode::FAILURE);
     }
 
     let artifact = match find_artifact(&target_dir, &crate_name) {
@@ -455,23 +443,21 @@ pub(crate) fn run(file: &Path, output: Option<&Path>) -> ExitCode {
                 target_dir.display()
             ));
             let _ = std::fs::remove_dir_all(&temp);
-            return ExitCode::FAILURE;
+            return Ok(ExitCode::FAILURE);
         }
     };
 
     let lib_path = lib_target_path(&base);
-    if let Err(e) = std::fs::copy(&artifact, &lib_path) {
-        crate::diagnostics::print_colored_error(&format!(
-            "cannot copy {} to {}: {e}",
+    std::fs::copy(&artifact, &lib_path).with_context(|| {
+        format!(
+            "cannot copy {} to {}",
             artifact.display(),
             lib_path.display()
-        ));
-        let _ = std::fs::remove_dir_all(&temp);
-        return ExitCode::FAILURE;
-    }
+        )
+    })?;
     let _ = std::fs::remove_dir_all(&temp);
 
     println!("wrote {}", lib_path.display());
     println!("wrote {}", header_path.display());
-    ExitCode::SUCCESS
+    Ok(ExitCode::SUCCESS)
 }

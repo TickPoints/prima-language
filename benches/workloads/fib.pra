@@ -1,0 +1,16 @@
+// Iterative Fibonacci (spec §7 integer arithmetic, spec §14 control flow). Benchmark kernel.
+pub fn main(n: Integer) -> Integer {
+    if n <= 1 {
+        return n;
+    }
+    let mut a = 0;
+    let mut b = 1;
+    let mut i = 2;
+    while i <= n {
+        let s = a + b;
+        a = b;
+        b = s;
+        i += 1;
+    }
+    b
+}

@@ -4,7 +4,7 @@
 > 规范未覆盖处，以本文档为准；规范 §19.1 的若干**初步建议**（logos/chumsky/latex crate）经评估后**不采纳**，理由见 §2 与 §7。
 > 本文档的读者：实现者（含 AI 代理）。后续所有开发工作按本文档的分工与顺序推进。
 > **v2.1 增量**：基础类型可用性增强（可变长 `Array`、`Dict`/`Set`、便捷函数、`print`/`println` 区分、`input`、推导式）进入语言规范，落地排期见 §5；Phase 3（`@parallel` 广播并行 + `parfor` + 符号微分 `derivative`/`partial`/`grad`/`limit`）在本文档 v2.1 中落地。
-> **v2.2 增量**：f-string 取代 `format`、文档注释稳定化、`@builtin(ON)` 分层优化、`opt_level` 优化等级、内置方法体系（`String` 等）、标准库扩充（`math`/`physics`/`sys`/`plot`/`render`/`mem`）、宿主层 GC。分块排期见 §5（Phase 6–12），**本 v2.2 文档只改规范与实现文档，不包含代码落地**。
+> **v2.2 增量**：f-string 取代 `format`、文档注释稳定化、`@builtin(ON)` 分层优化、`opt_level` 优化等级、内置方法体系（`String` 等）、标准库扩充（`math`/`physics`/`sys`/`plot`/`render`/`mem`）。分块排期见 §5（Phase 6–11），**本 v2.2 文档只改规范与实现文档，不包含代码落地**。
 > **v2.3 增量**：移除 `|>` 管道与换行分隔两个弃用特性——`|>` 不再参与解析，出现即报 `E0010`（removed-syntax 提示，与 `try/catch` 同风格），替代写法为类方法链 / 直接调用；语句分隔收敛为 `;` 唯一，换行分隔报 `E0011 expected_separator`；`W0001`/`W0002` 警告码与解析器 `pending_newline` 机制随之删除。
 
 ---
@@ -36,7 +36,7 @@
  公式图像渲染（v2.2 render 模块） | 手写 SVG + `resvg`/`tiny-skia` | 最新稳定 | — | §十八 render：ExprDAG → SVG →（可选）PNG 光栅化 |
  终端公式渲染（v2.2 feature） | 复用手写 Unicode/ASCII 渲染器 | — | — | `term-render` cargo feature 开启 `print` 的终端公式渲染（§十八 render） |
  文档生成（v2.2 `prima doc`） | 手写 Markdown 渲染（解析 `///`/`//!`） | — | `comrak` | 输出 Markdown；无生成步骤（§2.2 原则） |
- 宿主层 GC（v2.2） | **手写标记-清除/分代** | — | `gc-arena` / `shifgrethor` | 与求值器集成的单线程 GC；确定性优先（§4.12） |
+ 宿主层内存（§4.12） | **引用计数**（`Rc<RefCell>` + `mem::Arc`） | — | `gc-arena` / `shifgrethor` | 循环引用由用户显式处理（`mem::Arc`）；确定性优先 |
  JIT（Phase 5） | `cranelift-codegen` | 最新稳定 | `inkwell`（LLVM） | §2.4 / §5 |
 
 **工具链约束**：保持 **stable Rust，edition 2024**（Cargo.toml 已定），不依赖 nightly；不引入 build.rs 生成代码的解析器框架（无生成步骤）。
@@ -388,7 +388,7 @@ pub enum OptLevel { O0, O1, O2, O3 }
 
 - `FileResolver`：根模块 `src/main.pra`；`import` 解析按 §15.3 文件映射（`physics.pra` → 模块 `physics`；目录 → 子模块，`main.pra` 为入口）；import 环检测。
 - `Module`：`{ items: HashMap<String, (Visibility, Value)>, path: Vec<Ident>, config: Config, module_docs: Option<DocComment> }`；**默认私有，`pub`/`pub(mod)` 公开**（§15.2）；模块间变量不互通。**v2.2：items 的值附 `docs`**（项级 `DocComment`），供 `prima doc` 与诊断 note（§4.10）读取。
-- **类注册表**：`ClassRegistry`（进程级 `OnceLock`）：`ClassId → ClassDef { name, fields: Vec<(Ident, Type, Option<DocComment>)>, methods: HashMap<Ident, MethodDef>, vis, docs }`。类实例 `Value::Class(ClassId)` + 运行时**宿主 GC 句柄**（v2.2 起取代 `Rc<RefCell<ClassInstance>>`，§4.12；`mem::Arc` 提供显式引用计数）。
+- **类注册表**：`ClassRegistry`（进程级 `OnceLock`）：`ClassId → ClassDef { name, fields: Vec<(Ident, Type, Option<DocComment>)>, methods: HashMap<Ident, MethodDef>, vis, docs }`。类实例 `Value::Class(u32)` + 运行时 `Rc<RefCell<ClassInstance>>` 句柄（§4.12；`mem::Arc` 提供显式引用计数）。
 - 预导入 `core`（§15.5）：启动时把 core 全部公开项注入根作用域。
 - 求值序：解析时**预扫描**所有可达模块（两遍：先收集符号表，再求值），使 `pub` 项在 import 后立即可解析；模块体按 import 依赖序求值。
 
@@ -408,7 +408,7 @@ expr_ast
 - **集合与推导式**（v2.1，§4.6/11.6/11.7）：`Array`/`Dict`/`Set` 字面量求值为对应 `Value`；`for`/`parfor`/`in`/推导式统一迭代协议（`iter_values(v) -> Vec<Value>`：Array 元素、Dict 键、Set 元素、range、String 字符）；推导式求值 = 嵌套循环 + 过滤 + 收集到外框容器；`in` 二元运算在 Array 线性查找、Dict/Set O(1)。
 - **可变集合方法**（v2.1，§11.3/11.6）：`v.push`/`pop`/`append`/`extend`/`insert`/`remove`/`clear`、`d[k]=v`/`get`/`insert`/`remove`/`keys`/`values`/`items`、`s.add`/`remove`/`discard`/`union`/`intersection`/`difference` 由 `eval_method_call` 对 `Value::Array/Dict/Set` 特判分发；切片赋值 `v[a..b] = [...]` 改写为 splice。
 - **模式与解构**（§4.4）：`match`/`if let`/`while let`/`let` 统一走 `match_pattern(pattern, value) -> Result<Bindings, MatchFail>`；构造器模式（`Some`/`Ok`/`Err`）按内建变体匹配；`..` 通配其余。
-- **类**（§4.5/12.3）：`Test::new(...)` 查类注册表关联函数；`obj.method(...)` 依 `Value::Class` 的 `ClassId` 查方法表；`self` 绑定为实例的 GC 句柄浅拷贝；字段访问 `obj.x` 按可见性检查；`T { a, b }` 构造新实例（缺字段 `E0061`，未知字段 `E0060`）。
+- **类**（§4.5/12.3）：`Test::new(...)` 查类注册表关联函数；`obj.method(...)` 依 `Value::Class` 的 id 查方法表；`self` 绑定为实例的 `Rc<RefCell>` 句柄浅拷贝；字段访问 `obj.x` 按可见性检查；`T { a, b }` 构造新实例（缺字段 `E0061`，未知字段 `E0060`）。
 - **f-string**（v2.2，§18.1）：求值 `ExprKind::FString` = 按 `parts` 逐段处理——`Literal` 段原样拼接、`Interp` 段求值 `expr` 后按 `print_format` 渲染（复用 `Renderer::render_to_string`）、`EscapedBrace` 段输出 `{`/`}`；`spec` 精化（如浮点精度）在渲染前应用；v2.2 解析期即拒绝嵌套 f-string 字面量。
 - **`format` 弃用**（v2.2）：`format` 不再预导入、不再注册为内建；求值器遇名为 `format` 的调用发出 `W0006` 提示改用 f-string（过渡期），之后按未定义名处理。
 - **`@builtin(ON)` 分派**（v2.2，§18.4）：`bind_builtin` 对 `Annotation::Builtin{ opt_level }` 分派——`O0`：必须已注册（`E0055`）、禁止函数体（`E0056`），直接绑 Rust 实现；`O1..O3`：必须**有** `.pra` 函数体（回退实现），Rust 实现可选；调用点按 `config.opt_level >= opt_level && 已注册` 决定用 Rust 实现还是求值 `.pra` 体；等级参数非法 → `E0057`。
@@ -451,20 +451,20 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 - 文档数据源唯一：`Module.items` 的 `docs` 与 `ClassRegistry` 的 `docs`（§4.7），与诊断 note 共用同一数据（§4.8）。
 - `prima check` 与解释器共享该数据，保证「文档能看到的，就是诊断能给出的」。
 
-### 4.12 宿主层 GC（v2.2，prima-runtime）
+### 4.12 宿主层内存（引用计数，prima-runtime）
 
-- 范围：`Value::Class(ClassId)` 的类实例与宿主对象（`Value::Array/Dict/Set` 的缓冲由所有权链管理，GC 只覆盖需共享的实例）；`ExprPool`/`SymbolTable`/数值层不参与。
-- 结构：**每 Evaluator 一个 GC 堆**（`Heap { objects: Vec<HeapObj>, free: Vec<u32>, bytes: usize, epoch: u64, watermark: usize }`）；实例以索引句柄引用（`Value::Class(ClassId, HeapIndex)`），类注册表仍以 `ClassId` 描述类型。
-- **标记-清除**：safe-point 在块/函数/循环边界与调用点（求值器主动检查 `bytes >= watermark`）；根集 = `EnvRef` 链 + 求值栈 + 模块表；从根按 `Value` 字段递归标记；清除阶段把未标记槽并入 free 表并回滚字节计数。
-- 确定性：单线程、不引入后台扫描线程；`parfor`/`@parallel` 各任务独立堆，任务结束整堆丢弃。
-- 对外接口：`mem::collect()` 手动触发一次安全点收集；`mem::Arc` 是独立的显式引用计数包装（`Weak` 计数不参与），不被 GC 追踪。
-- 语义红线（§12.3）：GC 对程序不可见（无析构、无 `finalize`），循环引用可回收；确需确定性释放用 `mem::Arc`。内存压力监控（`/proc/self/status` VmRSS 或 allocator 统计）作为水位触发源之一。
+- 范围：`Value::Class(id)` 的类实例；`Value::Array/Dict/Set` 的缓冲由所有权链管理；`ExprPool`/`SymbolTable`/数值层不参与。
+- 结构：类实例以 `Rc<RefCell<ClassInstance>>` 持有（§4.7），`Value::Class(u32)` 是进程内实例句柄；浅拷贝共享同一个 `Rc` 的底层对象。
+- **无追踪式 GC**：循环引用无法自动回收；需要确定性生命周期或跨 FFI 保持存活时使用标准库 `mem::Arc`（显式引用计数包装，未被任何追踪器管理）。
+- 确定性：单线程、同步；不引入后台扫描线程。
+- 对外接口（规划中，Phase 11）：`mem::Arc::new`/`strong_count`，为显式引用计数路径（`.pra`/宿主命名空间形式待定稿）。
+- 语义红线（§12.3）：无析构、无 `finalize`；`mem::Arc` 提供显式释放路径。
 
 ---
 
 ## 5. 实施路线图（Phase 0 → 12）
 
-每个 Phase 结束都有可运行的验收命令。Phase 0–9 已全部落地（落地记录见各 Phase 末尾「落地」块）；Phase 10–12 为规划中。Phase 0–2 已按 v1.x 落地；v2.0 变更分布在各 Phase 的增量任务中，见各 Phase 的「v2.0 增量」小节。
+每个 Phase 结束都有可运行的验收命令。Phase 0–10 已全部落地（落地记录见各 Phase 末尾「落地」块）；Phase 11–12 为规划中。Phase 0–2 已按 v1.x 落地；v2.0 变更分布在各 Phase 的增量任务中，见各 Phase 的「v2.0 增量」小节。
 
 ### Phase 0：工程骨架 + 前端（syntax crate）
 
@@ -735,22 +735,20 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
   cargo build --features term-render # feature 编译通过
   ```
 
-### Phase 12：宿主层 GC 与 `mem::Arc`（v2.2，规范 §12.3/12.4，优先级 low）
+### Phase 12：`mem::Arc` 显式引用计数（规范 §12.3/12.4，优先级 low）
 
-**对应工作项 7**（现代 GC 取代引用计数 + 标准库提供 Arc 替代品）。
+**对应工作项 7**（标准库提供显式引用计数；宿主层不引入追踪式 GC）。
 
-- `prima-runtime` 实现 §4.12 的标记-清除 GC：`Value::Class` 改持 GC 堆索引句柄；safe-point 触发；`parfor`/`@parallel` 独立堆；循环可回收。
-- 迁移：现有 `Rc<RefCell<ClassInstance>>` 全部替换为 GC 句柄；拷贝语义（浅/深）保持可观察不变（§12.3 集成测试回归）。
-- `mem` 模块：`mem::Arc::new`/`strong_count`/`weak`（显式引用计数，不被 GC 追踪）、`mem::collect()`（手动收集）；`prima-core` 的 `SourceLocation`/`HotState` 等 Rust 内部 `Arc` 保留（与语言层无关）。
+- 宿主层类实例保持 `Rc<RefCell<ClassInstance>>`（§4.7/§4.12）；**不做 GC**，循环引用由用户显式管理。
+- `mem` 模块：`mem::Arc::new(x)`/`strong_count`（打包一层显式引用计数，不被任何追踪器管理）；`prima-core` 的 `SourceLocation`/`HotState` 等 Rust 内部 `Arc` 保留（与语言层无关）。
 - **验收**：
 
   ```text
-  cargo test                       # 类语义回归（浅拷贝/方法/循环引用回收）
+  cargo test                       # 类语义回归（浅拷贝/方法）
   cargo test -p prima-stdlib       # mem::Arc 行为测试
-  prima run examples/gc_cycle.pra  # 循环引用实例可回收（内存监控断言）
   ```
 
-> **v2.2 分块总序**：Phase 6（f-string）→ 7（doc）→ 8（opt_level，item 4 前置）→ 9（`@builtin(ON)`）→ 10（String）→ 11（stdlib 扩充）→ 12（GC）。各块验收独立；块与块之间的共享文件冲突由主会话按 §「大型任务工作方式」收口。
+> **v2.2 分块总序**：Phase 6（f-string）→ 7（doc）→ 8（opt_level，item 4 前置）→ 9（`@builtin(ON)`）→ 10（String）→ 11（stdlib 扩充）→ 12（`mem::Arc`）。各块验收独立；块与块之间的共享文件冲突由主会话按 §「大型任务工作方式」收口。
 
 ---
 
@@ -762,13 +760,13 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 | 模式解析歧义（构造器 vs 调用） | 模式上下文单独解析器函数 `parse_pattern`，与表达式解析隔离；快照覆盖 `Some(x)`/`Ok(v)`/嵌套 |
 | 换行兼容解析的误判 | 该风险随 v2.3 移除换行分隔而消失——非块语句未以 `;` 结束（且不在输入末尾/`}` 前）一律报 `E0011`（`expected_separator`）；proptest 断言错误报告稳定 |
 | 化简规则库膨胀（等级 3） | 规则表驱动（`Vec<(Pattern, Rewrite)>`），不写进控制流；等级 3 推迟到 Phase 3+ |
-| 类实例所有权（浅/深拷贝）语义复杂 | GC 句柄 + 字段值按基本值/类实例分派拷贝（§12.3）；方法参数/返回的拷贝语义做专门集成测试（Phase 12 回归） |
+| 类实例所有权（浅/深拷贝）语义复杂 | `Rc<RefCell>` 句柄 + 字段值按基本值/类实例分派拷贝（§12.3）；方法参数/返回的拷贝语义做专门集成测试（Phase 12 回归） |
 | f-string 插值解析歧义/嵌套 | 插值体独立子扫描（`}` 平衡），v2.2 显式禁止嵌套 f-string；proptest 断言不误判、不 panic |
 | 文档注释解析与 AST 一致性 | `DocComment` 保留原文与 span，`prima doc`/诊断 note 共用数据源（§4.11）；快照覆盖 doc 输出 |
 | `@builtin(ON)` 双实现语义漂移 | 两实现一致性集成测试（同一输入比对输出，Phase 9）；`.pra` 是唯一可观察语义来源 |
 | `opt_level` 通道与既有策略冲突 | 语义策略（`fraction`/`broadcast`/`simplify_level`）优先于 `opt_level`；各等级结果等价性测试 |
 | SIMD（O3）数值语义漂移 | 仅可证不变时向量化；IEEE 舍入按精度策略保守处理；等价性基准兜底 |
-| GC 停顿/内存水位 | safe-point 单线程收集、水位触发；`parfor` 独立堆避免跨线程；`mem::Arc` 提供确定性路径 |
+| 类实例循环引用无法回收 | `mem::Arc` 提供显式引用计数路径，供用户确定性管理；文档化约束（§4.12） |
 | 标准库方法清单不再由文档管理 | 方法文档唯一来源为 `.pra` `///`；`prima doc --stdlib` 与 CI 校验（缺 doc 即失败）保证不遗漏 |
 | `?` 传播的上下文校验遗漏 | 静态检查 `?` 所在函数返回类型；`E0054` 在 check 阶段全量覆盖 |
 | `num-bigint` 性能不达标 | `rug`（GMP）feature flag 替换底层，`Number` 封装层已隔离（§21 决策 30） |
@@ -834,7 +832,7 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 | §18.4（v2.1） | `@builtin` 无参、禁函数体 | **`@builtin(ON)` 分层优化：`opt_level ≥ N` 用 Rust 实现，否则求值 `.pra` 函数体** | 同一 API 双实现满足「快」与「可读/可移植」；`.pra` 为语义权威，Rust 为性能分层（Phase 9） |
 | §13.2（v2.1） | 无优化等级策略 | **新增 `opt_level`（`O0`–`O3`，默认 `O2`）** | 与 `simplify_level`（符号层）分离；`O3` 承载 SIMD/激进通道，按需开启 |
 | §10.2（v2.0） | 优化「开发者不可干预」 | **保留逐函数不可干预；等级化（全局/模块/局部策略）可选** | 统一等级让性能可配置又不暴露指令级注解；语义策略优先 |
-| §12.3/12.4（v2.1） | 类实例 `Rc<RefCell>` 引用计数 | **宿主层标记-清除 GC；`mem::Arc` 提供显式引用计数** | 循环引用可回收、浅拷贝零计数开销、确定性路径仍在（`mem::Arc`）；GC 语义对程序透明（§4.12） |
+| §12.3/12.4（v2.1） | 类实例 `Rc<RefCell>` 引用计数 | **保留引用计数；`mem::Arc` 提供显式引用计数** | 循环引用由用户显式管理（`mem::Arc`）；无追踪式 GC，确定性优先（§4.12） |
 | §18（v2.1） | stdlib 模块集固定 | **新增 `render`/`mem`；扩充 `math`/`physics`/`sys`/`plot`** | 科学绘图/公式渲染/内存控制是科学计算高频需求；物理公式 Rust 实现便于优化（Phase 11） |
 
 **v2.3 ADR 新增**：

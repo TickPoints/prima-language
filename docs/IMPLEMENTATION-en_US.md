@@ -5,7 +5,7 @@
 > Where the spec does not cover something, this document takes precedence; several **initial suggestions** in spec §19.1 (logos/chumsky/latex crates) were evaluated and **rejected**, with the reasons given in §2 and §7.
 > Intended audience: implementers (including AI agents). All subsequent development work proceeds according to the division of labor and ordering in this document.
 > **v2.1 increments**: base-type usability enhancements (variable-length `Array`, `Dict`/`Set`, convenience functions, `print`/`println` distinction, `input`, comprehensions) enter the language spec, with implementation scheduling in §5; Phase 3 (`@parallel` broadcast parallelism + `parfor` + symbolic differentiation `derivative`/`partial`/`grad`/`limit`) is implemented in this v2.1 document.
-> **v2.2 increments**: f-strings replace `format`, doc-comment stabilization, `@builtin(ON)` layered optimization, `opt_level` optimization levels, the builtin method system (`String` and others), stdlib expansion (`math`/`physics`/`sys`/`plot`/`render`/`mem`), and host-layer GC. Chunked scheduling in §5 (Phase 6–12); **this v2.2 document only revises the spec and implementation docs, with no code landing**.
+> **v2.2 increments**: f-strings replace `format`, doc-comment stabilization, `@builtin(ON)` layered optimization, `opt_level` optimization levels, the builtin method system (`String` and others), and stdlib expansion (`math`/`physics`/`sys`/`plot`/`render`/`mem`). Chunked scheduling in §5 (Phase 6–11); **this v2.2 document only revises the spec and implementation docs, with no code landing**.
 > **v2.3 increments**: the two deprecated features `|>` pipeline and newline-separated statements are removed and become hard errors — `|>` no longer participates in parsing and is a parse error `E0010` (removed-syntax hint, same style as `try/catch`), with class method chaining / direct calls as the replacement; statement separation converges on `;` as the sole separator, and newline separation reports `E0011 expected_separator`; the `W0001`/`W0002` warning codes and the parser's `pending_newline` machinery are deleted.
 
 ---
@@ -37,7 +37,7 @@ Domain | Choice | Version | Alternatives | Decision notes |
   Formula-image rendering (v2.2 `render` module) | Handwritten SVG + `resvg`/`tiny-skia` | latest stable | — | §eighteen render: ExprDAG → SVG → (optional) PNG rasterization |
   Terminal formula rendering (v2.2 feature) | Reuses the handwritten Unicode/ASCII renderer | — | — | the `term-render` cargo feature enables `print`'s terminal formula rendering (§eighteen render) |
   Doc generation (v2.2 `prima doc`) | Handwritten Markdown rendering (parsing `///`/`//!`) | — | `comrak` | Outputs Markdown; no codegen step (§2.2 principle) |
-  Host-layer GC (v2.2) | **Handwritten mark-sweep/generational** | — | `gc-arena` / `shifgrethor` | single-threaded GC integrated with the evaluator; determinism first (§4.12) |
+  Host-layer memory (§4.12) | **Reference counting** (`Rc<RefCell>` + `mem::Arc`) | — | `gc-arena` / `shifgrethor` | reference cycles handled explicitly by the user via `mem::Arc`; determinism first |
   JIT (Phase 5) | `cranelift-codegen` | latest stable | `inkwell` (LLVM) | §2.4 / §5 |
 
 **Toolchain constraints**: stay on **stable Rust, edition 2024** (already set in Cargo.toml), no nightly dependency; no parser framework that generates code via build.rs (no codegen step).
@@ -389,7 +389,7 @@ pub enum OptLevel { O0, O1, O2, O3 }
 
 - `FileResolver`: root module `src/main.pra`; `import` resolution follows the §15.3 file mapping (`physics.pra` → module `physics`; a directory → submodule, with `main.pra` as the entry); import cycle detection.
 - `Module`: `{ items: HashMap<String, (Visibility, Value)>, path: Vec<Ident>, config: Config, module_docs: Option<DocComment> }`; **private by default, `pub`/`pub(mod)` to expose** (§15.2); variables do not cross module boundaries. **v2.2: the item values carry `docs`** (item-level `DocComment`), read by `prima doc` and diagnostic notes (§4.10).
-- **Class registry**: `ClassRegistry` (process-level `OnceLock`): `ClassId → ClassDef { name, fields: Vec<(Ident, Type, Option<DocComment>)>, methods: HashMap<Ident, MethodDef>, vis, docs }`. Class instances are `Value::Class(ClassId)` + a runtime **host GC handle** (replacing `Rc<RefCell<ClassInstance>>` as of v2.2, §4.12; `mem::Arc` provides explicit reference counting).
+- **Class registry**: `ClassRegistry` (process-level `OnceLock`): `ClassId → ClassDef { name, fields: Vec<(Ident, Type, Option<DocComment>)>, methods: HashMap<Ident, MethodDef>, vis, docs }`. Class instances are `Value::Class(u32)` + a runtime `Rc<RefCell<ClassInstance>>` handle (§4.12; `mem::Arc` provides explicit reference counting).
 - Pre-import `core` (§15.5): all public items of core are injected into the root scope at startup.
 - Evaluation order: at parse time, **pre-scan** all reachable modules (two passes: first collect symbol tables, then evaluate), so that `pub` items are immediately resolvable after `import`; module bodies are evaluated in import-dependency order.
 
@@ -409,7 +409,7 @@ expr_ast
 - **Collections and comprehensions** (v2.1, §4.6/11.6/11.7): `Array`/`Dict`/`Set` literals evaluate to the corresponding `Value`; `for`/`parfor`/`in`/comprehensions share a unified iteration protocol (`iter_values(v) -> Vec<Value>`: Array elements, Dict keys, Set elements, ranges, String characters); comprehension evaluation = nested loops + filtering + collection into the frame container; the `in` binary operation does linear search on Arrays and O(1) on Dict/Set.
 - **Mutable collection methods** (v2.1, §11.3/11.6): `v.push`/`pop`/`append`/`extend`/`insert`/`remove`/`clear`, `d[k]=v`/`get`/`insert`/`remove`/`keys`/`values`/`items`, `s.add`/`remove`/`discard`/`union`/`intersection`/`difference` are dispatched by `eval_method_call` with special-casing for `Value::Array/Dict/Set`; slice assignment `v[a..b] = [...]` is rewritten as a splice.
 - **Patterns and destructuring** (§4.4): `match`/`if let`/`while let`/`let` all go through `match_pattern(pattern, value) -> Result<Bindings, MatchFail>`; constructor patterns (`Some`/`Ok`/`Err`) match against built-in variants; `..` wildcards the rest.
-- **Classes** (§4.5/12.3): `Test::new(...)` looks up associated functions in the class registry; `obj.method(...)` looks up the method table via the `ClassId` of `Value::Class`; `self` binds as a shallow copy of the instance's GC handle; field access `obj.x` checks visibility; `T { a, b }` constructs a new instance (missing field `E0061`, unknown field `E0060`).
+- **Classes** (§4.5/12.3): `Test::new(...)` looks up associated functions in the class registry; `obj.method(...)` looks up the method table via the id of `Value::Class`; `self` binds as a shallow copy of the `Rc<RefCell>` instance handle; field access `obj.x` checks visibility; `T { a, b }` constructs a new instance (missing field `E0061`, unknown field `E0060`).
 - **f-string** (v2.2, §18.1): evaluating `ExprKind::FString` = processing `parts` segment by segment — `Literal` segments are concatenated as-is, `Interp` segments evaluate `expr` and then render it per `print_format` (reusing `Renderer::render_to_string`), `EscapedBrace` segments output `{`/`}`; `spec` refinement (e.g. float precision) is applied before rendering; as of v2.2 nested f-string literals are rejected at parse time.
 - **`format` deprecation** (v2.2): `format` is no longer pre-imported and no longer registered as a builtin; the evaluator emits `W0006` (hint to switch to f-strings) when it encounters a call named `format` (transition period), after which it is treated as an undefined name.
 - **`@builtin(ON)` dispatch** (v2.2, §18.4): `bind_builtin` dispatches on `Annotation::Builtin{ opt_level }` — `O0`: must be registered (`E0055`), a function body is forbidden (`E0056`), binds the Rust implementation directly; `O1..O3`: must **have** a `.pra` function body (fallback implementation), the Rust implementation is optional; at call sites `config.opt_level >= opt_level && registered` decides between the Rust implementation and evaluating the `.pra` body; an invalid level argument → `E0057`.
@@ -452,20 +452,20 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 - Single data source for docs: `Module.items`' `docs` and the `ClassRegistry`'s `docs` (§4.7), sharing the same data as diagnostic notes (§4.8).
 - `prima check` and the interpreter share this data, guaranteeing that "what the docs can see is exactly what diagnostics can give".
 
-### 4.12 Host-layer GC (v2.2, prima-runtime)
+### 4.12 Host-layer memory (reference counting, prima-runtime)
 
-- Scope: class instances of `Value::Class(ClassId)` and host objects (`Value::Array/Dict/Set` buffers are managed by ownership chains; the GC covers only instances that need to be shared); `ExprPool`/`SymbolTable`/the numeric layer do not participate.
-- Structure: **one GC heap per Evaluator** (`Heap { objects: Vec<HeapObj>, free: Vec<u32>, bytes: usize, epoch: u64, watermark: usize }`); instances are referenced by index handles (`Value::Class(ClassId, HeapIndex)`), and the class registry still describes types by `ClassId`.
-- **Mark-sweep**: safe points sit at block/function/loop boundaries and call sites (the evaluator proactively checks `bytes >= watermark`); the root set = the `EnvRef` chain + the evaluation stack + the module table; mark recursively from the roots by `Value` fields; the sweep phase merges unmarked slots into the free table and rolls back the byte count.
-- Determinism: single-threaded, no background scanning thread; each `parfor`/`@parallel` task has its own heap, discarded in full when the task ends.
-- External interface: `mem::collect()` manually triggers one safe-point collection; `mem::Arc` is a separate explicit reference-counting wrapper (`Weak` counts do not participate), not traced by the GC.
-- Semantic red lines (§12.3): the GC is invisible to programs (no destructors, no `finalize`); cyclic references are collectable; use `mem::Arc` when deterministic release is truly needed. Memory-pressure monitoring (`/proc/self/status` VmRSS or allocator statistics) serves as one of the watermark trigger sources.
+- Scope: class instances of `Value::Class(id)`; `Value::Array/Dict/Set` buffers are managed by ownership chains; `ExprPool`/`SymbolTable`/the numeric layer do not participate.
+- Structure: class instances are held by `Rc<RefCell<ClassInstance>>` (§4.7), and `Value::Class(u32)` is a process-local instance handle; a shallow copy shares the same underlying `Rc` object.
+- **No tracing GC**: cyclic references cannot be reclaimed automatically; for a deterministic lifetime or keeping instances alive across FFI, use the standard library `mem::Arc` (an explicit reference-counting wrapper, untruncated by any tracer).
+- Determinism: single-threaded, synchronous; no background scanning thread.
+- External interface (planned, Phase 11): `mem::Arc::new`/`strong_count`, the explicit reference-counting path (`.pra`/host-namespace form to be finalized).
+- Semantic red lines (§12.3): no destructors, no `finalize`; `mem::Arc` provides an explicit release path.
 
 ---
 
 ## 5. Implementation Roadmap (Phase 0 → 12)
 
-Each Phase ends with runnable acceptance commands. Phases 0–9 are all delivered (see the "landed" block at the end of each Phase); Phases 10–12 are planned. Phases 0–2 have been delivered under v1.x; the v2.0 changes are spread across each Phase's incremental tasks — see the "v2.0 increments" subsections of each Phase.
+Each Phase ends with runnable acceptance commands. Phases 0–10 are all delivered (see the "landed" block at the end of each Phase); Phases 11–12 are planned. Phases 0–2 have been delivered under v1.x; the v2.0 changes are spread across each Phase's incremental tasks — see the "v2.0 increments" subsections of each Phase.
 
 ### Phase 0: Project skeleton + front end (syntax crate)
 
@@ -736,22 +736,20 @@ Each Phase ends with runnable acceptance commands. Phases 0–9 are all delivere
   cargo build --features term-render # feature compiles
   ```
 
-### Phase 12: Host-layer GC and `mem::Arc` (v2.2, spec §12.3/12.4, priority low)
+### Phase 12: `mem::Arc` explicit reference counting (spec §12.3/12.4, priority low)
 
-**Work item 7** (a modern GC replaces reference counting + the standard library provides an Arc alternative).
+**Work item 7** (the standard library provides explicit reference counting; the host layer does not introduce a tracing GC).
 
-- `prima-runtime` implements the §4.12 mark-sweep GC: `Value::Class` switches to holding GC-heap index handles; safe-point triggering; `parfor`/`@parallel` independent heaps; cyclic references collectable.
-- Migration: all existing `Rc<RefCell<ClassInstance>>` are replaced with GC handles; copy semantics (shallow/deep) remain observably unchanged (§12.3 integration-test regression).
-- `mem` module: `mem::Arc::new`/`strong_count`/`weak` (explicit reference counting, not GC-traced), `mem::collect()` (manual collection); internal Rust `Arc`s in `prima-core` such as `SourceLocation`/`HotState` are kept (unrelated to the language layer).
+- Host-layer class instances stay `Rc<RefCell<ClassInstance>>` (§4.7/§4.12); **no GC is done**, and reference cycles are managed explicitly by the user.
+- `mem` module: `mem::Arc::new(x)`/`strong_count` (a layer of explicit reference counting, untruncated by any tracer); internal Rust `Arc`s in `prima-core` such as `SourceLocation`/`HotState` are kept (unrelated to the language layer).
 - **Acceptance**:
 
   ```text
-  cargo test                       # class semantics regression (shallow copy/methods/cyclic-reference collection)
+  cargo test                       # class semantics regression (shallow copy/methods)
   cargo test -p prima-stdlib       # mem::Arc behavior tests
-  prima run examples/gc_cycle.pra  # cyclic-reference instances collectable (memory-monitoring assertion)
   ```
 
-> **v2.2 chunk ordering**: Phase 6 (f-strings) → 7 (doc) → 8 (opt_level, work item 4 brought forward as a prerequisite) → 9 (`@builtin(ON)`) → 10 (String) → 11 (stdlib expansion) → 12 (GC). Each chunk has independent acceptance; shared-file conflicts between chunks are reconciled by the main session under the "large-task working model" section.
+> **v2.2 chunk ordering**: Phase 6 (f-strings) → 7 (doc) → 8 (opt_level, work item 4 brought forward as a prerequisite) → 9 (`@builtin(ON)`) → 10 (String) → 11 (stdlib expansion) → 12 (`mem::Arc`). Each chunk has independent acceptance; shared-file conflicts between chunks are reconciled by the main session under the "large-task working model" section.
 
 ---
 
@@ -763,13 +761,13 @@ Each Phase ends with runnable acceptance commands. Phases 0–9 are all delivere
 | Pattern-parsing ambiguity (constructor vs. call) | A dedicated `parse_pattern` parser function for pattern contexts, isolated from expression parsing; snapshots cover `Some(x)`/`Ok(v)`/nesting |
 | Newline-compatible parsing misjudgments | This risk disappears with the v2.3 removal of newline separation — a non-block statement not terminated by `;` (and not at end of input / before `}`) is always `E0011` (`expected_separator`); proptest asserts stable error reporting |
 | Simplification rule-base bloat (level 3) | Table-driven rules (`Vec<(Pattern, Rewrite)>`), not written into control flow; level 3 deferred to Phase 3+ |
-| Class-instance ownership (shallow/deep copy) semantics complexity | GC handles + field-value copy dispatched by primitive value / class instance (§12.3); dedicated integration tests for the copy semantics of method arguments/returns (Phase 12 regression) |
+| Class-instance ownership (shallow/deep copy) semantics complexity | `Rc<RefCell>` handles + field-value copy dispatched by primitive value / class instance (§12.3); dedicated integration tests for the copy semantics of method arguments/returns (Phase 12 regression) |
 | f-string interpolation parsing ambiguity/nesting | Interpolation bodies get an independent sub-scan (balanced `}`), and v2.2 explicitly forbids nested f-strings; proptest asserts no misjudgments or panics |
 | Doc-comment parsing and AST consistency | `DocComment` preserves the raw text and span; `prima doc`/diagnostic notes share one data source (§4.11); snapshots cover doc output |
 | `@builtin(ON)` dual-implementation semantic drift | Two-implementation consistency integration tests (comparing outputs for the same input, Phase 9); `.pra` is the only observable-semantics source |
 | `opt_level` passes conflicting with existing policies | Semantic policies (`fraction`/`broadcast`/`simplify_level`) take priority over `opt_level`; per-level result-equivalence tests |
 | SIMD (O3) numeric-semantics drift | Vectorize only when invariants are provable; IEEE rounding handled conservatively per the precision policy; equivalence benchmarks as a safety net |
-| GC pauses/memory watermarks | Single-threaded collection at safe points, watermark-triggered; `parfor` independent heaps avoid cross-thread issues; `mem::Arc` provides a deterministic path |
+| Class-instance reference cycles cannot be reclaimed | `mem::Arc` provides an explicit reference-counting path for deterministic user management; documented constraint (§4.12) |
 | stdlib method list no longer doc-managed | The only source of method docs is `.pra` `///`; `prima doc --stdlib` and CI checks (failing on missing docs) guarantee nothing is omitted |
 | Missed context checks for `?` propagation | Statically check the return type of the function containing `?`; `E0054` fully covered in the check phase |
 | `num-bigint` performance below target | `rug` (GMP) replaces the backend under a feature flag; the `Number` wrapper layer is already isolated (§21 decision 30) |
@@ -835,7 +833,7 @@ Each Phase ends with runnable acceptance commands. Phases 0–9 are all delivere
 | §18.4 (v2.1) | `@builtin` has no parameters, function body forbidden | **`@builtin(ON)` layered optimization: `opt_level ≥ N` uses the Rust implementation, otherwise evaluates the `.pra` body** | Dual implementations of the same API satisfy both "fast" and "readable/portable"; `.pra` is the semantic authority, Rust the performance layer (Phase 9) |
 | §13.2 (v2.1) | No optimization-level policy | **`opt_level` added (`O0`–`O3`, default `O2`)** | Separated from `simplify_level` (symbolic layer); `O3` carries SIMD/aggressive passes, enabled on demand |
 | §10.2 (v2.0) | Optimization "not user-intervenable" | **Per-function non-intervention kept; leveling (global/module/local policy) optional** | A unified level makes performance configurable without exposing instruction-level annotations; semantic policies take priority |
-| §12.3/12.4 (v2.1) | Class instances use `Rc<RefCell>` reference counting | **Host-layer mark-sweep GC; `mem::Arc` provides explicit reference counting** | Cyclic references collectable, zero counting overhead for shallow copies, and a deterministic path remains (`mem::Arc`); GC semantics are transparent to programs (§4.12) |
+| §12.3/12.4 (v2.1) | Class instances use `Rc<RefCell>` reference counting | **Reference counting retained; `mem::Arc` provides explicit reference counting** | reference cycles managed explicitly by the user (`mem::Arc`); no tracing GC, determinism first (§4.12) |
 | §18 (v2.1) | stdlib module set fixed | **`render`/`mem` added; `math`/`physics`/`sys`/`plot` expanded** | Scientific plotting/formula rendering/memory control are high-frequency needs in scientific computing; physics formulas implemented in Rust for easy optimization (Phase 11) |
 
 **v2.3 ADR additions**:

@@ -30,6 +30,7 @@ num-rational = "0.4"
 num-traits = "0.2"
 num-integer = "0.1"
 thiserror = "2"
+anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 insta = "1.48"
 assert_cmd = "2"
@@ -55,6 +56,7 @@ prima-stdlib = { path = "crates/prima-stdlib", version = "0.3.0" }
 clap = { workspace = true }
 codespan-reporting = { workspace = true }
 rustyline = { workspace = true }
+anyhow = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
@@ -68,4 +70,8 @@ prima-jit = { path = "crates/prima-jit", version = "0.3.0" }
 
 [[bench]]
 name = "bench_jit"
+harness = false
+
+[[bench]]
+name = "bench_suite"
 harness = false

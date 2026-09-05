@@ -20,20 +20,17 @@ use prima_syntax::ast::Stmt;
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 
+use anyhow::Context;
+
 const PROMPT: &str = ">> ";
 const CONTINUATION: &str = "... ";
 const BANNER: &str = "Prima REPL v0.1.0 — Ctrl-D to exit";
 
-/// Run the interactive REPL loop. Returns the process exit code.
-pub fn run() -> ExitCode {
+/// Run the interactive REPL loop. Returns the process exit code; the only failure that
+/// propagates with context is a failure to initialize the line editor.
+pub fn run() -> anyhow::Result<ExitCode> {
     println!("{BANNER}");
-    let mut editor = match DefaultEditor::new() {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("error: failed to initialize the REPL: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let mut editor = DefaultEditor::new().context("cannot initialize the REPL line editor")?;
     let printed = Rc::new(RefCell::new(String::new()));
     let sink = printed.clone();
     let mut ev = Evaluator::with_sink(move |s| sink.borrow_mut().push_str(&s));
@@ -81,7 +78,7 @@ pub fn run() -> ExitCode {
             }
         }
     }
-    ExitCode::SUCCESS
+    Ok(ExitCode::SUCCESS)
 }
 
 /// REPL exit commands, only recognized on an empty buffer (so a pending multi-line

@@ -1,0 +1,12 @@
+// Horner evaluation of a degree-4 polynomial for n values (spec §9 float path, §14 loops). Benchmark kernel.
+pub fn main(n: Integer) -> F64 {
+    let mut acc = 0.0;
+    let mut i = 0;
+    while i < n {
+        let t = to_f64(i) / 7.0;
+        let r = (((1.0 * t + 2.0) * t + 3.0) * t + 4.0) * t + 5.0;
+        acc = acc + r;
+        i += 1;
+    }
+    to_f64(acc)
+}

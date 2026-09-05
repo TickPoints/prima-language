@@ -1,0 +1,13 @@
+// Leibniz series sum_{i=0}^{n-1} (-1)^i / (2i+1) * 4 (spec §6 exact->F64 promotion). Benchmark kernel.
+pub fn main(n: Integer) -> F64 {
+    let mut acc = 0.0;
+    let mut sign = 1.0;
+    let mut i = 0;
+    while i < n {
+        let t = to_f64(2 * i + 1);
+        acc = acc + sign / t;
+        sign = -sign;
+        i += 1;
+    }
+    to_f64(4) * acc
+}

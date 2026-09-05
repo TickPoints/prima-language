@@ -1,14 +1,16 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use prima_runtime::Evaluator;
-use prima_runtime::check::check_src;
+use prima_runtime::check::check_src_checked;
 use prima_syntax::parse_checked;
 
 mod cabi;
 mod diagnostics;
 mod doc;
+mod doctest;
 mod fmt;
 mod repl;
 mod testcmd;
@@ -64,12 +66,29 @@ enum Command {
         /// Document the embedded stdlib modules instead of a file (spec §20).
         #[arg(long)]
         stdlib: bool,
+        /// Validate `///` doc code blocks: statically check each ```pra block (and run it when
+        /// `--run` is given). Reported as a `doc-test` outcome (spec §20).
+        #[arg(long)]
+        test: bool,
+        /// With `--test`: also execute each doc block and compare to its `// expect:` line.
+        #[arg(long)]
+        run: bool,
     },
 }
 
 fn main() -> ExitCode {
     prima_stdlib::init();
     let cli = Cli::parse();
+    match dispatch(cli) {
+        Ok(code) => code,
+        Err(e) => report_anyhow(&e),
+    }
+}
+
+/// Route a parsed CLI command to its handler. Each handler returns an `anyhow::Result<ExitCode>` so
+/// non-source errors (I/O, C-ABI build, etc.) carry a contextual `source` chain, while the textual
+/// diagnostics renderer (`diagnostics::*`) still owns source-level (syntax/type/runtime) output.
+fn dispatch(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         Command::Run { file } => run_file(&file),
         Command::Parse { file } => parse_file(&file),
@@ -91,7 +110,7 @@ fn main() -> ExitCode {
             diagnostics::print_colored_error(
                 "compilation requires `--emit-headers` or `--emit-c-abi` in this build (spec §20)",
             );
-            ExitCode::FAILURE
+            Ok(ExitCode::FAILURE)
         }
         Command::Repl => repl::run(),
         Command::Fmt { path, write, check } => fmt::run(&path, write, check),
@@ -102,37 +121,40 @@ fn main() -> ExitCode {
             path,
             output,
             stdlib,
-        } => doc::run(path.as_deref(), output.as_deref(), stdlib),
+            test,
+            run,
+        } => doc::run(path.as_deref(), output.as_deref(), stdlib, test, run),
     }
 }
 
-pub(crate) fn read_src(file: &Path) -> Result<String, ExitCode> {
-    match std::fs::read_to_string(file) {
-        Ok(s) => Ok(s),
-        Err(e) => {
-            diagnostics::print_colored_error(&format!("cannot read {}: {e}", file.display()));
-            Err(ExitCode::FAILURE)
-        }
+/// Render a top-level `anyhow` error as a brief `error:` line and its source chain as `caused by:`
+/// lines, so the CLI keeps a single, predictable format for non-source failures.
+fn report_anyhow(err: &anyhow::Error) -> ExitCode {
+    diagnostics::print_colored_error(&format!("{err}"));
+    for cause in err.chain().skip(1) {
+        eprintln!("caused by: {cause}");
     }
+    ExitCode::FAILURE
+}
+
+pub(crate) fn read_src(file: &Path) -> Result<String> {
+    std::fs::read_to_string(file).with_context(|| format!("cannot read {}", file.display()))
 }
 
 // Interpreted execution (spec §20): the file is the root module; parse + module system + evaluation.
-fn run_file(file: &Path) -> ExitCode {
-    let source = match read_src(file) {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
+fn run_file(file: &Path) -> Result<ExitCode> {
+    let source = read_src(file)?;
     // Root-file syntax errors render as rustc-style diagnostics (spec §16.4).
     if let Err(errors) = prima_syntax::parse(&source) {
         diagnostics::report_syntax_errors(file, &source, &errors);
-        return ExitCode::FAILURE;
+        return Ok(ExitCode::FAILURE);
     }
     let mut ev = Evaluator::new();
     match ev.eval_file(file) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => Ok(ExitCode::SUCCESS),
         Err(e) => {
             diagnostics::report_runtime_error(file, &source, &e);
-            ExitCode::FAILURE
+            Ok(ExitCode::FAILURE)
         }
     }
 }
@@ -140,18 +162,21 @@ fn run_file(file: &Path) -> ExitCode {
 // Static check (spec §16.2/§16.4/§16.5): collect syntax and statically detectable type errors
 // without executing. All parse warnings are rendered; a warning whose code is in the `--deny`
 // set is promoted to an error and makes the check fail.
-fn check_file(file: &Path, deny: &[String]) -> ExitCode {
-    let source = match read_src(file) {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    let (_, syntax_errors, warnings) = parse_checked(&source);
+fn check_file(file: &Path, deny: &[String]) -> Result<ExitCode> {
+    let source = read_src(file)?;
+    let (_, syntax_errors, parse_warnings) = parse_checked(&source);
     if !syntax_errors.is_empty() {
         diagnostics::report_syntax_errors(file, &source, &syntax_errors);
-        return ExitCode::FAILURE;
+        return Ok(ExitCode::FAILURE);
     }
 
-    let errors = check_src(&source);
+    // Static check (spec §6.3/§16.2): type errors plus compiler-collected warnings (e.g. `W0003`
+    // unused binding). Parse-time warnings from `parse_checked` are merged with these.
+    let (errors, check_warnings) = check_src_checked(&source);
+    // The visitor warnings may carry zero-width spans; filter those that overlap the file.
+    let mut warnings = parse_warnings;
+    warnings.extend(check_warnings);
+
     let denied: Vec<_> = warnings
         .iter()
         .filter(|w| deny.iter().any(|d| d == w.code))
@@ -174,56 +199,48 @@ fn check_file(file: &Path, deny: &[String]) -> ExitCode {
     }
 
     if errors.is_empty() && denied.is_empty() {
-        ExitCode::SUCCESS
+        Ok(ExitCode::SUCCESS)
     } else {
-        ExitCode::FAILURE
+        Ok(ExitCode::FAILURE)
     }
 }
 
-fn parse_file(file: &Path) -> ExitCode {
-    let source = match read_src(file) {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
+fn parse_file(file: &Path) -> Result<ExitCode> {
+    let source = read_src(file)?;
     match prima_syntax::parse(&source) {
         Ok(program) => {
             println!("{program:#?}");
-            ExitCode::SUCCESS
+            Ok(ExitCode::SUCCESS)
         }
         Err(errors) => {
             diagnostics::report_syntax_errors(file, &source, &errors);
-            ExitCode::FAILURE
+            Ok(ExitCode::FAILURE)
         }
     }
 }
 
 // C header emission for `@c_api::extern` exports (spec §18.4): parse, collect the C-ABI prototype
 // list, and render the include-guarded header to `--output` (or stdout when no path is given).
-fn compile_headers(file: &Path, output: Option<&Path>) -> ExitCode {
-    let source = match read_src(file) {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
+fn compile_headers(file: &Path, output: Option<&Path>) -> Result<ExitCode> {
+    let source = read_src(file)?;
     let program = match prima_syntax::parse(&source) {
         Ok(p) => p,
         Err(errors) => {
             diagnostics::report_syntax_errors(file, &source, &errors);
-            return ExitCode::FAILURE;
+            return Ok(ExitCode::FAILURE);
         }
     };
     let header =
         prima_runtime::capi::render_header(&prima_runtime::capi::collect_exports(&program));
     match output {
-        Some(path) => match std::fs::write(path, &header) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                diagnostics::print_colored_error(&format!("cannot write {}: {e}", path.display()));
-                ExitCode::FAILURE
-            }
-        },
+        Some(path) => {
+            std::fs::write(path, &header)
+                .with_context(|| format!("cannot write {}", path.display()))?;
+            Ok(ExitCode::SUCCESS)
+        }
         None => {
             print!("{header}");
-            ExitCode::SUCCESS
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
