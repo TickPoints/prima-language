@@ -47,6 +47,7 @@ cranelift-frontend = "0.135"
 cranelift-jit = "0.135"
 cranelift-module = "0.135"
 target-lexicon = "0.13"
+tempfile = "3"
 
 [dependencies]
 prima-syntax = { path = "crates/prima-syntax", version = "0.3.5" }
@@ -66,6 +67,7 @@ proptest = { workspace = true }
 num-bigint = { workspace = true }
 num-rational = { workspace = true }
 criterion = { workspace = true }
+tempfile = { workspace = true }
 prima-jit = { path = "crates/prima-jit", version = "0.3.5" }
 
 [[bench]]

@@ -5,6 +5,12 @@ All notable changes to the Prima toolchain are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`vm_parity` test concurrency race.** `tests/vm_parity.rs` wrote each kernel to a temp `.pra` file named only from the process id plus `vm`/`ast`; with parallel test threads, overlapping tests truncated/overwrote the same file, producing spurious parse errors (E0011, partial input) and VM/AST value divergences under CI. The helper now writes each kernel into a uniquely-created `tempfile::NamedTempFile` (atomic, unique per invocation, auto-deleted), eliminating the race.
+
 ## [0.3.5] - 2026-09-05
 
 ### Added
