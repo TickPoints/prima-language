@@ -845,6 +845,50 @@ Each Phase ends with runnable acceptance commands. Phases 0–10 are all deliver
 
 All remaining design (three-world architecture, Number tower, ExprPool, the three-level Config policy, module system, error model, parallelism philosophy, class ownership) is fully consistent with the spec.
 
+## 8. Deferred Optimizations and Follow-up Fixes (after the v0.4.0 performance evaluation)
+
+> v0.4.0 overhauled the execution engine (bytecode VM on by default, `Small(i64)` inline small
+> integers, `Value` slimmed 64B→32B via boxing, copy-on-write arrays, fused instructions,
+> per-call-site callee caching, …), moving the cross-language benchmark from "11.8×–4159× slower
+> than CPython" to "1.07×–7.1×" (see `benches/RESULTS.md`). `perf` profiling shows the structural
+> root cause of the remaining gap is shuffling boxed `Value`s (32B) through the stack machine
+> (~40% of runtime). The list below is ordered by expected payoff and is the direct input for the
+> next round; the acceptance baseline is §8.3.
+
+### 8.1 Performance (next round)
+
+| # | Item | Expected payoff | Notes |
+|---|---|---|---|
+| P1 | Register-style / unboxed numeric channel: hot arithmetic bypasses `Value` (slots hold unboxed `f64`/`i64` directly, or type-specialized instruction groups), requiring compile-time type inference or runtime de-boxing | 2–5× on sieve/poly/pi-class kernels | The structural fix for the remaining gap; results must stay identical to the AST interpreter (extend vm_parity) |
+| P2 | Slim `Value` further to 24B: flatten `Real` into `Number::F64/F32/BigFloat` variants (Number 24B→16B), box `Value::String` | 15–20% on all kernels | Mechanical, semantics unchanged; boxing `String` adds one small allocation per string construction — benchmark string-heavy workloads |
+| P3 | User-function call overhead: each call builds a fresh `Vm` (frames/stack allocations); introduce a reusable call stack or calling convention | 2–3× on recursion/call-heavy kernels | Micro-benchmark: a user `fn` call costs ≈335ns (including `Vm` construction and parameter binding) |
+| P4 | Per-op `Arc strong_count` + `RwLock` cost in `ArrayVal::with_mut` (~70–90ns; Python list ≈40ns): uniquely-held fast path (lock-free, must re-justify `Send/Sync`) or batched mutation instructions | 1.5–2× on sieve/dot | Correctness with arrays shared between parfor/VM/AST needs regression coverage |
+| P5 | Grow the VM subset: multi-dimensional indexing `M[.., 1]`, slice assignment, dict/set mutating methods (currently a whole-op fallback at `Method`) | Real-code coverage | Fewer whole-function AST fallbacks; the fallback discriminator already separates "unsupported" from "runtime error" |
+| P6 | Threshold JIT for hot `fn` (Host) bodies: the JIT today only covers single-expression MFn bodies; translate VM chunks → cranelift and hook into `Function::Host`'s `HotState` | 2–10× on loop-heavy code | Phase 5 infrastructure (`prima-jit`) is reusable |
+| P7 | Name-lookup hashing: `HashMap<String, _>` (SipHash) in `Env`/`vm.table` → FNV/FxHash for short keys | 5–10% on call-heavy code | Benefits `get_value`/`get_func`/`LoadName`/`CallName` |
+
+### 8.2 Weaker follow-up fixes (deferred, low severity)
+
+| # | Item | Location |
+|---|---|---|
+| F1 | `ExprPool::number` panics on Complex (should return `Result`/`None`; defensive fix for a public API) | prima-core/src/expr_pool.rs |
+| F2 | CSV parsing transcodes non-ASCII bytes as Latin-1 (UTF-8 data corruption); switch to `char_indices`/`from_utf8_lossy`-aware parsing | prima-stdlib/src/io.rs |
+| F3 | VM `u16` truncation: >65535 params/array elements/constants shift silently (`as u16`); validate the limit at compile time and fall back to the AST | prima-runtime/src/vm/comp.rs |
+| F4 | Trust boundary of arbitrary-path stdlib I/O and terminal escape injection: `prima test`/`doc --test` executing on-disk code grants file read/write (document it); filter C0 control characters at the `print` sink (`\u{1b}` ANSI injection) | prima-stdlib/src/io.rs, src/doctest.rs |
+| F5 | f-string `{:spec}` fill aligns by byte length (off with multi-byte fill/content; cosmetic only) | prima-runtime/src/eval/helpers.rs |
+| F6 | REPL replays the whole session per entry (session-level O(n²); long sessions lag) | src/repl.rs |
+| F7 | `collapse::round` still saturates large floats via `as i64` (same family as the `as_bigint` M6 fix, missed there) | prima-runtime/src/collapse.rs |
+| F8 | "Expression nested too deeply" currently borrows the generic `E0010` code — add a dedicated code to spec appendix C (after spec confirmation, sync both docs) | prima-syntax/src/parser.rs |
+| F9 | Mutating methods on non-local name receivers (a global array `g.push(x)`) still compile-reject → AST fallback in the VM (correct, just slower); a `MethodName` mutation instruction would cover them | prima-runtime/src/vm |
+| F10 | `parse_checked` running on a dedicated 32 MB thread is an observable behavior change (panics keep semantics via `resume_unwind`); fall back to a lower recursion limit if unacceptable | prima-syntax/src/parser.rs |
+
+### 8.3 Acceptance baseline for the next round
+
+- All 6 benchmark kernels at Python × ≤ 1.0 (regenerate `benches/RESULTS.md` with
+  `cargo bench --bench bench_suite`).
+- Whole-workspace `cargo test` / `cargo clippy` green; VM/AST parity, array value semantics
+  (CoW), overflow errors, and depth-limit regressions stay in place.
+
 ---
 
 *Implementation Plan Prima v2.3 · companion to SPECIFICATIONS-zh_CN.md v2.3 · the sole basis for implementation work*

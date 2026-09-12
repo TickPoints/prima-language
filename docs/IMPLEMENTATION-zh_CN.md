@@ -844,6 +844,46 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 其余所有设计（三世界架构、Number 塔、ExprPool、策略三级、模块系统、错误模型、并行哲学、类所有权）与规范完全一致。
 
+## 8. 遗留优化与后续修复清单（v0.4.0 性能评估后）
+
+> v0.4.0 完成了执行引擎整体重构（字节码 VM 默认开启、`Small(i64)` 小整数内联、`Value` 装箱
+> 瘦身 64B→32B、数组 CoW、融合指令、per-call-site callee 缓存等），跨语言基准从「比 CPython
+> 慢 11.8×–4159×」收敛到「1.07×–7.1×」（`benches/RESULTS.md`）。`perf` 剖析显示剩余差距的
+> 结构性根因是装箱 `Value`（32B）在栈机中的搬运（约 40% 运行时）。以下清单按预期收益排序，
+> 作为下一轮工作的直接依据；验收基线见 §8.3。
+
+### 8.1 性能优化（下一轮）
+
+| 项 | 内容 | 预期收益 | 说明 |
+|---|---|---|---|
+| P1 | 寄存器式/非装箱数值通道：热点算术不经过 `Value`（槽位直接持有 unboxed `f64`/`i64`，或按类型特化的指令组），需编译期类型推断或运行期反 Box 化 | sieve/poly/pi 类内核 2–5× | 剩余差距的结构性修复；与现有 AST 解释器保持结果一致（vm_parity 扩展） |
+| P2 | `Value` 进一步瘦身至 24B：`Real` 扁平化为 `Number::F64/F32/BigFloat` 变体（`Number` 24B→16B）、`Value::String` 装箱 | 全内核 15–20% | 机械性改造、语义零变化；`String` 装箱为每次字符串构造增加一次小分配，需基准核对字符串密集负载 |
+| P3 | 用户函数调用开销：每次调用进入 VM 都新建 `Vm`（frames/stack 分配）；引入可复用调用栈或调用约定 | 递归/互调内核 2–3× | 微基准：用户 `fn` 调用 ≈335ns/次（含 `Vm` 构造与参数绑定） |
+| P4 | `ArrayVal::with_mut` 的 `Arc strong_count` + `RwLock` 每操作开销（~70–90ns；Python list ≈40ns）：唯一持有快通道（去锁，需重新论证 `Send/Sync`）或批量变异指令 | sieve/dot 1.5–2× | parfor 与 VM/AST 共享数组时的正确性必须有回归覆盖 |
+| P5 | VM 子集继续扩充：多维索引 `M[.., 1]`、切片赋值、字典/集合变异方法（目前 `Method` 层整体回退） | 真实代码覆盖率 | 减少整函数回退 AST；回退判别已区分「不支持」与「运行期错误」 |
+| P6 | 热点 `fn`（Host）的阈值 JIT：当前 JIT 仅覆盖 MFn 单表达式体；把 VM chunk → cranelift 翻译接入 `Function::Host` 的 `HotState` | 循环密集 2–10× | Phase 5 既有基础设施（`prima-jit`）可复用 |
+| P7 | 名字查找哈希：`Env`/`vm.table` 的 `HashMap<String, _>`（SipHash）→ FNV/FxHash 短串哈希 | 调用密集 5–10% | `get_value`/`get_func`/`LoadName`/`CallName` 全部受益 |
+
+### 8.2 较弱问题修复（遗留，低危）
+
+| 项 | 内容 | 位置 |
+|---|---|---|
+| F1 | `ExprPool::number` 对 Complex panic（应返回 `Result`/`None`；公开 API 防御性修复） | prima-core/src/expr_pool.rs |
+| F2 | CSV 解析按 Latin-1 转码非 ASCII 字节（UTF-8 数据损坏）；改 `char_indices`/`from_utf8_lossy` 感知解析 | prima-stdlib/src/io.rs |
+| F3 | VM `u16` 截断：>65535 参数/数组元素/常量时 `as u16` 错位（静默错值）；编译期校验上限并回退 AST | prima-runtime/src/vm/comp.rs |
+| F4 | stdlib 任意路径读写与终端转义注入的信任边界：`prima test`/`doc --test` 执行磁盘代码即授予文件读写（文档明示）；`print` 输出汇过滤 C0 控制字符（`\u{1b}` ANSI 注入） | prima-stdlib/src/io.rs、src/doctest.rs |
+| F5 | f-string `{:spec}` fill 按字节长度对齐（多字节 fill/正文时偏差，纯外观） | prima-runtime/src/eval/helpers.rs |
+| F6 | REPL 每条入口重放完整会话（会话级 O(n²)，长会话卡顿） | src/repl.rs |
+| F7 | `collapse::round` 对大浮点仍有 `as i64` 饱和（与 `as_bigint` 的 M6 修复同类，漏网） | prima-runtime/src/collapse.rs |
+| F8 | 「表达式嵌套过深」目前借用通用码 `E0010`——应在规范附录 C 增设专用错误码（规范确认后同步双语文档） | prima-syntax/src/parser.rs |
+| F9 | 非局部名接收者的变异方法（全局数组 `g.push(x)`）在 VM 下仍编译拒绝→回退 AST（结果正确，仅性能）；可加 `MethodName` 变异指令覆盖 | prima-runtime/src/vm |
+| F10 | `parse_checked` 在专用 32MB 线程上运行属行为可见变化（panic 经 `resume_unwind` 保留语义）；若不可接受，退回低递归上限方案 | prima-syntax/src/parser.rs |
+
+### 8.3 下一轮验收基线
+
+- 6 个基准内核全部 Python × ≤ 1.0（`cargo bench --bench bench_suite` 重生成 `benches/RESULTS.md`）。
+- 全 workspace `cargo test` / `cargo clippy` 绿；VM/AST parity、数组值语义（CoW）、溢出报错、深度上限回归保持。
+
 ---
 
 *实现方案 Prima v2.3 · 与 SPECIFICATIONS-zh_CN.md v2.3 配套 · 实现工作的唯一依据*
