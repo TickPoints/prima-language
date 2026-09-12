@@ -108,34 +108,46 @@ fn convenience_functions() {
         eval("sorted([3, 1, 2])"),
         Value::Array(vec![n(1), n(2), n(3)].into())
     );
-    assert_eq!(eval("reversed([1, 2])"), Value::Array(vec![n(2), n(1)].into()));
+    assert_eq!(
+        eval("reversed([1, 2])"),
+        Value::Array(vec![n(2), n(1)].into())
+    );
     assert_eq!(eval("count([1, 2, 2], 2)"), n(2));
     assert_eq!(eval("index([3, 1, 2], 2)"), n(2));
     assert_eq!(eval("first([1, 2])"), Value::Option(Some(Box::new(n(1)))));
     assert_eq!(eval("last([1, 2])"), Value::Option(Some(Box::new(n(2)))));
     assert_eq!(
         eval("enumerate([\"a\", \"b\"])"),
-        Value::Array(vec![
-            Value::Tuple(vec![n(0), Value::String("a".into())]),
-            Value::Tuple(vec![n(1), Value::String("b".into())]),
-        ].into())
+        Value::Array(
+            vec![
+                Value::Tuple(vec![n(0), Value::String("a".into())]),
+                Value::Tuple(vec![n(1), Value::String("b".into())]),
+            ]
+            .into()
+        )
     );
     assert_eq!(
         eval("zip([1, 2], [\"a\", \"b\"])"),
-        Value::Array(vec![
-            Value::Tuple(vec![n(1), Value::String("a".into())]),
-            Value::Tuple(vec![n(2), Value::String("b".into())]),
-        ].into())
+        Value::Array(
+            vec![
+                Value::Tuple(vec![n(1), Value::String("a".into())]),
+                Value::Tuple(vec![n(2), Value::String("b".into())]),
+            ]
+            .into()
+        )
     );
     assert_eq!(
         eval("linspace(0, 10, 5)"),
-        Value::Array(vec![
-            Value::Number(Number::Real(prima_core::Real::F64(0.0))),
-            Value::Number(Number::Real(prima_core::Real::F64(2.5))),
-            Value::Number(Number::Real(prima_core::Real::F64(5.0))),
-            Value::Number(Number::Real(prima_core::Real::F64(7.5))),
-            Value::Number(Number::Real(prima_core::Real::F64(10.0))),
-        ].into())
+        Value::Array(
+            vec![
+                Value::Number(Number::Real(prima_core::Real::F64(0.0))),
+                Value::Number(Number::Real(prima_core::Real::F64(2.5))),
+                Value::Number(Number::Real(prima_core::Real::F64(5.0))),
+                Value::Number(Number::Real(prima_core::Real::F64(7.5))),
+                Value::Number(Number::Real(prima_core::Real::F64(10.0))),
+            ]
+            .into()
+        )
     );
     assert_eq!(eval("all([true, true])"), Value::Bool(true));
     assert_eq!(eval("any([false, true])"), Value::Bool(true));

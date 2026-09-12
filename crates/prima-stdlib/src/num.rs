@@ -132,7 +132,9 @@ fn is_prime(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> 
 fn next_prime(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "num::next_prime")?;
     let n = int_arg(args, 0, "num::next_prime")?;
-    Ok(Value::Number(Number::Integer(Box::new(bigint_next_prime(&n)))))
+    Ok(Value::Number(Number::Integer(Box::new(bigint_next_prime(
+        &n,
+    )))))
 }
 
 fn random_integer(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {

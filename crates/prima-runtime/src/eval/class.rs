@@ -917,12 +917,8 @@ impl Evaluator {
             "count" => {
                 arity(1)?;
                 Ok(Value::Number(Number::from(
-                    a.with(|items| {
-                        items
-                            .iter()
-                            .filter(|e| self.value_eq(e, &args[0]))
-                            .count()
-                    }) as i64,
+                    a.with(|items| items.iter().filter(|e| self.value_eq(e, &args[0])).count())
+                        as i64,
                 )))
             }
             "first" => {

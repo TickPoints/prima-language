@@ -314,13 +314,15 @@ fn numeric_property(name: &str, n: &Number) -> Result<Value, RuntimeError> {
         "sign" => {
             ensure_real(name, n)?;
             let x = n.to_f64_lossy();
-            Ok(Value::Number(N::Integer(Box::new(BigInt::from(if x > 0.0 {
-                1i8
-            } else if x < 0.0 {
-                -1i8
-            } else {
-                0i8
-            })))))
+            Ok(Value::Number(N::Integer(Box::new(BigInt::from(
+                if x > 0.0 {
+                    1i8
+                } else if x < 0.0 {
+                    -1i8
+                } else {
+                    0i8
+                },
+            )))))
         }
         "is_positive" => {
             ensure_real(name, n)?;
@@ -411,7 +413,9 @@ fn numeric_property(name: &str, n: &Number) -> Result<Value, RuntimeError> {
             let i = n.as_bigint().ok_or_else(|| {
                 RuntimeError::Type("`Number.bit_length` requires an integer".into())
             })?;
-            Ok(Value::Number(N::Integer(Box::new(BigInt::from(i.bits() as i64)))))
+            Ok(Value::Number(N::Integer(Box::new(BigInt::from(
+                i.bits() as i64
+            )))))
         }
         _ => Err(RuntimeError::Message(format!(
             "unknown numeric method `{name}`"
@@ -555,9 +559,7 @@ macro_rules! int_collapse_fns {
         fn $checked_fn(name: &str, n: &Number) -> Result<Value, RuntimeError> {
             ensure_real(name, n)?;
             match n.$as() {
-                Some(v) => Ok(Value::Result(Ok(Box::new(Value::Number(
-                    ($wrap)(v),
-                ))))),
+                Some(v) => Ok(Value::Result(Ok(Box::new(Value::Number(($wrap)(v)))))),
                 None => Ok(Value::Result(Err(Box::new(format!(
                     "overflow: `{name}`: {n} cannot be represented as {}",
                     stringify!($ty)
@@ -605,12 +607,26 @@ int_collapse_fns!(to_i8, try_i8, checked_i8, Number::I8, as_i8, i8);
 int_collapse_fns!(to_i16, try_i16, checked_i16, Number::I16, as_i16, i16);
 int_collapse_fns!(to_i32, try_i32, checked_i32, Number::I32, as_i32, i32);
 int_collapse_fns!(to_i64, try_i64, checked_i64, Number::I64, as_i64, i64);
-int_collapse_fns!(to_i128, try_i128, checked_i128, |v: i128| Number::I128(Box::new(v)), as_i128, i128);
+int_collapse_fns!(
+    to_i128,
+    try_i128,
+    checked_i128,
+    |v: i128| Number::I128(Box::new(v)),
+    as_i128,
+    i128
+);
 int_collapse_fns!(to_u8, try_u8, checked_u8, Number::U8, as_u8, u8);
 int_collapse_fns!(to_u16, try_u16, checked_u16, Number::U16, as_u16, u16);
 int_collapse_fns!(to_u32, try_u32, checked_u32, Number::U32, as_u32, u32);
 int_collapse_fns!(to_u64, try_u64, checked_u64, Number::U64, as_u64, u64);
-int_collapse_fns!(to_u128, try_u128, checked_u128, |v: u128| Number::U128(Box::new(v)), as_u128, u128);
+int_collapse_fns!(
+    to_u128,
+    try_u128,
+    checked_u128,
+    |v: u128| Number::U128(Box::new(v)),
+    as_u128,
+    u128
+);
 int_collapse_fns!(to_isize, try_isize, Number::Isize, as_isize, isize);
 int_collapse_fns!(to_usize, try_usize, Number::Usize, as_usize, usize);
 
@@ -1252,14 +1268,18 @@ mod tests {
 
         let ok_u128 = call(
             "checked_u128",
-            &[Value::Number(Number::Integer(Box::new(BigInt::from(u128::MAX))))],
+            &[Value::Number(Number::Integer(Box::new(BigInt::from(
+                u128::MAX,
+            ))))],
             &pool,
             builtins,
         )
         .unwrap();
         assert_eq!(
             ok_u128,
-            Value::Result(Ok(Box::new(Value::Number(Number::U128(Box::new(u128::MAX))))))
+            Value::Result(Ok(Box::new(Value::Number(Number::U128(Box::new(
+                u128::MAX
+            ))))))
         );
 
         let out_of_range = call(

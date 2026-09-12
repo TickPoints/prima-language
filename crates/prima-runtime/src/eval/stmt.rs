@@ -3,7 +3,7 @@
 //! optimization. Ground-expression evaluation lives in `expr.rs`; pattern matching in `pattern.rs`.
 
 use super::helpers::{
-    ParforStep, ParforWriteVec, MAX_RANGE_ELEMS, check_parfor_body, collect_read_names,
+    MAX_RANGE_ELEMS, ParforStep, ParforWriteVec, check_parfor_body, collect_read_names,
     expr_is_side_effect_free, normalize_index, overload_key, pattern_is_refutable,
     unalias_array_cycles, value_contains_array_buffer,
 };
@@ -252,9 +252,7 @@ impl Evaluator {
                                 }
                             };
                             let key = ValueKey::from_value(&k).ok_or_else(|| {
-                                RuntimeError::Message(
-                                    "dict key must be a hashable value".into(),
-                                )
+                                RuntimeError::Message("dict key must be a hashable value".into())
                             })?;
                             let merged = match op {
                                 AssignOp::Assign => v,
@@ -287,14 +285,13 @@ impl Evaluator {
                                 IndexItem::Elem(e) => {
                                     let raw = self.eval_index_i64(env, e)?;
                                     let (len, idx, old) = {
-                                        let idx = normalize_index(raw, a.len()).ok_or_else(
-                                            || {
+                                        let idx =
+                                            normalize_index(raw, a.len()).ok_or_else(|| {
                                                 RuntimeError::IndexOutOfBounds(format!(
                                                     "index {raw} (length {})",
                                                     a.len()
                                                 ))
-                                            },
-                                        )?;
+                                            })?;
                                         let old = a.get(idx);
                                         (a.len(), idx, old)
                                     };
@@ -375,8 +372,12 @@ impl Evaluator {
                                             "slice assignment right-hand side must be an array",
                                         );
                                     };
-                                    let (lo, hi) =
-                                        self.slice_bounds(env, start.as_ref(), end.as_ref(), a.len())?;
+                                    let (lo, hi) = self.slice_bounds(
+                                        env,
+                                        start.as_ref(),
+                                        end.as_ref(),
+                                        a.len(),
+                                    )?;
                                     let items = rhs.to_vec();
                                     let mut arr = a;
                                     arr.with_mut(|buf| {
@@ -537,9 +538,7 @@ impl Evaluator {
                     // Checked step (spec §16.1 R0001): an overflowing loop index is an error, not
                     // a silent wraparound.
                     i = i.checked_add(step_v).ok_or_else(|| {
-                        RuntimeError::Overflow(format!(
-                            "for-loop index overflow: {i} + {step_v}"
-                        ))
+                        RuntimeError::Overflow(format!("for-loop index overflow: {i} + {step_v}"))
                     })?;
                 }
                 Ok(Flow::Continue)
@@ -697,15 +696,13 @@ impl Evaluator {
                 "parfor materializes {n_i128} iterations, exceeding the {MAX_RANGE_ELEMS} iteration limit"
             )));
         }
-        let n = i64::try_from(n_i128).map_err(|_| {
-            RuntimeError::Overflow("parfor iteration count overflows".into())
-        })?;
+        let n = i64::try_from(n_i128)
+            .map_err(|_| RuntimeError::Overflow("parfor iteration count overflows".into()))?;
 
         // Materialize the loop-index sequence, then process it in rayon chunks so each task evaluator
         // (and its read-only array bindings) is created once per thread rather than once per element.
-        let n_usize = usize::try_from(n).map_err(|_| {
-            RuntimeError::Overflow("parfor iteration count overflows".into())
-        })?;
+        let n_usize = usize::try_from(n)
+            .map_err(|_| RuntimeError::Overflow("parfor iteration count overflows".into()))?;
         let mut indices = Vec::with_capacity(n_usize);
         if step_v > 0 {
             let mut i = start;
@@ -906,7 +903,11 @@ impl Evaluator {
             .borrow()
             .get_value(&acc)
             .unwrap_or(Value::Number(Number::from(0)));
-        let merged = self.eval_binary(BinOp::Add, prev, Value::Number(Number::Integer(Box::new(sum))))?;
+        let merged = self.eval_binary(
+            BinOp::Add,
+            prev,
+            Value::Number(Number::Integer(Box::new(sum))),
+        )?;
         let mut e = env.borrow_mut();
         if !e.set_existing(&acc, merged.clone()) {
             e.set_value(&acc, merged);

@@ -262,7 +262,10 @@ fn boxed_representations_match_small_semantics() {
         Number::Rational(Box::new(BigRational::new(BigInt::from(7), BigInt::from(3))))
     );
     // `from_bigint` still narrows to `Small` when the value fits `i64` (spec §6.1).
-    assert!(matches!(Number::from_bigint(BigInt::from(5)), Number::Small(5)));
+    assert!(matches!(
+        Number::from_bigint(BigInt::from(5)),
+        Number::Small(5)
+    ));
     assert!(matches!(
         Number::from_bigint(BigInt::from(2).pow(80)),
         Number::Integer(_)

@@ -189,18 +189,22 @@ impl Evaluator {
                             match (old, rhs) {
                                 // `Small` accumulator fast path (spec §6.1): checked i64 addition
                                 // with exact-tower widening on overflow.
-                                (Value::Number(Number::Small(x)), Value::Number(Number::Small(y))) => {
-                                    match x.checked_add(y) {
-                                        Some(v) => {
-                                            *s = Value::Number(Number::Small(v));
-                                        }
-                                        None => {
-                                            *s = Value::Number(Number::Small(x) + Number::Small(y));
-                                        }
+                                (
+                                    Value::Number(Number::Small(x)),
+                                    Value::Number(Number::Small(y)),
+                                ) => match x.checked_add(y) {
+                                    Some(v) => {
+                                        *s = Value::Number(Number::Small(v));
                                     }
-                                }
+                                    None => {
+                                        *s = Value::Number(Number::Small(x) + Number::Small(y));
+                                    }
+                                },
                                 // F64 accumulator fast path (spec §6.5): plain IEEE addition.
-                                (Value::Number(Number::Real(Real::F64(x))), Value::Number(Number::Real(Real::F64(y)))) => {
+                                (
+                                    Value::Number(Number::Real(Real::F64(x))),
+                                    Value::Number(Number::Real(Real::F64(y))),
+                                ) => {
                                     *s = Value::Number(Number::Real(Real::F64(x + y)));
                                 }
                                 (Value::Number(x), Value::Number(y)) => {
@@ -336,9 +340,9 @@ impl Evaluator {
                                     None => {
                                         let span = frame_span(frame);
                                         return Err(crate::error::attach_span(
-                                            crate::error::RuntimeError::IndexOutOfBounds(
-                                                format!("index {i} (length {len})"),
-                                            ),
+                                            crate::error::RuntimeError::IndexOutOfBounds(format!(
+                                                "index {i} (length {len})"
+                                            )),
                                             span,
                                         ));
                                     }
@@ -380,9 +384,10 @@ impl Evaluator {
                             // F64 fast path (spec §6.5): IEEE arithmetic, policy-independent for
                             // `+ - *`; kept out of the exact-tower promotion machinery. Must be
                             // tried before the general `Number` arm.
-                            (Value::Number(Number::Real(Real::F64(x))), Value::Number(Number::Real(Real::F64(y))))
-                                if matches!(op, Op::Add | Op::Sub | Op::Mul) =>
-                            {
+                            (
+                                Value::Number(Number::Real(Real::F64(x))),
+                                Value::Number(Number::Real(Real::F64(y))),
+                            ) if matches!(op, Op::Add | Op::Sub | Op::Mul) => {
                                 let r = match op {
                                     Op::Add => x + y,
                                     Op::Sub => x - y,
@@ -404,23 +409,24 @@ impl Evaluator {
                             // exact-layer zero-divisor diagnostics (spec §6.2/§13.4).
                             // Mixed exact/F64 division promotes to F64 (spec §6.4) — the result
                             // is in the collapsed layer either way, so compute directly.
-                            (Value::Number(Number::Small(x)), Value::Number(Number::Real(Real::F64(y))))
-                                if op == Op::Div =>
-                            {
-                                vm.stack.push(Value::Number(Number::Real(Real::F64(
-                                    (x as f64) / y,
-                                ))));
+                            (
+                                Value::Number(Number::Small(x)),
+                                Value::Number(Number::Real(Real::F64(y))),
+                            ) if op == Op::Div => {
+                                vm.stack
+                                    .push(Value::Number(Number::Real(Real::F64((x as f64) / y))));
                             }
-                            (Value::Number(Number::Real(Real::F64(x))), Value::Number(Number::Small(y)))
-                                if op == Op::Div =>
-                            {
-                                vm.stack.push(Value::Number(Number::Real(Real::F64(
-                                    x / (y as f64),
-                                ))));
+                            (
+                                Value::Number(Number::Real(Real::F64(x))),
+                                Value::Number(Number::Small(y)),
+                            ) if op == Op::Div => {
+                                vm.stack
+                                    .push(Value::Number(Number::Real(Real::F64(x / (y as f64)))));
                             }
-                            (Value::Number(Number::Real(Real::F64(x))), Value::Number(Number::Real(Real::F64(y))))
-                                if op == Op::Div =>
-                            {
+                            (
+                                Value::Number(Number::Real(Real::F64(x))),
+                                Value::Number(Number::Real(Real::F64(y))),
+                            ) if op == Op::Div => {
                                 // F64 division is policy-independent: the result is already in
                                 // the collapsed layer (IEEE, inf on zero divisor, spec §6.5).
                                 vm.stack.push(Value::Number(Number::Real(Real::F64(x / y))));
@@ -463,13 +469,11 @@ impl Evaluator {
                                                 span,
                                             ));
                                         }
-                                        vm.stack
-                                            .push(Value::Number(Number::Small(p % q)));
+                                        vm.stack.push(Value::Number(Number::Small(p % q)));
                                     }
                                     (Number::Real(Real::F64(p)), Number::Real(Real::F64(q))) => {
-                                        vm.stack.push(Value::Number(Number::Real(Real::F64(
-                                            p % q,
-                                        ))));
+                                        vm.stack
+                                            .push(Value::Number(Number::Real(Real::F64(p % q))));
                                     }
                                     _ => {
                                         let span = frame_span(frame);
@@ -565,7 +569,11 @@ impl Evaluator {
                             return Err(vm_limit("invalid local slot"));
                         }
                     }
-                    Op::MethodLocal { name: k, argc, slot } => {
+                    Op::MethodLocal {
+                        name: k,
+                        argc,
+                        slot,
+                    } => {
                         // Fused `push` on an array slot (spec §11.3): scalar arguments cannot
                         // alias the receiver buffer, so the element is pushed directly; array /
                         // class arguments keep the general path (self-reference snapshotting).
@@ -596,7 +604,11 @@ impl Evaluator {
                                     vm.stack.push(arg);
                                     self.step_vm(
                                         &mut vm,
-                                        Op::MethodLocal { name: k, argc, slot },
+                                        Op::MethodLocal {
+                                            name: k,
+                                            argc,
+                                            slot,
+                                        },
                                         env,
                                     )?;
                                     if vm.frames.is_empty() {
@@ -608,7 +620,11 @@ impl Evaluator {
                         } else {
                             self.step_vm(
                                 &mut vm,
-                                Op::MethodLocal { name: k, argc, slot },
+                                Op::MethodLocal {
+                                    name: k,
+                                    argc,
+                                    slot,
+                                },
                                 env,
                             )?;
                             if vm.frames.is_empty() {
@@ -629,25 +645,26 @@ impl Evaluator {
                             }
                             cache[site as usize]
                         };
-        match cached {
-            Some((e, Callee::Builtin(b))) if e == epoch => {
-                // `to_f64(x)` numeric fast path on the cached hit too (spec §9.2): skips the
-                // builtin dispatch chain; other argument shapes go through `vm_call_builtin`.
-                if argc == 1 && matches!(b, Builtin::Collapse("to_f64")) {
-                    let arg = vm.stack.pop().unwrap_or(Value::Nil);
-                    match arg {
-                        Value::Number(ref n) if !n.is_complex() => {
-                            let v = n.to_f64_lossy();
-                            vm.stack.push(Value::Number(Number::Real(Real::F64(v))));
-                            continue 'dispatch;
-                        }
-                        _ => vm.stack.push(arg),
-                    }
-                }
-                let args = split_args(&mut vm.stack, argc as usize);
-                self.vm_call_builtin(&mut vm, b, args)?;
-                continue 'dispatch;
-            }
+                        match cached {
+                            Some((e, Callee::Builtin(b))) if e == epoch => {
+                                // `to_f64(x)` numeric fast path on the cached hit too (spec §9.2): skips the
+                                // builtin dispatch chain; other argument shapes go through `vm_call_builtin`.
+                                if argc == 1 && matches!(b, Builtin::Collapse("to_f64")) {
+                                    let arg = vm.stack.pop().unwrap_or(Value::Nil);
+                                    match arg {
+                                        Value::Number(ref n) if !n.is_complex() => {
+                                            let v = n.to_f64_lossy();
+                                            vm.stack
+                                                .push(Value::Number(Number::Real(Real::F64(v))));
+                                            continue 'dispatch;
+                                        }
+                                        _ => vm.stack.push(arg),
+                                    }
+                                }
+                                let args = split_args(&mut vm.stack, argc as usize);
+                                self.vm_call_builtin(&mut vm, b, args)?;
+                                continue 'dispatch;
+                            }
                             Some((e, Callee::ProgramFn(idx))) if e == epoch => {
                                 let chunk = Rc::clone(&vm.functions[idx as usize]);
                                 if chunk.arity != argc {
@@ -661,11 +678,7 @@ impl Evaluator {
                                 continue 'dispatch;
                             }
                             _ => {
-                                self.step_vm(
-                                    &mut vm,
-                                    Op::CallName { name: site, argc },
-                                    env,
-                                )?;
+                                self.step_vm(&mut vm, Op::CallName { name: site, argc }, env)?;
                                 if vm.frames.is_empty() {
                                     break 'dispatch;
                                 }
@@ -689,7 +702,12 @@ impl Evaluator {
 /// Current instruction's source span for diagnostics, read from the frame directly (usable while
 /// the frame is mutably borrowed by the dispatch loop).
 fn frame_span(f: &Frame) -> prima_syntax::Span {
-    let l = f.chunk.lines.get(f.ip.saturating_sub(1)).copied().unwrap_or(0);
+    let l = f
+        .chunk
+        .lines
+        .get(f.ip.saturating_sub(1))
+        .copied()
+        .unwrap_or(0);
     prima_syntax::Span::new(l, l)
 }
 
@@ -1060,9 +1078,7 @@ impl Evaluator {
                 match cond {
                     // Conditions must be boolean (spec §12.1) — mirrors `eval_cond`.
                     Value::Bool(b) => {
-                        if !b
-                            && let Some(f) = vm.frames.last_mut()
-                        {
+                        if !b && let Some(f) = vm.frames.last_mut() {
                             f.ip = jump_target(f.ip, off);
                         }
                         Ok(())
@@ -1082,9 +1098,7 @@ impl Evaluator {
                 let cond = pop(&mut vm.stack);
                 match cond {
                     Value::Bool(b) => {
-                        if b
-                            && let Some(f) = vm.frames.last_mut()
-                        {
+                        if b && let Some(f) = vm.frames.last_mut() {
                             f.ip = jump_target(f.ip, off);
                         }
                         Ok(())
@@ -1174,9 +1188,7 @@ impl Evaluator {
                         ));
                     }
                 };
-                if !cont
-                    && let Some(f) = vm.frames.last_mut()
-                {
+                if !cont && let Some(f) = vm.frames.last_mut() {
                     f.ip = jump_target(f.ip, off);
                 }
                 Ok(())
@@ -1209,9 +1221,7 @@ impl Evaluator {
                         ));
                     }
                 };
-                if !cont
-                    && let Some(f) = vm.frames.last_mut()
-                {
+                if !cont && let Some(f) = vm.frames.last_mut() {
                     f.ip = jump_target(f.ip, off);
                 }
                 Ok(())

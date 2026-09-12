@@ -201,9 +201,7 @@ fn gen_lib_source(exports: &[prima_runtime::capi::CExtern], src_path: &str) -> S
     s.push_str(
         "    static CSTR_KEEP: RefCell<[Vec<CString>; 2]> = const { RefCell::new([Vec::new(), Vec::new()]) };\n",
     );
-    s.push_str(
-        "    static CSTR_SLOT: Cell<usize> = const { Cell::new(0) };\n",
-    );
+    s.push_str("    static CSTR_SLOT: Cell<usize> = const { Cell::new(0) };\n");
     s.push_str("}\n\n");
     s.push_str("fn value_f64(v: &Value) -> f64 {\n");
     s.push_str("    match v {\n");
@@ -222,8 +220,12 @@ fn gen_lib_source(exports: &[prima_runtime::capi::CExtern], src_path: &str) -> S
     s.push_str("            let cur = slot.get();\n");
     s.push_str("            CSTR_KEEP.with(|k| {\n");
     s.push_str("                let mut gens = k.borrow_mut();\n");
-    s.push_str("                // The pointer contract of the call before last expires here; free its\n");
-    s.push_str("                // generation and keep the current one alive for the return frame.\n");
+    s.push_str(
+        "                // The pointer contract of the call before last expires here; free its\n",
+    );
+    s.push_str(
+        "                // generation and keep the current one alive for the return frame.\n",
+    );
     s.push_str("                gens[1 - cur].clear();\n");
     s.push_str("                gens[cur].push(c);\n");
     s.push_str("            });\n");

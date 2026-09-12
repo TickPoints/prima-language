@@ -25,11 +25,14 @@ fn mfn_broadcasts_over_array() {
     let v = eval("let f(x) = x^2;\nf([1, 2, 3])");
     assert_eq!(
         v,
-        Value::Array(vec![
-            Value::Number(Number::from(1)),
-            Value::Number(Number::from(4)),
-            Value::Number(Number::from(9))
-        ].into())
+        Value::Array(
+            vec![
+                Value::Number(Number::from(1)),
+                Value::Number(Number::from(4)),
+                Value::Number(Number::from(9))
+            ]
+            .into()
+        )
     );
 }
 
@@ -81,30 +84,39 @@ fn array_binary_broadcast() {
     // `Array + scalar` is elementwise; `Array + Array` concatenates (v2.1, spec §11.3).
     assert_eq!(
         eval("[1, 2, 3] + 10"),
-        Value::Array(vec![
-            Value::Number(Number::from(11)),
-            Value::Number(Number::from(12)),
-            Value::Number(Number::from(13))
-        ].into())
+        Value::Array(
+            vec![
+                Value::Number(Number::from(11)),
+                Value::Number(Number::from(12)),
+                Value::Number(Number::from(13))
+            ]
+            .into()
+        )
     );
     assert_eq!(
         eval("[1, 2, 3] + [10, 20, 30]"),
-        Value::Array(vec![
-            Value::Number(Number::from(1)),
-            Value::Number(Number::from(2)),
-            Value::Number(Number::from(3)),
-            Value::Number(Number::from(10)),
-            Value::Number(Number::from(20)),
-            Value::Number(Number::from(30))
-        ].into())
+        Value::Array(
+            vec![
+                Value::Number(Number::from(1)),
+                Value::Number(Number::from(2)),
+                Value::Number(Number::from(3)),
+                Value::Number(Number::from(10)),
+                Value::Number(Number::from(20)),
+                Value::Number(Number::from(30))
+            ]
+            .into()
+        )
     );
     assert_eq!(
         eval("[1, 2, 3]^2"),
-        Value::Array(vec![
-            Value::Number(Number::from(1)),
-            Value::Number(Number::from(4)),
-            Value::Number(Number::from(9))
-        ].into())
+        Value::Array(
+            vec![
+                Value::Number(Number::from(1)),
+                Value::Number(Number::from(4)),
+                Value::Number(Number::from(9))
+            ]
+            .into()
+        )
     );
 }
 
@@ -113,16 +125,25 @@ fn nested_array_allowed_as_data() {
     // v2.1: nested arrays are legal as data (broadcast still rejects them, spec §11.3/§11.4).
     assert_eq!(
         eval("[[1, 2], [3, 4]]"),
-        Value::Array(vec![
-            Value::Array(vec![
-                Value::Number(Number::from(1)),
-                Value::Number(Number::from(2))
-            ].into()),
-            Value::Array(vec![
-                Value::Number(Number::from(3)),
-                Value::Number(Number::from(4))
-            ].into()),
-        ].into())
+        Value::Array(
+            vec![
+                Value::Array(
+                    vec![
+                        Value::Number(Number::from(1)),
+                        Value::Number(Number::from(2))
+                    ]
+                    .into()
+                ),
+                Value::Array(
+                    vec![
+                        Value::Number(Number::from(3)),
+                        Value::Number(Number::from(4))
+                    ]
+                    .into()
+                ),
+            ]
+            .into()
+        )
     );
 }
 

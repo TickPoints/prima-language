@@ -687,7 +687,9 @@ impl Evaluator {
         match (&a, &b) {
             (Value::Array(x), Value::Array(y)) => {
                 let eq = x.with(|xs| {
-                    y.with(|ys| xs.len() == ys.len() && xs.iter().zip(ys).all(|(u, v)| self.value_eq(u, v)))
+                    y.with(|ys| {
+                        xs.len() == ys.len() && xs.iter().zip(ys).all(|(u, v)| self.value_eq(u, v))
+                    })
                 });
                 return Ok(Value::Bool(match op {
                     BinOp::Eq => eq,
@@ -782,9 +784,7 @@ impl Evaluator {
                             .iter()
                             .map(|e| match e {
                                 Value::Number(n) => Ok(Value::Number(-n)),
-                                _ => crate::error::err(
-                                    "cannot negate a non-numeric array element",
-                                ),
+                                _ => crate::error::err("cannot negate a non-numeric array element"),
                             })
                             .collect();
                         Ok(Value::Array(out?.into()))

@@ -46,7 +46,10 @@ pub enum Number {
     /// Boxed to keep the enum small on the interpreter/VM hot path (see `Small` above).
     Rational(Box<BigRational>),
     Real(Real),
-    Complex { re: Box<Number>, im: Box<Number> },
+    Complex {
+        re: Box<Number>,
+        im: Box<Number>,
+    },
     // —— fixed-width collapsed layer (spec §6.1, maps 1:1 to Rust primitives) ——
     // `I128`/`U128` are boxed: their 16-byte alignment would otherwise grow this enum to 32
     // bytes; they only exist after explicit collapse, so the allocation is off the hot path.
@@ -362,14 +365,10 @@ impl Number {
             Number::Small(v) => Some(BigInt::from(*v)),
             Number::Integer(i) => Some((**i).clone()),
             Number::Rational(r) if *r.denom() == BigInt::one() => Some(r.numer().clone()),
-            Number::Real(Real::F64(f))
-                if f.fract() == 0.0 && (*f as i64) as f64 == *f =>
-            {
+            Number::Real(Real::F64(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f => {
                 Some(BigInt::from(*f as i64))
             }
-            Number::Real(Real::F32(f))
-                if f.fract() == 0.0 && (*f as i64) as f64 == *f as f64 =>
-            {
+            Number::Real(Real::F32(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f as f64 => {
                 Some(BigInt::from(*f as i64))
             }
             Number::I8(v) => Some(BigInt::from(*v)),
@@ -384,9 +383,7 @@ impl Number {
             Number::U128(v) => Some(BigInt::from(**v)),
             Number::Isize(v) => Some(BigInt::from(*v)),
             Number::Usize(v) => Some(BigInt::from(*v)),
-            Number::BigFloat(f)
-                if f.fract() == 0.0 && (*f as i64) as f64 == *f =>
-            {
+            Number::BigFloat(f) if f.fract() == 0.0 && (*f as i64) as f64 == *f => {
                 Some(BigInt::from(*f as i64))
             }
             _ => None,
@@ -400,14 +397,10 @@ impl Number {
             Number::Small(v) => Some(BigRational::from_integer(BigInt::from(*v))),
             Number::Integer(i) => Some(BigRational::from_integer((**i).clone())),
             Number::Rational(r) => Some((**r).clone()),
-            Number::Real(Real::F64(f))
-                if f.fract() == 0.0 && (*f as i64) as f64 == *f =>
-            {
+            Number::Real(Real::F64(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f => {
                 Some(BigRational::from_integer(BigInt::from(*f as i64)))
             }
-            Number::Real(Real::F32(f))
-                if f.fract() == 0.0 && (*f as i64) as f64 == *f as f64 =>
-            {
+            Number::Real(Real::F32(f)) if f.fract() == 0.0 && (*f as i64) as f64 == *f as f64 => {
                 Some(BigRational::from_integer(BigInt::from(*f as i64)))
             }
             Number::I8(v) => Some(BigRational::from_integer(BigInt::from(*v))),
@@ -422,9 +415,7 @@ impl Number {
             Number::U128(v) => Some(BigRational::from_integer(BigInt::from(**v))),
             Number::Isize(v) => Some(BigRational::from_integer(BigInt::from(*v))),
             Number::Usize(v) => Some(BigRational::from_integer(BigInt::from(*v))),
-            Number::BigFloat(f)
-                if f.fract() == 0.0 && (*f as i64) as f64 == *f =>
-            {
+            Number::BigFloat(f) if f.fract() == 0.0 && (*f as i64) as f64 == *f => {
                 Some(BigRational::from_integer(BigInt::from(*f as i64)))
             }
             _ => None,
@@ -952,9 +943,7 @@ impl std::ops::Sub for Number {
                 .checked_sub(y)
                 .map(Number::Small)
                 .unwrap_or_else(|| Number::Integer(Box::new(BigInt::from(x) - BigInt::from(y)))),
-            (Number::Integer(x), Number::Integer(y)) => {
-                Number::Integer(Box::new(*x - *y))
-            }
+            (Number::Integer(x), Number::Integer(y)) => Number::Integer(Box::new(*x - *y)),
             (Number::Rational(x), Number::Rational(y)) => {
                 let r = *x - *y;
                 normalized(r.numer().clone(), r.denom().clone())
@@ -1133,7 +1122,10 @@ mod tests {
         assert_eq!(Number::from(2) + Number::from(3), Number::from(5));
         assert_eq!(Number::from(2) - Number::from(5), Number::from(-3));
         assert_eq!(Number::from(6) * Number::from(7), Number::from(42));
-        assert!(matches!(Number::from(2) + Number::from(3), Number::Small(5)));
+        assert!(matches!(
+            Number::from(2) + Number::from(3),
+            Number::Small(5)
+        ));
         // Equality across the two integer representations (spec §6.1 exact layer).
         assert_eq!(Number::from(5), big(5));
         assert_eq!(big(5), Number::from(5));
@@ -1163,7 +1155,10 @@ mod tests {
             min.clone().neg(),
             Number::Integer(Box::new(BigInt::from(i64::MIN).neg()))
         );
-        assert_eq!(min.abs(), Number::Integer(Box::new(BigInt::from(i64::MIN).abs())));
+        assert_eq!(
+            min.abs(),
+            Number::Integer(Box::new(BigInt::from(i64::MIN).abs()))
+        );
     }
 
     #[test]
@@ -1178,9 +1173,18 @@ mod tests {
         ] {
             let (x, y) = (Number::from(a), Number::from(b));
             let (ba, bb) = (BigInt::from(a), BigInt::from(b));
-            assert_eq!(x.clone() + y.clone(), Number::Integer(Box::new(ba.clone() + bb.clone())));
-            assert_eq!(x.clone() - y.clone(), Number::Integer(Box::new(ba.clone() - bb.clone())));
-            assert_eq!(x.clone() * y.clone(), Number::Integer(Box::new(ba.clone() * bb.clone())));
+            assert_eq!(
+                x.clone() + y.clone(),
+                Number::Integer(Box::new(ba.clone() + bb.clone()))
+            );
+            assert_eq!(
+                x.clone() - y.clone(),
+                Number::Integer(Box::new(ba.clone() - bb.clone()))
+            );
+            assert_eq!(
+                x.clone() * y.clone(),
+                Number::Integer(Box::new(ba.clone() * bb.clone()))
+            );
         }
         // Mixed `Small`/`Integer` operands promote to the same result (spec §6.4).
         assert_eq!(
@@ -1201,10 +1205,7 @@ mod tests {
             Number::Integer(Box::new(BigInt::from(2).pow(63)))
         );
         // Integer + Rational promotes to Rational; Integer + Real promotes to Real (spec §6.4).
-        assert_eq!(
-            Number::from(1) + rational(1, 2),
-            rational(3, 2)
-        );
+        assert_eq!(Number::from(1) + rational(1, 2), rational(3, 2));
         assert_eq!(
             Number::from(1) + Number::Real(Real::F64(0.5)),
             Number::Real(Real::F64(1.5))
@@ -1232,16 +1233,34 @@ mod tests {
 
     #[test]
     fn small_comparisons_and_ordering() {
-        assert_eq!(cmp(&Number::from(2), &Number::from(3)), Some(std::cmp::Ordering::Less));
-        assert_eq!(cmp(&Number::from(-3), &Number::from(2)), Some(std::cmp::Ordering::Less));
+        assert_eq!(
+            cmp(&Number::from(2), &Number::from(3)),
+            Some(std::cmp::Ordering::Less)
+        );
+        assert_eq!(
+            cmp(&Number::from(-3), &Number::from(2)),
+            Some(std::cmp::Ordering::Less)
+        );
         assert_eq!(
             cmp(&Number::from(i64::MAX), &Number::from(i64::MIN)),
             Some(std::cmp::Ordering::Greater)
         );
-        assert_eq!(cmp(&Number::from(5), &big(5)), Some(std::cmp::Ordering::Equal));
-        assert_eq!(cmp(&big(5), &Number::from(5)), Some(std::cmp::Ordering::Equal));
-        assert_eq!(cmp(&Number::from(4), &big(5)), Some(std::cmp::Ordering::Less));
-        assert_eq!(cmp(&big(5), &Number::from(5)), Some(std::cmp::Ordering::Equal));
+        assert_eq!(
+            cmp(&Number::from(5), &big(5)),
+            Some(std::cmp::Ordering::Equal)
+        );
+        assert_eq!(
+            cmp(&big(5), &Number::from(5)),
+            Some(std::cmp::Ordering::Equal)
+        );
+        assert_eq!(
+            cmp(&Number::from(4), &big(5)),
+            Some(std::cmp::Ordering::Less)
+        );
+        assert_eq!(
+            cmp(&big(5), &Number::from(5)),
+            Some(std::cmp::Ordering::Equal)
+        );
     }
 
     #[test]
@@ -1250,10 +1269,7 @@ mod tests {
         assert_eq!(Number::from(i64::MIN).as_i64(), Some(i64::MIN));
         assert_eq!(Number::from(-1).as_u64(), None);
         assert_eq!(Number::from(7).as_u64(), Some(7));
-        assert_eq!(
-            Number::from(42).as_bigint(),
-            Some(BigInt::from(42))
-        );
+        assert_eq!(Number::from(42).as_bigint(), Some(BigInt::from(42)));
         assert_eq!(
             Number::from(42).as_rational(),
             Some(BigRational::from_integer(BigInt::from(42)))
@@ -1261,7 +1277,10 @@ mod tests {
         assert_eq!(Number::from(-5).to_string(), "-5");
         assert_eq!(Number::from(0).to_string(), "0");
         assert_eq!(format!("{}", Number::from(144).sqrt().unwrap()), "12");
-        assert_eq!(Number::from(2).pow(&Number::from(10)), Some(Number::from(1024)));
+        assert_eq!(
+            Number::from(2).pow(&Number::from(10)),
+            Some(Number::from(1024))
+        );
         assert_eq!(
             Number::from(2).pow(&Number::from(100)),
             Some(Number::Integer(Box::new(BigInt::from(2).pow(100))))
@@ -1279,10 +1298,7 @@ mod tests {
         let half = Number::Rational(Box::new(BigRational::new(BigInt::from(1), BigInt::from(2))));
         assert_eq!(half.pow(&Number::from(i64::from(u32::MAX))), None);
         // Negative exponents share the limit (the reciprocal has the same bit length).
-        assert_eq!(
-            Number::from(10).pow(&Number::from(-(1i64 << 25))),
-            None
-        );
+        assert_eq!(Number::from(10).pow(&Number::from(-(1i64 << 25))), None);
     }
 
     #[test]

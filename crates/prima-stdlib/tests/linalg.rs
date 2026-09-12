@@ -343,7 +343,10 @@ fn lstsq_overdetermined() {
         panic!("expected a vector, got {v:?}");
     };
     assert_eq!(xs.len(), 1);
-    assert!((number(&xs.get(0).unwrap()) - 1.0).abs() < 1e-9, "lstsq result: {v:?}");
+    assert!(
+        (number(&xs.get(0).unwrap()) - 1.0).abs() < 1e-9,
+        "lstsq result: {v:?}"
+    );
     eval_err("import linalg;\nlinalg::lstsq([[1.0, 0.0], [0.0, 1.0]], [1.0, 2.0, 3.0])");
 }
 

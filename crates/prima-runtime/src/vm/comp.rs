@@ -259,8 +259,7 @@ impl Compiler {
                 // value expression can run user code that rebinds the target (the AST's
                 // conservative whole-value path covers those cases, spec §11.3).
                 let is_local = scope.slot_of(name).is_some();
-                if !is_local
-                    && (!expr_is_side_effect_free(idx) || !expr_is_side_effect_free(value))
+                if !is_local && (!expr_is_side_effect_free(idx) || !expr_is_side_effect_free(value))
                 {
                     return Err("VM compiler: index-assign with side effects unsupported".into());
                 }

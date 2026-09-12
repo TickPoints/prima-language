@@ -191,7 +191,12 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, String> {
             }
         }
         Value::Array(items) => items
-            .with(|elems| elems.iter().map(value_to_json).collect::<Result<Vec<_>, _>>())
+            .with(|elems| {
+                elems
+                    .iter()
+                    .map(value_to_json)
+                    .collect::<Result<Vec<_>, _>>()
+            })
             .map(serde_json::Value::Array),
         Value::Dict(map) => {
             let mut obj = serde_json::Map::new();

@@ -208,9 +208,9 @@ impl ValueKey {
         match self {
             ValueKey::Int(i) => Value::Number(Number::from(*i)),
             ValueKey::BigInt(b) => Value::Number(Number::Integer(Box::new(b.clone()))),
-            ValueKey::Rational(n, d) => {
-                Value::Number(Number::Rational(Box::new(BigRational::new(n.clone(), d.clone()))))
-            }
+            ValueKey::Rational(n, d) => Value::Number(Number::Rational(Box::new(
+                BigRational::new(n.clone(), d.clone()),
+            ))),
             ValueKey::Float(bits) => Value::Number(Number::Real(Real::F64(f64::from_bits(*bits)))),
             ValueKey::Str(s) => Value::String(s.clone()),
             ValueKey::Char(c) => Value::Char(*c),
@@ -401,13 +401,17 @@ mod tests {
             None
         );
         assert_eq!(
-            ValueKey::from_value(&Value::Array(
-                vec![Value::Number(Number::from(1))].into()
-            )),
+            ValueKey::from_value(&Value::Array(vec![Value::Number(Number::from(1))].into())),
             None
         );
-        assert_eq!(ValueKey::from_value(&Value::Dict(HashMap::new().into())), None);
-        assert_eq!(ValueKey::from_value(&Value::Set(HashSet::new().into())), None);
+        assert_eq!(
+            ValueKey::from_value(&Value::Dict(HashMap::new().into())),
+            None
+        );
+        assert_eq!(
+            ValueKey::from_value(&Value::Set(HashSet::new().into())),
+            None
+        );
         assert_eq!(ValueKey::from_value(&Value::Undefined), None);
         assert_eq!(ValueKey::from_value(&Value::Nil), None);
     }
@@ -447,10 +451,9 @@ mod tests {
         );
         // Integral rationals share integer keys: `4/2` is `2`.
         assert_eq!(
-            ValueKey::from_value(&Value::Number(Number::Rational(Box::new(BigRational::new(
-                BigInt::from(4),
-                BigInt::from(2)
-            ))))),
+            ValueKey::from_value(&Value::Number(Number::Rational(Box::new(
+                BigRational::new(BigInt::from(4), BigInt::from(2))
+            )))),
             Some(ValueKey::Int(2))
         );
         // Integral floats beyond `i64` key as the exact `BigInt` they equal (`1e300`).
@@ -479,10 +482,9 @@ mod tests {
     fn rational_and_float_keys_stay_distinct_when_not_integral() {
         // Exactness invariant (spec §6.1): a non-integral rational and the float it approximates
         // are different numbers as keys — `3/2` does not collide with `1.5`.
-        let half = ValueKey::from_value(&Value::Number(Number::Rational(Box::new(BigRational::new(
-            BigInt::from(3),
-            BigInt::from(2),
-        )))))
+        let half = ValueKey::from_value(&Value::Number(Number::Rational(Box::new(
+            BigRational::new(BigInt::from(3), BigInt::from(2)),
+        ))))
         .unwrap();
         let float = ValueKey::from_value(&Value::Number(Number::Real(Real::F64(1.5)))).unwrap();
         assert_ne!(half, float);

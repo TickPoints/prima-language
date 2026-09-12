@@ -1,7 +1,7 @@
 //! Builtin intrinsic calls (spec §18.1): the pre-imported `core` builtin bodies, the `input`/
 //! `read_line` IO functions, and symbol/`Expr` conversions.
 
-use super::helpers::{check_arity, value_type_name, MAX_RANGE_ELEMS};
+use super::helpers::{MAX_RANGE_ELEMS, check_arity, value_type_name};
 use super::*;
 
 impl Evaluator {
@@ -123,10 +123,7 @@ impl Evaluator {
                             .iter()
                             .enumerate()
                             .map(|(i, e)| {
-                                Value::Tuple(vec![
-                                    Value::Number(Number::from(i as i64)),
-                                    e.clone(),
-                                ])
+                                Value::Tuple(vec![Value::Number(Number::from(i as i64)), e.clone()])
                             })
                             .collect::<Vec<Value>>()
                     })
@@ -164,7 +161,10 @@ impl Evaluator {
                 }
                 nums.sort_by(|x, y| self.number_cmp(x, y).unwrap_or(Ordering::Equal));
                 Ok(Value::Array(
-                    nums.into_iter().map(Value::Number).collect::<Vec<Value>>().into(),
+                    nums.into_iter()
+                        .map(Value::Number)
+                        .collect::<Vec<Value>>()
+                        .into(),
                 ))
             }
             Builtin::Reversed => {
@@ -214,7 +214,7 @@ impl Evaluator {
                             _ => {
                                 return crate::error::err(format!(
                                     "`{name}` result must be numeric"
-                                ))
+                                ));
                             }
                         }
                     }
@@ -320,11 +320,7 @@ impl Evaluator {
                         }
                         match p {
                             Value::String(s) => out.push_str(s),
-                            _ => {
-                                return crate::error::err(
-                                    "`join` requires an array of strings",
-                                )
-                            }
+                            _ => return crate::error::err("`join` requires an array of strings"),
                         }
                     }
                     Ok(out)
@@ -337,12 +333,8 @@ impl Evaluator {
                     return crate::error::err("`count` expects an array");
                 };
                 Ok(Value::Number(Number::from(
-                    a.with(|items| {
-                        items
-                            .iter()
-                            .filter(|e| self.value_eq(e, &args[1]))
-                            .count()
-                    }) as i64,
+                    a.with(|items| items.iter().filter(|e| self.value_eq(e, &args[1])).count())
+                        as i64,
                 )))
             }
             Builtin::Index => {

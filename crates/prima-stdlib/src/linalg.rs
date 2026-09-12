@@ -461,7 +461,8 @@ enum Rhs {
 }
 
 fn as_rhs(v: &Value, fname: &str) -> Result<Rhs, RuntimeError> {
-    if matches!(v, Value::Array(rows) if !rows.is_empty() && matches!(rows.get(0), Some(Value::Array(_)))) {
+    if matches!(v, Value::Array(rows) if !rows.is_empty() && matches!(rows.get(0), Some(Value::Array(_))))
+    {
         as_matrix(v, fname).map(Rhs::Matrix)
     } else {
         as_vector(v, fname).map(Rhs::Vector)

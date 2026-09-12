@@ -35,14 +35,14 @@ mod helpers;
 mod pattern;
 mod stmt;
 pub use helpers::value_type_name;
-pub(crate) use helpers::{is_mutating_array_method, stmt_span, syntax_err};
 pub(crate) use helpers::{expr_is_side_effect_free, number_mod};
+pub(crate) use helpers::{is_mutating_array_method, stmt_span, syntax_err};
 
 use env::BuiltinBackend;
 pub(crate) use env::BuiltinBackend as EvalBackend;
-pub use env::{Env, EnvRef, Function, HotState, JIT_CALL_THRESHOLD, NamespaceItem, NativeCall};
 pub(crate) use env::VmChunkCache;
 pub(crate) use env::func_epoch;
+pub use env::{Env, EnvRef, Function, HotState, JIT_CALL_THRESHOLD, NamespaceItem, NativeCall};
 
 /// The `core` builtins pre-imported into the root environment (spec §15.5), in declaration order.
 pub(crate) const CORE_BUILTIN_NAMES: &[&str] = &[
@@ -478,11 +478,14 @@ g.greet(1)";
     fn array_element_assignment_writes_through() {
         assert_eq!(
             eval("let a = [1, 2, 3];\na[1] = 9;\na"),
-            Value::Array(vec![
-                Value::Number(Number::from(1)),
-                Value::Number(Number::from(9)),
-                Value::Number(Number::from(3)),
-            ].into())
+            Value::Array(
+                vec![
+                    Value::Number(Number::from(1)),
+                    Value::Number(Number::from(9)),
+                    Value::Number(Number::from(3)),
+                ]
+                .into()
+            )
         );
     }
 
@@ -490,10 +493,13 @@ g.greet(1)";
     fn array_slice_returns_subarray() {
         assert_eq!(
             eval("let a = [1, 2, 3, 4];\na[1..3]"),
-            Value::Array(vec![
-                Value::Number(Number::from(2)),
-                Value::Number(Number::from(3)),
-            ].into())
+            Value::Array(
+                vec![
+                    Value::Number(Number::from(2)),
+                    Value::Number(Number::from(3)),
+                ]
+                .into()
+            )
         );
     }
 
@@ -502,8 +508,9 @@ g.greet(1)";
         // Host interruption (spec §16): a looping program must unwind with the reused
         // "interrupted" error once the flag is set, in finite time.
         Evaluator::clear_cancel();
-        let worker =
-            std::thread::spawn(|| Evaluator::new().eval_value("let i = 0;\nwhile true { i += 1; }"));
+        let worker = std::thread::spawn(|| {
+            Evaluator::new().eval_value("let i = 0;\nwhile true { i += 1; }")
+        });
         std::thread::sleep(std::time::Duration::from_millis(100));
         Evaluator::request_cancel();
         let result = worker.join().expect("the loop thread panicked");

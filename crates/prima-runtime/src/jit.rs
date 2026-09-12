@@ -197,7 +197,12 @@ pub fn call(ev: &mut Evaluator, id: u32, args: Vec<Value>) -> Result<Value, Runt
         return Ok(if callable.n_out == 1 {
             number_result(grad[0])
         } else {
-            Value::Array(grad.into_iter().map(number_result).collect::<Vec<Value>>().into())
+            Value::Array(
+                grad.into_iter()
+                    .map(number_result)
+                    .collect::<Vec<Value>>()
+                    .into(),
+            )
         });
     }
     if let Some((ids, params)) = &callable.expressions {
@@ -347,11 +352,7 @@ mod tests {
                 other => panic!("expected an expression statement, got {other:?}"),
             };
             let env: EnvRef = Rc::new(StdRefCell::new(Env::new()));
-            let id = register(JitCallable::scalar(
-                vec![],
-                None,
-                Some((vec![], body, env)),
-            ));
+            let id = register(JitCallable::scalar(vec![], None, Some((vec![], body, env))));
             let mut ev = Evaluator::new();
             let err = call(&mut ev, id, vec![]).unwrap_err();
             assert!(

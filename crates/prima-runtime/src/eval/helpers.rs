@@ -282,9 +282,15 @@ pub(crate) fn value_contains_array_buffer(v: &Value, target: &ArrayVal) -> bool 
     match v {
         Value::Array(av) => {
             av.is_same_buffer(target)
-                || av.with(|items| items.iter().any(|it| value_contains_array_buffer(it, target)))
+                || av.with(|items| {
+                    items
+                        .iter()
+                        .any(|it| value_contains_array_buffer(it, target))
+                })
         }
-        Value::Tuple(items) => items.iter().any(|it| value_contains_array_buffer(it, target)),
+        Value::Tuple(items) => items
+            .iter()
+            .any(|it| value_contains_array_buffer(it, target)),
         Value::Dict(d) => d.values().any(|it| value_contains_array_buffer(it, target)),
         Value::Option(Some(inner)) | Value::Result(Ok(inner)) => {
             value_contains_array_buffer(inner, target)
@@ -352,10 +358,9 @@ pub fn value_type_name(v: &Value) -> String {
 /// in place (spec §11.3).
 pub(crate) fn expr_is_side_effect_free(e: &Expr) -> bool {
     match &e.kind {
-        ExprKind::Literal(_)
-        | ExprKind::Symbol(_)
-        | ExprKind::Path { .. }
-        | ExprKind::Self_ => true,
+        ExprKind::Literal(_) | ExprKind::Symbol(_) | ExprKind::Path { .. } | ExprKind::Self_ => {
+            true
+        }
         ExprKind::Binary { lhs, rhs, .. } => {
             expr_is_side_effect_free(lhs) && expr_is_side_effect_free(rhs)
         }
@@ -725,7 +730,9 @@ pub(crate) fn apply_spec(v: &Value, text: &str, spec: Option<&str>) -> String {
     let mut width: u64 = 0;
     while let Some(&c) = spec.get(i) {
         if c.is_ascii_digit() {
-            width = width.saturating_mul(10).saturating_add((c as u8 - b'0') as u64);
+            width = width
+                .saturating_mul(10)
+                .saturating_add((c as u8 - b'0') as u64);
             i += 1;
         } else {
             break;

@@ -103,13 +103,13 @@ fn csv_parse_handles_quoted_commas() {
     ));
     assert_eq!(
         v,
-        Value::Array(vec![
-            Value::Array(vec![Value::String("a".into()), Value::String("b".into())].into()),
-            Value::Array(vec![
-                Value::String("1".into()),
-                Value::String("x, y".into())
-            ].into()),
-        ].into())
+        Value::Array(
+            vec![
+                Value::Array(vec![Value::String("a".into()), Value::String("b".into())].into()),
+                Value::Array(vec![Value::String("1".into()), Value::String("x, y".into())].into()),
+            ]
+            .into()
+        )
     );
 }
 
@@ -120,16 +120,19 @@ fn csv_parse_handles_escaped_quotes_and_newlines() {
     ));
     assert_eq!(
         v,
-        Value::Array(vec![
-            Value::Array(vec![
-                Value::String("h".into()),
-                Value::String("q\"q".into())
-            ].into()),
-            Value::Array(vec![
-                Value::String("1".into()),
-                Value::String("line1\nline2".into())
-            ].into()),
-        ].into())
+        Value::Array(
+            vec![
+                Value::Array(vec![Value::String("h".into()), Value::String("q\"q".into())].into()),
+                Value::Array(
+                    vec![
+                        Value::String("1".into()),
+                        Value::String("line1\nline2".into())
+                    ]
+                    .into()
+                ),
+            ]
+            .into()
+        )
     );
 }
 
@@ -213,11 +216,14 @@ fn read_lines_splits_content() {
     std::fs::write(&path, "a\nb\nc\n").expect("write temp file");
     assert_eq!(
         ok_of(eval(&format!("import io;\nio::read_lines(\"{path_str}\")"))),
-        Value::Array(vec![
-            Value::String("a".into()),
-            Value::String("b".into()),
-            Value::String("c".into()),
-        ].into())
+        Value::Array(
+            vec![
+                Value::String("a".into()),
+                Value::String("b".into()),
+                Value::String("c".into()),
+            ]
+            .into()
+        )
     );
     let _ = std::fs::remove_file(&path);
 }
@@ -248,10 +254,13 @@ fn read_write_json_roundtrip() {
     match v {
         Value::Dict(d) => assert_eq!(
             d.get(&ValueKey::Str("k".into())),
-            Some(&Value::Array(vec![
-                Value::Number(Number::from(1)),
-                Value::Number(Number::from(2)),
-            ].into()))
+            Some(&Value::Array(
+                vec![
+                    Value::Number(Number::from(1)),
+                    Value::Number(Number::from(2)),
+                ]
+                .into()
+            ))
         ),
         other => panic!("expected Dict, got {other:?}"),
     }
@@ -272,13 +281,13 @@ fn read_write_csv_roundtrip() {
     let v = ok_of(eval(&format!("import io;\nio::read_csv(\"{path_str}\")")));
     assert_eq!(
         v,
-        Value::Array(vec![
-            Value::Array(vec![Value::String("a".into()), Value::String("b".into())].into()),
-            Value::Array(vec![
-                Value::String("1".into()),
-                Value::String("x, y".into())
-            ].into()),
-        ].into())
+        Value::Array(
+            vec![
+                Value::Array(vec![Value::String("a".into()), Value::String("b".into())].into()),
+                Value::Array(vec![Value::String("1".into()), Value::String("x, y".into())].into()),
+            ]
+            .into()
+        )
     );
     let _ = std::fs::remove_file(&path);
 }

@@ -734,11 +734,7 @@ mod tests {
     fn deep_block_nesting_is_rejected() {
         // `if` blocks recurse through `parse_block`; the recursion guard bounds the parser stack.
         let depth = 100_000;
-        let src = format!(
-            "{}{}",
-            "if true { ".repeat(depth),
-            "}".repeat(depth)
-        );
+        let src = format!("{}{}", "if true { ".repeat(depth), "}".repeat(depth));
         assert_depth_rejected(src);
     }
 
@@ -754,4 +750,3 @@ mod tests {
         assert!(crate::parse(&postfix).is_ok());
     }
 }
-

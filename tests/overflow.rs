@@ -65,7 +65,9 @@ fn closed_form_sum_is_exact_beyond_i64() {
     let v = eval("let s = 0;\nfor i in 0..5000000000 { s += i }\ns").expect("eval failed");
     assert_eq!(
         v,
-        Value::Number(Number::Integer(Box::new("12499999997500000000".parse().unwrap())))
+        Value::Number(Number::Integer(Box::new(
+            "12499999997500000000".parse().unwrap()
+        )))
     );
 }
 
@@ -74,8 +76,10 @@ fn closed_form_sum_matches_the_real_loop() {
     // For values where the exact sum still fits i64, the closed form and the real loop agree.
     let closed = eval("let s = 0;\nfor i in 0..4000000 { s += i }\ns").expect("eval failed");
     assert_eq!(closed, Value::Number(Number::from(7999998000000i64)));
-    let looped = eval("config { loop_optimization := false }\nlet s = 0;\nfor i in 0..4000000 { s += i }\ns")
-        .expect("eval failed");
+    let looped = eval(
+        "config { loop_optimization := false }\nlet s = 0;\nfor i in 0..4000000 { s += i }\ns",
+    )
+    .expect("eval failed");
     assert_eq!(closed, looped);
 }
 
@@ -85,6 +89,8 @@ fn closed_form_start_one_sum_is_exact_beyond_i64() {
     let v = eval("let s = 0;\nfor i in 1..5000000000 { s += i }\ns").expect("eval failed");
     assert_eq!(
         v,
-        Value::Number(Number::Integer(Box::new("12500000002500000000".parse().unwrap())))
+        Value::Number(Number::Integer(Box::new(
+            "12500000002500000000".parse().unwrap()
+        )))
     );
 }

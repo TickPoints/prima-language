@@ -19,7 +19,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 
-use crate::bytecode::{Bytecode, Op, MAX_PARAMS};
+use crate::bytecode::{Bytecode, MAX_PARAMS, Op};
 
 /// A compiled numeric scalar function: reads `arity` f64 arguments from the buffer and returns the
 /// result. The `entry` pointer is executable machine code owned by the engine; call it from any
@@ -185,7 +185,7 @@ impl JitEngine {
         let abs = declare(&mut module, "pj_abs", &unary)?;
         let rem = declare(&mut module, "pj_rem", &binary)?;
         let pow = declare(&mut module, "pj_pow", &binary)?;
-        Some(        JitEngine {
+        Some(JitEngine {
             module,
             tramps: Trampolines {
                 rem,

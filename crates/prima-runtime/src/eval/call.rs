@@ -174,7 +174,8 @@ impl Evaluator {
                 segments: callee_segs,
             } = &callee.kind
             && callee_segs.len() == 1
-            && let Some(Function::Builtin(Builtin::Grad)) = self.resolve_func(env, callee_segs).as_deref()
+            && let Some(Function::Builtin(Builtin::Grad)) =
+                self.resolve_func(env, callee_segs).as_deref()
             && let ExprKind::Path {
                 segments: inner_segs,
             } = &inner[0].kind

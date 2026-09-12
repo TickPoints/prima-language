@@ -2,7 +2,6 @@
 //! array shares its buffer, and any mutation (`A[i] = v`, the mutating `Array` methods) must be
 //! invisible to aliases (`let b = a; b[0] = 9` leaves `a` unchanged).
 
-
 use prima_core::{Number, Value};
 use prima_runtime::Evaluator;
 
@@ -27,26 +26,14 @@ fn int(n: i64) -> Value {
 #[test]
 fn index_assignment_is_invisible_to_aliases() {
     // `let b = a; b[0] = 9` must not change `a` (spec §11.3 value semantics).
-    assert_eq!(
-        eval("let a = [1, 2];\nlet b = a;\nb[0] = 9;\na[0]"),
-        int(1)
-    );
-    assert_eq!(
-        eval("let a = [1, 2];\nlet b = a;\nb[0] = 9;\nb[0]"),
-        int(9)
-    );
+    assert_eq!(eval("let a = [1, 2];\nlet b = a;\nb[0] = 9;\na[0]"), int(1));
+    assert_eq!(eval("let a = [1, 2];\nlet b = a;\nb[0] = 9;\nb[0]"), int(9));
 }
 
 #[test]
 fn push_is_invisible_to_aliases() {
-    assert_eq!(
-        eval("let a = [1];\nlet b = a;\nb.push(2);\nlen(a)"),
-        int(1)
-    );
-    assert_eq!(
-        eval("let a = [1];\nlet b = a;\nb.push(2);\nlen(b)"),
-        int(2)
-    );
+    assert_eq!(eval("let a = [1];\nlet b = a;\nb.push(2);\nlen(a)"), int(1));
+    assert_eq!(eval("let a = [1];\nlet b = a;\nb.push(2);\nlen(b)"), int(2));
     assert_eq!(
         eval("let a = [1];\nlet b = a;\nb.append(3);\nb.extend([4, 5]);\nb.insert(0, 0);\nlen(a)"),
         int(1)
@@ -88,14 +75,8 @@ fn sort_and_reverse_are_invisible_to_aliases() {
 
 #[test]
 fn compound_index_assignment_reads_old_element() {
-    assert_eq!(
-        eval("let a = [1, 2, 3];\na[1] += 10;\na[1]"),
-        int(12)
-    );
-    assert_eq!(
-        eval("let a = [1, 2, 3];\na[1] -= 2;\na[1]"),
-        int(0)
-    );
+    assert_eq!(eval("let a = [1, 2, 3];\na[1] += 10;\na[1]"), int(12));
+    assert_eq!(eval("let a = [1, 2, 3];\na[1] -= 2;\na[1]"), int(0));
     // Aliases still do not see the compound update.
     assert_eq!(
         eval("let a = [1, 2];\nlet b = a;\nb[0] += 5;\na[0]"),

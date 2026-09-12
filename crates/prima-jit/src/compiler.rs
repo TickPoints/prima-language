@@ -9,7 +9,7 @@ use prima_core::expr_pool::{ExprData, ExprId};
 use prima_core::symbol::SymbolTable;
 use prima_core::{BuiltinSymbols, ExprPool};
 
-use crate::bytecode::{Bytecode, Op, MAX_PARAMS};
+use crate::bytecode::{Bytecode, MAX_PARAMS, Op};
 use crate::engine::CompiledScalar;
 use std::sync::Arc;
 

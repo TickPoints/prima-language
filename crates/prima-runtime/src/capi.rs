@@ -365,8 +365,10 @@ mod tests {
         // After the reset a normal evaluation works again.
         let two = Value::Number(prima_core::Number::Real(prima_core::Real::F64(1.0)));
         let three = Value::Number(prima_core::Number::Real(prima_core::Real::F64(2.0)));
-        let path2 =
-            std::env::temp_dir().join(format!("prima_capi_cancel_after_{}.pra", std::process::id()));
+        let path2 = std::env::temp_dir().join(format!(
+            "prima_capi_cancel_after_{}.pra",
+            std::process::id()
+        ));
         std::fs::write(
             &path2,
             "@c_api::extern\npub fn add(a: c_api::double, b: c_api::double) -> c_api::double { return a + b; }\n",

@@ -370,7 +370,8 @@ mod tests {
         let target = ExprData::Integer(Box::new(BigInt::from(42)));
         // Plant the decoy under the target content's hash: the naive "hash only" intern would
         // return the decoy here.
-        pool.global.insert(ExprPool::hash_data(&target), vec![decoy]);
+        pool.global
+            .insert(ExprPool::hash_data(&target), vec![decoy]);
         let id = pool.intern(target.clone());
         assert_ne!(id, decoy);
         assert_eq!(pool.get(id), Some(target));
@@ -386,7 +387,10 @@ mod tests {
         let x = pool.symbol(SymbolId(3));
         let a = pool.mul2(x, pool.integer(2));
         let b = pool.mul2(pool.integer(2), x);
-        assert_eq!(a, b, "canonical ordering makes `x*2` and `2*x` the same node");
+        assert_eq!(
+            a, b,
+            "canonical ordering makes `x*2` and `2*x` the same node"
+        );
         assert_eq!(pool.intern(int_data(5)), pool.intern(int_data(5)));
         assert_ne!(pool.intern(int_data(5)), pool.intern(int_data(6)));
     }
