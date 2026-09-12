@@ -6,11 +6,11 @@ fn f(x: f64) -> Value {
 }
 
 fn vec(xs: &[f64]) -> Value {
-    Value::Array(xs.iter().map(|&x| f(x)).collect())
+    Value::Array(xs.iter().map(|&x| f(x)).collect::<Vec<Value>>().into())
 }
 
 fn mat(rows: &[&[f64]]) -> Value {
-    Value::Array(rows.iter().map(|r| vec(r)).collect())
+    Value::Array(rows.iter().map(|r| vec(r)).collect::<Vec<Value>>().into())
 }
 
 /// Evaluate an in-memory program that imports the Rust-hosted `linalg` namespace (spec §18).
@@ -214,7 +214,7 @@ fn qr_decomposition_reconstructs() {
             let Value::Array(c) = r else {
                 panic!("expected Q row")
             };
-            c.iter().map(number).collect()
+            c.iter().map(|v| number(&v)).collect()
         })
         .collect();
     let r: Vec<Vec<f64>> = rrows
@@ -223,7 +223,7 @@ fn qr_decomposition_reconstructs() {
             let Value::Array(c) = r else {
                 panic!("expected R row")
             };
-            c.iter().map(number).collect()
+            c.iter().map(|v| number(&v)).collect()
         })
         .collect();
     for i in 0..3 {
@@ -260,7 +260,7 @@ fn svd_decomposition() {
             let Value::Array(c) = r else {
                 panic!("expected U row")
             };
-            c.iter().map(number).collect()
+            c.iter().map(|v| number(&v)).collect()
         })
         .collect();
     let Value::Array(vtrows) = &items[2] else {
@@ -272,7 +272,7 @@ fn svd_decomposition() {
             let Value::Array(c) = r else {
                 panic!("expected Vt row")
             };
-            c.iter().map(number).collect()
+            c.iter().map(|v| number(&v)).collect()
         })
         .collect();
     for i in 0..2 {
@@ -301,7 +301,7 @@ fn eigen_decomposition() {
     let Value::Array(values) = &items[0] else {
         panic!("expected an eigenvalues vector");
     };
-    let mut vals: Vec<f64> = values.iter().map(number).collect();
+    let mut vals: Vec<f64> = values.iter().map(|v| number(&v)).collect();
     vals.sort_by(f64::total_cmp);
     assert!(
         (vals[0] - 2.0).abs() < 1e-9 && (vals[1] - 3.0).abs() < 1e-9,
@@ -343,7 +343,10 @@ fn lstsq_overdetermined() {
         panic!("expected a vector, got {v:?}");
     };
     assert_eq!(xs.len(), 1);
-    assert!((number(&xs[0]) - 1.0).abs() < 1e-9, "lstsq result: {v:?}");
+    assert!(
+        (number(&xs.get(0).unwrap()) - 1.0).abs() < 1e-9,
+        "lstsq result: {v:?}"
+    );
     eval_err("import linalg;\nlinalg::lstsq([[1.0, 0.0], [0.0, 1.0]], [1.0, 2.0, 3.0])");
 }
 

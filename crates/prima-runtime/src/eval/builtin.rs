@@ -1,7 +1,7 @@
 //! Builtin intrinsic calls (spec §18.1): the pre-imported `core` builtin bodies, the `input`/
 //! `read_line` IO functions, and symbol/`Expr` conversions.
 
-use super::helpers::{check_arity, value_type_name};
+use super::helpers::{MAX_RANGE_ELEMS, check_arity, value_type_name};
 use super::*;
 
 impl Evaluator {
@@ -64,13 +64,35 @@ impl Evaluator {
                 if step_i == 0 {
                     return crate::error::err("`range` step cannot be zero");
                 }
-                let mut out = Vec::new();
+                // Element count in `i128` (spec §16.1 R0001): `end - start` can overflow `i64`,
+                // and the count must never wrap or become negative.
+                let count: i128 = if step_i > 0 {
+                    if start_i >= end_i {
+                        0
+                    } else {
+                        ((end_i as i128 - start_i as i128 - 1) / step_i as i128) + 1
+                    }
+                } else if start_i <= end_i {
+                    0
+                } else {
+                    ((start_i as i128 - end_i as i128 - 1) / -(step_i as i128)) + 1
+                };
+                if count > MAX_RANGE_ELEMS {
+                    return Err(RuntimeError::Overflow(format!(
+                        "range materializes {count} elements, exceeding the {MAX_RANGE_ELEMS} element limit"
+                    )));
+                }
+                let mut out = Vec::with_capacity(count as usize);
                 let mut i = start_i;
                 while if step_i > 0 { i < end_i } else { i > end_i } {
                     out.push(Value::Number(Number::from(i)));
-                    i += step_i;
+                    // Checked step (spec §16.1 R0001): an overflowing range index is an error,
+                    // not a silent wraparound.
+                    i = i.checked_add(step_i).ok_or_else(|| {
+                        RuntimeError::Overflow(format!("range index overflow: {i} + {step_i}"))
+                    })?;
                 }
-                Ok(Value::Array(out))
+                Ok(Value::Array(out.into()))
             }
             // ---- collection convenience functions (spec appendix B.1) ----
             Builtin::Len => {
@@ -96,12 +118,16 @@ impl Evaluator {
                     return crate::error::err("`enumerate` expects an array");
                 };
                 Ok(Value::Array(
-                    a.iter()
-                        .enumerate()
-                        .map(|(i, e)| {
-                            Value::Tuple(vec![Value::Number(Number::from(i as i64)), e.clone()])
-                        })
-                        .collect(),
+                    a.with(|items| {
+                        items
+                            .iter()
+                            .enumerate()
+                            .map(|(i, e)| {
+                                Value::Tuple(vec![Value::Number(Number::from(i as i64)), e.clone()])
+                            })
+                            .collect::<Vec<Value>>()
+                    })
+                    .into(),
                 ))
             }
             Builtin::Zip => {
@@ -110,10 +136,15 @@ impl Evaluator {
                     return crate::error::err("`zip` expects two arrays");
                 };
                 Ok(Value::Array(
-                    x.iter()
-                        .zip(y)
-                        .map(|(a, b)| Value::Tuple(vec![a.clone(), b.clone()]))
-                        .collect(),
+                    x.with(|xs| {
+                        y.with(|ys| {
+                            xs.iter()
+                                .zip(ys)
+                                .map(|(a, b)| Value::Tuple(vec![a.clone(), b.clone()]))
+                                .collect::<Vec<Value>>()
+                        })
+                    })
+                    .into(),
                 ))
             }
             Builtin::Sorted => {
@@ -122,21 +153,26 @@ impl Evaluator {
                     return crate::error::err("`sorted` expects an array");
                 };
                 let mut nums = Vec::with_capacity(a.len());
-                for e in a {
+                for e in a.iter() {
                     match e {
                         Value::Number(n) => nums.push(n.clone()),
                         _ => return crate::error::err("`sorted` requires an array of numbers"),
                     }
                 }
                 nums.sort_by(|x, y| self.number_cmp(x, y).unwrap_or(Ordering::Equal));
-                Ok(Value::Array(nums.into_iter().map(Value::Number).collect()))
+                Ok(Value::Array(
+                    nums.into_iter()
+                        .map(Value::Number)
+                        .collect::<Vec<Value>>()
+                        .into(),
+                ))
             }
             Builtin::Reversed => {
                 check_arity("reversed", &args, 1)?;
                 let Value::Array(mut a) = args[0].clone() else {
                     return crate::error::err("`reversed` expects an array");
                 };
-                a.reverse();
+                a.with_mut(|items| items.reverse());
                 Ok(Value::Array(a))
             }
             Builtin::Sum | Builtin::Prod => {
@@ -157,26 +193,33 @@ impl Evaluator {
                 } else {
                     BinOp::Mul
                 };
-                let mut acc = match &a[0] {
-                    Value::Number(n) => n.clone(),
+                let mut acc = match a.get(0) {
+                    Some(Value::Number(n)) => n,
                     _ => {
                         return crate::error::err(format!("`{name}` requires an array of numbers"));
                     }
                 };
-                for e in &a[1..] {
-                    let n = match e {
-                        Value::Number(n) => n.clone(),
-                        _ => {
-                            return crate::error::err(format!(
-                                "`{name}` requires an array of numbers"
-                            ));
+                a.with(|items| -> Result<(), RuntimeError> {
+                    for e in &items[1..] {
+                        let n = match e {
+                            Value::Number(n) => n.clone(),
+                            _ => {
+                                return crate::error::err(format!(
+                                    "`{name}` requires an array of numbers"
+                                ));
+                            }
+                        };
+                        match self.eval_number_binary(op, acc.clone(), n)? {
+                            Value::Number(n) => acc = n,
+                            _ => {
+                                return crate::error::err(format!(
+                                    "`{name}` result must be numeric"
+                                ));
+                            }
                         }
-                    };
-                    match self.eval_number_binary(op, acc, n)? {
-                        Value::Number(n) => acc = n,
-                        _ => return crate::error::err(format!("`{name}` result must be numeric")),
                     }
-                }
+                    Ok(())
+                })?;
                 Ok(Value::Number(acc))
             }
             Builtin::Min | Builtin::Max => {
@@ -192,33 +235,36 @@ impl Evaluator {
                 if a.is_empty() {
                     return crate::error::err("empty collection");
                 }
-                let mut best = match &a[0] {
-                    Value::Number(n) => n.clone(),
+                let mut best = match a.get(0) {
+                    Some(Value::Number(n)) => n,
                     _ => {
                         return crate::error::err(format!("`{name}` requires an array of numbers"));
                     }
                 };
-                for e in &a[1..] {
-                    let n = match e {
-                        Value::Number(n) => n.clone(),
-                        _ => {
-                            return crate::error::err(format!(
-                                "`{name}` requires an array of numbers"
-                            ));
+                a.with(|items| -> Result<(), RuntimeError> {
+                    for e in &items[1..] {
+                        let n = match e {
+                            Value::Number(n) => n.clone(),
+                            _ => {
+                                return crate::error::err(format!(
+                                    "`{name}` requires an array of numbers"
+                                ));
+                            }
+                        };
+                        let ord = self.number_cmp(&n, &best).ok_or_else(|| {
+                            RuntimeError::Message("cannot compare these numbers".into())
+                        })?;
+                        let better = if matches!(b, Builtin::Min) {
+                            ord == Ordering::Less
+                        } else {
+                            ord == Ordering::Greater
+                        };
+                        if better {
+                            best = n;
                         }
-                    };
-                    let ord = self.number_cmp(&n, &best).ok_or_else(|| {
-                        RuntimeError::Message("cannot compare these numbers".into())
-                    })?;
-                    let better = if matches!(b, Builtin::Min) {
-                        ord == Ordering::Less
-                    } else {
-                        ord == Ordering::Greater
-                    };
-                    if better {
-                        best = n;
                     }
-                }
+                    Ok(())
+                })?;
                 Ok(Value::Number(best))
             }
             Builtin::All | Builtin::Any => {
@@ -232,29 +278,31 @@ impl Evaluator {
                     return crate::error::err(format!("`{name}` expects an array"));
                 };
                 let is_all = matches!(b, Builtin::All);
-                let mut result = is_all;
-                for e in a {
-                    let ok = match e {
-                        Value::Bool(x) => *x,
-                        _ => {
-                            return crate::error::err(format!(
-                                "`{name}` requires an array of booleans"
-                            ));
-                        }
-                    };
-                    if is_all {
-                        result = result && ok;
-                        if !result {
-                            break;
-                        }
-                    } else {
-                        result = result || ok;
-                        if result {
-                            break;
+                Ok(a.with(|items| -> Result<Value, RuntimeError> {
+                    let mut result = is_all;
+                    for e in items {
+                        let ok = match e {
+                            Value::Bool(x) => *x,
+                            _ => {
+                                return crate::error::err(format!(
+                                    "`{name}` requires an array of booleans"
+                                ));
+                            }
+                        };
+                        if is_all {
+                            result = result && ok;
+                            if !result {
+                                break;
+                            }
+                        } else {
+                            result = result || ok;
+                            if result {
+                                break;
+                            }
                         }
                     }
-                }
-                Ok(Value::Bool(result))
+                    Ok(Value::Bool(result))
+                })?)
             }
             Builtin::Join => {
                 check_arity("join", &args, 2)?;
@@ -264,16 +312,19 @@ impl Evaluator {
                 let Value::String(sep) = &args[1] else {
                     return crate::error::err("`join` separator must be a string");
                 };
-                let mut out = String::new();
-                for (i, p) in parts.iter().enumerate() {
-                    if i > 0 {
-                        out.push_str(sep);
+                let out = parts.with(|items| -> Result<String, RuntimeError> {
+                    let mut out = String::new();
+                    for (i, p) in items.iter().enumerate() {
+                        if i > 0 {
+                            out.push_str(sep);
+                        }
+                        match p {
+                            Value::String(s) => out.push_str(s),
+                            _ => return crate::error::err("`join` requires an array of strings"),
+                        }
                     }
-                    match p {
-                        Value::String(s) => out.push_str(s),
-                        _ => return crate::error::err("`join` requires an array of strings"),
-                    }
-                }
+                    Ok(out)
+                })?;
                 Ok(Value::String(out))
             }
             Builtin::Count => {
@@ -282,7 +333,8 @@ impl Evaluator {
                     return crate::error::err("`count` expects an array");
                 };
                 Ok(Value::Number(Number::from(
-                    a.iter().filter(|e| self.value_eq(e, &args[1])).count() as i64,
+                    a.with(|items| items.iter().filter(|e| self.value_eq(e, &args[1])).count())
+                        as i64,
                 )))
             }
             Builtin::Index => {
@@ -290,7 +342,7 @@ impl Evaluator {
                 let Value::Array(a) = &args[0] else {
                     return crate::error::err("`index` expects an array");
                 };
-                match a.iter().position(|e| self.value_eq(e, &args[1])) {
+                match a.with(|items| items.iter().position(|e| self.value_eq(e, &args[1]))) {
                     Some(i) => Ok(Value::Number(Number::from(i as i64))),
                     None => crate::error::err("element not found"),
                 }
@@ -305,13 +357,15 @@ impl Evaluator {
                 let Value::Array(a) = &args[0] else {
                     return crate::error::err(format!("`{name}` expects an array"));
                 };
-                let elem = if matches!(b, Builtin::First) {
-                    a.first()
-                } else {
-                    a.last()
-                };
+                let elem = a.with(|items| {
+                    if matches!(b, Builtin::First) {
+                        items.first().cloned()
+                    } else {
+                        items.last().cloned()
+                    }
+                });
                 Ok(elem
-                    .map(|v| Value::Option(Some(Box::new(v.clone()))))
+                    .map(|v| Value::Option(Some(Box::new(v))))
                     .unwrap_or(Value::Option(None)))
             }
             Builtin::Linspace => {
@@ -329,13 +383,13 @@ impl Evaluator {
                 }
                 let n = n as usize;
                 if n == 0 {
-                    return Ok(Value::Array(vec![]));
+                    return Ok(Value::Array(ArrayVal::new()));
                 }
                 let (start_f, end_f) = (start.to_f64_lossy(), end.to_f64_lossy());
                 if n == 1 {
-                    return Ok(Value::Array(vec![Value::Number(Number::Real(Real::F64(
-                        start_f,
-                    )))]));
+                    return Ok(Value::Array(
+                        vec![Value::Number(Number::Real(Real::F64(start_f)))].into(),
+                    ));
                 }
                 let step = (end_f - start_f) / (n - 1) as f64;
                 let mut out = Vec::with_capacity(n);
@@ -344,7 +398,7 @@ impl Evaluator {
                         start_f + step * i as f64,
                     ))));
                 }
-                Ok(Value::Array(out))
+                Ok(Value::Array(out.into()))
             }
             // `map`/`filter`/`reduce` are intercepted in `eval_call` (the function argument is an
             // un-evaluated expression); reaching here means the name was used as a value.

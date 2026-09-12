@@ -5,11 +5,164 @@ All notable changes to the Prima toolchain are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-09-12
+
+### Performance
+
+This release is a ground-up pass over the interpreter's hot paths. The cross-language benchmark
+(`benches/RESULTS.md`) improves from 11.8×–4159× slower than CPython to 1.07×–7.1×: `sumsq` is at
+parity (1.07×) and `fib` is at parity, while `pi`/`poly`/`dot` sit at 2.1×–2.8× and `sieve` at
+7.1× (the remaining gap is the boxed-`Value` stack-machine cost measured by `perf`; closing it
+fully needs register-style specialization).
+
+- **Bytecode VM promoted to the default execution path (spec §19.5).** `vm := true` is now the
+  default; the AST interpreter remains the authoritative fallback outside the compiled subset. The
+  dispatch loop was restructured around a cached top frame with the hot instruction set handled
+  inline (local load/store, constants, jumps, typed arithmetic, fused loop forms), so numeric loops
+  no longer pay a per-instruction delegation to the evaluator.
+
+- **Number/`Value` shrank from 64 to 32/24 bytes.** `Number::Integer`/`Number::Rational` (and the
+  fixed-width `I128`/`U128`) now box their payloads, and `Value` boxes `Dict`/`Set`/`Result`
+  payloads, halving every clone/push/pop in the interpreter and VM (number semantics, rendering,
+  keys, and equality are unchanged — regression-tested).
+
+- **Fused bytecode instructions** (spec §14/§12.2): `SetLocalNc` (bind without stack round-trip),
+  `AddImmLocal` (`x += <small literal>` in place), `AddToSlot` (fused `x = x + expr`), and
+  `BranchLocalLt`/`BranchLocalLe` (fused `while`/`for` loop tests on two local slots). A `while`
+  loop iteration compiles to 3–4 instructions instead of 10–18.
+
+- **Typed arithmetic fast paths in the VM dispatch** (spec §6.1/§6.5): `Small`/`Small` uses checked
+  i64 arithmetic, `F64`/`F64` plain IEEE `+ - * / %` (division keeps the `fraction` policy and the
+  exact-layer zero-divisor diagnostics), mixed exact/`F64` division promotes directly, and array
+  indexing/index-assignment with integer indices run inline with the authoritative diagnostics.
+
+- **Per-call-site callee cache (spec §19.5).** `CallName` sites cache their resolved builtin or
+  program-function callee, validated against a process-wide function-definition epoch (bumped by
+  every `Env::set_func`), so a user redefinition (e.g. shadowing a core builtin) always
+  re-resolves while repeated calls skip the environment walk. `to_f64` with a numeric argument
+  converts directly on the cached path.
+
+- **Inlined small-integer representation for `Number` (spec §6.1).** The numeric tower's integer
+  layer gains an internal `Small(i64)` variant that is semantically identical to `Integer`
+  (`Small(5) == Integer(5)`, same rendering, conversions, and hash keys) but avoids the per-value
+  heap allocation of `num_bigint::BigInt`. Integer literals, `as_i64`, and the add/subtract/
+  multiply hot paths now run allocation-free with checked i64 arithmetic, falling back to the
+  exact BigInt path on overflow (results stay exact).
+
+- **Shared copy-on-write array representation for `Value::Array` (spec §11.3).** `Value::Array`
+  now holds a shared handle (`prima_core::ArrayVal`, an `Arc<RwLock<Vec<Value>>>` — `Arc`/`RwLock`
+  keep `Value: Send + Sync` for the `parfor`/`@parallel` rayon paths) instead of an owned
+  `Vec<Value>`, so cloning an array value is O(1) instead of a full element copy. Mutation goes
+  through `ArrayVal::with_mut`, which mutates the buffer in place when the handle is uniquely
+  owned and copy-on-writes when shared, preserving value semantics exactly: `let b = a; b[0] = 9`
+  (or `b.push(x)`) still leaves `a` unchanged, and storing an array into its own buffer (`a[0] =
+  a`) stores a snapshot copy rather than creating a reference cycle. Equality, hashing keys,
+  rendering/`print` output, and error messages are unchanged.
+
+- **Quadratic lexing on large inputs (spec §3).** The lexer's `cur`/`peek_char` decoded the
+  current character by running `str::from_utf8` over the *entire remaining input* — O(n²) overall
+  (lexing 400 000 tokens took ~70 s, a hang-DoS on untrusted source). Decoding is now a single O(1)
+  incremental read: 400 000 tokens lex in ~0.18 s (~400× faster at that size).
+
+- **Exact `BigInt` arithmetic-sum closed form (spec §10/§19.1).** The `for i in 0..n { acc += i }`
+  closed-form optimization computed `n(n-1)/2` in `i64`; it now computes the product in `BigInt`,
+  matching the real loop's exact accumulation at every magnitude.
 
 ### Fixed
 
-- **`vm_parity` test concurrency race.** `tests/vm_parity.rs` wrote each kernel to a temp `.pra` file named only from the process id plus `vm`/`ast`; with parallel test threads, overlapping tests truncated/overwrote the same file, producing spurious parse errors (E0011, partial input) and VM/AST value divergences under CI. The helper now writes each kernel into a uniquely-created `tempfile::NamedTempFile` (atomic, unique per invocation, auto-deleted), eliminating the race.
+- **C-ABI panic across the FFI boundary (spec §18.4).** Generated `extern "C"` wrappers called
+  `call_file_export` unguarded, so any interpreter panic unwound across the C boundary — aborting
+  the host process on Rust ≥ 1.81. `call_file_export` now wraps its body in `catch_unwind`: the
+  panic payload is logged to stderr, the per-thread module cache is dropped, and the call surfaces
+  as a `RuntimeError` so each wrapper returns its documented default value.
+
+- **Parser/evaluator/checker stack exhaustion on deeply nested source (spec §16.4).** Tens of
+  thousands of nested parentheses or a 100 000-term flat expression (`0+0+0+…`, which the iterative
+  Pratt loop wraps into a deep chain without recursing) drove recursive consumers into
+  stack-overflow SIGSEGV; `prima check` on untrusted source was the hard exposure. The parser now
+  enforces an exact per-node AST depth budget (2 000) plus a balanced recursion guard (512) and
+  reports `E0010`-coded syntax errors (appendix C has no dedicated "too deep" code), running on a
+  dedicated 32 MB thread; the evaluator and static checker gained matching `Drop`-safe depth
+  guards. All `examples/` still parse unchanged.
+
+- **JIT parameter-index truncation and slot-offset overflow (spec §19.2).** `Op::Param` carries a
+  `u8` index but the compiler cast parameter positions with `idx as u8` (≥ 257 parameters silently
+  read the wrong slot), and the parameter-buffer offset was computed as `i32::from(8 * i)` with
+  `i: u8` — a debug panic at ≥ 32 parameters and a silently wrong slot in release. Indices beyond
+  the instruction set's range are now rejected (interpreter fallback, never a wrong value), the
+  offset is computed in `i32`, and `validate_bytecode` enforces the arity limit. 32- and
+  33-parameter functions are regression-tested.
+
+- **JIT engine initialization panics.** `JITBuilder::new` and `declare_function` used `unwrap()`;
+  an environment where cranelift cannot initialize now permanently marks the JIT unavailable and
+  every compilation degrades to the interpreter fallback.
+
+- **Silent lost write in the bytecode VM's array index assignment (spec §19.5).** Under the VM,
+  `A[i] = v` evaluated the store against a stack copy of the array and never wrote back. The
+  compiler now lowers index assignment to `IndexStoreLocal(slot)`/`IndexStoreName(name)` (in-place
+  mutation through the slot or the environment chain) and mutating `Array` methods on local slots
+  run through `MethodLocal`, mutating the slot's array directly.
+
+- **Multi-parameter functions misbound in the bytecode VM (spec §11/§19.5).** Function chunks
+  bound parameters with per-parameter `SetLocal` instructions, which pop the *last*-pushed
+  argument and push it back — with two or more parameters every parameter received the wrong
+  argument and the operand stack leaked the arguments. A single `BindParams` instruction now
+  distributes the call arguments to the parameter slots in order (single-parameter kernels had
+  worked by accident; two-parameter VM/AST parity is regression-tested).
+
+- **Float→integer saturation in `Number::as_bigint`/`as_rational` (spec §9.2).** Converting a
+  fractional-free float beyond the `i64` range (e.g. `to_bigint(1e19)`) silently saturated to
+  `i64::MAX`. Both conversions now apply the same `i64` round-trip guard used by `as_i64` and
+  return `None`; collapse callers report proper errors instead of a silently wrong result.
+
+- **i64 overflow in loop index stepping and the `parfor` iteration count (spec §16.1 R0001).**
+  `for … step s`, `range(start, end, step?)`, and `parfor` stepped/materialized with unchecked
+  arithmetic (debug panic, or silent wrap → dropped iterations/infinite loop in release). All
+  paths now use `checked_add`/`i128` counting and report `RuntimeError::Overflow`.
+
+- **Hash-consing collision unsoundness (spec §8.1).** `ExprPool::intern` deduplicated by 64-bit
+  content hash alone, so a hash collision silently replaced one symbolic expression with another
+  (`DefaultHasher` is keyed identically in every process, making collisions constructible).
+  Interning now keeps per-hash candidate buckets and confirms `ExprData` equality before reusing
+  an `ExprId`, preserving the equal-content ⇒ equal-`ExprId` invariant under collisions.
+
+- **`parfor` + JIT-fallback data race (spec §17.2).** A `jit(...)` callable whose compilation
+  failed runs through an interpreted fallback that dereferences the registering thread's
+  `Rc<RefCell<Env>>`; inside a `parfor` rayon task that is a cross-thread `Rc` race (UB). Worker
+  threads are now marked for the duration of a `parfor` task and the JIT fallback refuses to run
+  on them with a clear error; single-threaded fallback behavior is unchanged.
+
+- **No interruption path for long-running evaluations (spec §16).** The evaluator now checks a
+  process-wide cancellation flag at loop back-edges and statement boundaries (`RuntimeError
+  "interrupted"`), and the C ABI exports `prima_cancel`/`prima_cancel_reset` so an embedded host
+  can stop a runaway export instead of hanging forever.
+
+- **Process-level leaks.** The JIT registry (spec §19.2) grew without bound for loops like
+  `while … { f = jit(x^2); f(1.0); }` — callables are now evicted (oldest-first) once the registry
+  reaches its capacity, and `Value::JitFunction` lookups prune dead entries. The generated C-ABI
+  wrappers' `CSTR_KEEP` buffer (spec §18.4) accumulated one `CString` per string-returning call;
+  it now uses a double buffer that is recycled across calls.
+
+- **Dict/Set key semantics diverged from membership tests (spec §11.6).** `d[1]` and `d[1.0]`
+  used different keys while `1.0 in d` (numeric comparison) reported the key present, and
+  `0.0`/`-0.0` were distinct keys. Numeric keys are now canonicalized by value (integral floats
+  and denominator-1 rationals key as the integers they equal; `-0.0` keys as `0.0`), matching
+  membership tests; NaN keys remain rejected.
+
+- **Resource-exhaustion guards (OOM aborts → runtime errors).** `Integer^Integer` exponentiation
+  (including constant folding) refuses results beyond a bit-length budget, `range`/`parfor`
+  refuse to materialize beyond an element/iteration limit, `String.repeat` refuses results beyond
+  a byte limit, and f-string `{:spec}` width/precision are clamped — each reports a runtime error
+  instead of aborting the process on allocation failure.
+
+- **`vm_parity` test concurrency race.** `tests/vm_parity.rs` wrote kernels to per-pid temp files
+  that parallel test threads could truncate concurrently; each invocation now uses a uniquely
+  created `NamedTempFile`.
+
+- **Tail-recursive `fn` bodies skip the bytecode VM (spec §10.2/§19.5).** The compiled subset has
+  no constant-stack recursion, so a 100 000-deep tail-recursive function overflowed the stack
+  under `vm := true` where the AST trampoline handled it; tail-recursive bodies now stay on the
+  AST path (results identical, `tail_call_optimization_avoids_stack_overflow` green).
 
 ## [0.3.5] - 2026-09-05
 

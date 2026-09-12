@@ -9,7 +9,7 @@ use prima_core::expr_pool::{ExprData, ExprId};
 use prima_core::symbol::SymbolTable;
 use prima_core::{BuiltinSymbols, ExprPool};
 
-use crate::bytecode::{Bytecode, Op};
+use crate::bytecode::{Bytecode, MAX_PARAMS, Op};
 use crate::engine::CompiledScalar;
 use std::sync::Arc;
 
@@ -101,6 +101,12 @@ fn emit_symbol(
     if let Some(name) = name
         && let Some(idx) = params.iter().position(|p| *p == name)
     {
+        // `Op::Param` carries a `u8` index; a parameter beyond that range cannot be represented.
+        // Reject the DAG instead of truncating the index (which would silently read the wrong
+        // argument slot), spec §19.2.
+        if idx >= MAX_PARAMS {
+            return false;
+        }
         ops.push(Op::Param(idx as u8));
         return true;
     }
@@ -175,13 +181,17 @@ fn emit_apply(
 }
 
 /// Convenience: `dag_to_bytecode` + `engine::compile_bytecode`. Returns `None` when the expression
-/// is not compilable or cranelift fails.
+/// is not compilable, has more parameters than the bytecode can address (`MAX_PARAMS`), or cranelift
+/// fails.
 pub fn compile_scalar(
     pool: &ExprPool,
     builtins: &BuiltinSymbols,
     expr: ExprId,
     params: &[String],
 ) -> Option<Arc<CompiledScalar>> {
+    if params.len() > MAX_PARAMS {
+        return None;
+    }
     let bc = dag_to_bytecode(pool, builtins, expr, params)?;
     crate::engine::compile_bytecode(&bc, params.len())
 }

@@ -39,11 +39,14 @@ fn broadcast_op_works_when_disabled() {
     let v = eval("config { broadcast := false }\nlet f(x) = x^2;\nlet v = [1, 2, 3];\nv @. f");
     assert_eq!(
         v,
-        Value::Array(vec![
-            Value::Number(Number::from(1)),
-            Value::Number(Number::from(4)),
-            Value::Number(Number::from(9))
-        ])
+        Value::Array(
+            vec![
+                Value::Number(Number::from(1)),
+                Value::Number(Number::from(4)),
+                Value::Number(Number::from(9))
+            ]
+            .into()
+        )
     );
 }
 

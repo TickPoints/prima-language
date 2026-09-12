@@ -173,7 +173,7 @@ fn gen_lib_source(exports: &[prima_runtime::capi::CExtern], src_path: &str) -> S
         "//! `prima_runtime::capi::call_file_export` (spec §18.4), and converts the result back\n",
     );
     s.push_str("//! to the C ABI. Numeric values cross the boundary lossily as `f64`.\n\n");
-    s.push_str("use std::cell::RefCell;\n");
+    s.push_str("use std::cell::{Cell, RefCell};\n");
     s.push_str("use std::ffi::{CStr, CString};\n");
     s.push_str(&raw_type_import_line(exports));
     s.push_str("use std::path::Path;\n\n");
@@ -185,16 +185,23 @@ fn gen_lib_source(exports: &[prima_runtime::capi::CExtern], src_path: &str) -> S
     s.push_str("/// moved after compilation the wrappers fail at call time (message on stderr, default value).\n");
     s.push_str(&format!("const PRIMA_SRC_PATH: &str = {src_path:?};\n\n"));
     s.push_str(
-        "// String results must outlive the wrapper's return frame; keep the buffers in a\n",
+        "// String results must outlive the wrapper's return frame; buffers are kept in a\n",
     );
     s.push_str(
-        "// thread-local that is replaced on every call (previous buffers stay alive until the\n",
+        "// two-slot thread-local. Each string-returning call writes its own generation slot and\n",
     );
-    s.push_str("// next call).\n");
+    s.push_str(
+        "// drops the generation from the call before last, so a returned pointer stays valid\n",
+    );
+    s.push_str(
+        "// until the next string-returning call and memory no longer grows with the number of\n",
+    );
+    s.push_str("// calls (resource limit: repeated exports cannot accumulate buffers).\n");
     s.push_str("thread_local! {\n");
     s.push_str(
-        "    static CSTR_KEEP: RefCell<Vec<CString>> = const { RefCell::new(Vec::new()) };\n",
+        "    static CSTR_KEEP: RefCell<[Vec<CString>; 2]> = const { RefCell::new([Vec::new(), Vec::new()]) };\n",
     );
+    s.push_str("    static CSTR_SLOT: Cell<usize> = const { Cell::new(0) };\n");
     s.push_str("}\n\n");
     s.push_str("fn value_f64(v: &Value) -> f64 {\n");
     s.push_str("    match v {\n");
@@ -209,7 +216,21 @@ fn gen_lib_source(exports: &[prima_runtime::capi::CExtern], src_path: &str) -> S
     s.push_str("            Err(_) => CString::new(\"\").expect(\"the empty string is always NUL-terminated\"),\n");
     s.push_str("        };\n");
     s.push_str("        let p = c.as_ptr();\n");
-    s.push_str("        CSTR_KEEP.with(|k| k.borrow_mut().push(c));\n");
+    s.push_str("        CSTR_SLOT.with(|slot| {\n");
+    s.push_str("            let cur = slot.get();\n");
+    s.push_str("            CSTR_KEEP.with(|k| {\n");
+    s.push_str("                let mut gens = k.borrow_mut();\n");
+    s.push_str(
+        "                // The pointer contract of the call before last expires here; free its\n",
+    );
+    s.push_str(
+        "                // generation and keep the current one alive for the return frame.\n",
+    );
+    s.push_str("                gens[1 - cur].clear();\n");
+    s.push_str("                gens[cur].push(c);\n");
+    s.push_str("            });\n");
+    s.push_str("            slot.set(1 - cur);\n");
+    s.push_str("        });\n");
     s.push_str("        p\n");
     s.push_str("    } else {\n");
     s.push_str("        std::ptr::null()\n");

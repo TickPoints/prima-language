@@ -57,12 +57,12 @@ fn array_methods() {
     // `copy` is layered: native at O2, a comprehension at O0 (same semantics).
     assert_eq!(
         eval("let a = [1, 2, 3];\na.copy()"),
-        Value::Array(vec![n(1), n(2), n(3)])
+        Value::Array(vec![n(1), n(2), n(3)].into())
     );
     // Mutating methods write back through the binding.
     assert_eq!(
         eval("let a = [1];\na.push(2);\na"),
-        Value::Array(vec![n(1), n(2)])
+        Value::Array(vec![n(1), n(2)].into())
     );
     assert_eq!(
         eval("let a = [1, 2];\na.pop()"),
@@ -70,21 +70,21 @@ fn array_methods() {
     );
     assert_eq!(
         eval("let a = [3, 1, 2];\na.sort();\na"),
-        Value::Array(vec![n(1), n(2), n(3)])
+        Value::Array(vec![n(1), n(2), n(3)].into())
     );
     assert_eq!(
         eval("let a = [1, 2];\na.reverse();\na"),
-        Value::Array(vec![n(2), n(1)])
+        Value::Array(vec![n(2), n(1)].into())
     );
     assert_eq!(eval("let a = [1];\na.extend([2, 3]);\na.len()"), n(3));
     assert_eq!(
         eval("let a = [1, 2];\na.insert(0, 9);\na"),
-        Value::Array(vec![n(9), n(1), n(2)])
+        Value::Array(vec![n(9), n(1), n(2)].into())
     );
     // `remove` is index-based (negative counts from the end).
     assert_eq!(
         eval("let a = [7, 8, 9];\na.remove(1);\na"),
-        Value::Array(vec![n(7), n(9)])
+        Value::Array(vec![n(7), n(9)].into())
     );
     assert_eq!(eval("let a = [1, 2];\na.clear();\na.len()"), n(0));
 }

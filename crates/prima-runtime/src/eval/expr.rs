@@ -2,14 +2,50 @@
 //! operators, membership and set algebra, broadcasting, comprehensions, comparison, and operator
 //! overload dispatch. Statement evaluation lives in `stmt.rs`; calls in `call.rs`.
 
+use std::cell::Cell;
+
 use super::helpers::{
     apply_spec, is_zero_literal, literal_value, number_mod, overload_key, path_key,
 };
 use super::*;
 
+/// Maximum expression nesting depth the evaluator recurses through (spec §16.4). Matches the
+/// parser's budget: the evaluator uses ~2 frames of a few hundred bytes per AST level, so 2 000
+/// levels stay far below an 8 MB stack. This is defense in depth — the parser already rejects
+/// deeper source — protecting any path into `eval_expr` that did not come from the parser.
+const MAX_EVAL_DEPTH: u32 = 2_000;
+
+thread_local! {
+    static EXPR_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Balanced depth guard for the recursive `eval_expr` descent (spec §16.4): the counter is
+/// decremented in `Drop`, so panics or early returns cannot leave it unbalanced.
+struct EvalDepthGuard;
+
+impl Drop for EvalDepthGuard {
+    fn drop(&mut self) {
+        EXPR_DEPTH.with(|d| d.set(d.get() - 1));
+    }
+}
+
+fn enter_eval_depth() -> Result<EvalDepthGuard, RuntimeError> {
+    EXPR_DEPTH.with(|d| {
+        let n = d.get() + 1;
+        if n > MAX_EVAL_DEPTH {
+            return Err(RuntimeError::Message(
+                "expression nesting is too deep to evaluate".into(),
+            ));
+        }
+        d.set(n);
+        Ok(EvalDepthGuard)
+    })
+}
+
 impl Evaluator {
     /// Evaluate one expression, attaching its source span to any error (spec §16.4).
     pub(crate) fn eval_expr(&mut self, env: &EnvRef, expr: &Expr) -> Result<Value, RuntimeError> {
+        let _depth = enter_eval_depth()?;
         let span = expr.span;
         self.eval_expr_inner(env, expr)
             .map_err(|e| crate::error::attach_span(e, span))
@@ -92,7 +128,7 @@ impl Evaluator {
                 let v = self.eval_expr(env, inner)?;
                 match v {
                     Value::Result(Ok(v)) => Ok(*v),
-                    Value::Result(Err(m)) => Err(RuntimeError::Message(m)),
+                    Value::Result(Err(m)) => Err(RuntimeError::Message(*m)),
                     Value::Option(Some(v)) => Ok(*v),
                     Value::Option(None) => {
                         Err(RuntimeError::Message("`?` on a `None` value".into()))
@@ -106,7 +142,7 @@ impl Evaluator {
             ExprKind::Array(items) => {
                 let elems: Result<Vec<Value>, RuntimeError> =
                     items.iter().map(|it| self.eval_expr(env, it)).collect();
-                Ok(Value::Array(elems?))
+                Ok(Value::Array(elems?.into()))
             }
             ExprKind::Dict(entries) => {
                 let mut d: HashMap<ValueKey, Value> = HashMap::new();
@@ -117,7 +153,7 @@ impl Evaluator {
                     })?;
                     d.insert(key, self.eval_expr(env, v)?);
                 }
-                Ok(Value::Dict(d))
+                Ok(Value::Dict(Box::new(d)))
             }
             ExprKind::Set(items) => {
                 let mut s: HashSet<ValueKey> = HashSet::new();
@@ -128,7 +164,7 @@ impl Evaluator {
                     })?;
                     s.insert(key);
                 }
-                Ok(Value::Set(s))
+                Ok(Value::Set(Box::new(s)))
             }
             ExprKind::Comprehension {
                 kind,
@@ -183,7 +219,7 @@ impl Evaluator {
         let mut values: Vec<Value> = Vec::new();
         self.comprehension_clauses(env, clauses, kind, output, &mut values)?;
         match kind {
-            CompKind::Array => Ok(Value::Array(values)),
+            CompKind::Array => Ok(Value::Array(values.into())),
             // Tuple comprehension is eager here (documented deviation from the spec's lazy generator).
             CompKind::Tuple => Ok(Value::Tuple(values)),
             CompKind::Set => {
@@ -194,7 +230,7 @@ impl Evaluator {
                     })?;
                     s.insert(key);
                 }
-                Ok(Value::Set(s))
+                Ok(Value::Set(Box::new(s)))
             }
             CompKind::Dict => {
                 let mut d: HashMap<ValueKey, Value> = HashMap::new();
@@ -207,7 +243,7 @@ impl Evaluator {
                     })?;
                     d.insert(key, pair[1].clone());
                 }
-                Ok(Value::Dict(d))
+                Ok(Value::Dict(Box::new(d)))
             }
         }
     }
@@ -273,7 +309,7 @@ impl Evaluator {
     /// `Set` → elements, `String` → `Char` per character, `Tuple` → elements.
     pub(crate) fn iter_values(&self, v: &Value) -> Result<Vec<Value>, RuntimeError> {
         match v {
-            Value::Array(elems) => Ok(elems.clone()),
+            Value::Array(elems) => Ok(elems.to_vec()),
             Value::Dict(d) => Ok(self
                 .sorted_dict_keys(d)
                 .iter()
@@ -296,17 +332,17 @@ impl Evaluator {
                 let i = s
                     .parse::<BigInt>()
                     .map_err(|_| RuntimeError::Message("invalid integer literal".into()))?;
-                Ok(Value::Number(Number::Integer(i)))
+                Ok(Value::Number(Number::from_bigint(i)))
             }
             Literal::Hex(s) => {
                 let i = BigInt::parse_bytes(&s.as_bytes()[2..], 16)
                     .ok_or_else(|| RuntimeError::Message("invalid hex literal".into()))?;
-                Ok(Value::Number(Number::Integer(i)))
+                Ok(Value::Number(Number::from_bigint(i)))
             }
             Literal::Binary(s) => {
                 let i = BigInt::parse_bytes(&s.as_bytes()[2..], 2)
                     .ok_or_else(|| RuntimeError::Message("invalid binary literal".into()))?;
-                Ok(Value::Number(Number::Integer(i)))
+                Ok(Value::Number(Number::from_bigint(i)))
             }
             Literal::Float(s) => {
                 let f = s
@@ -428,7 +464,9 @@ impl Evaluator {
     /// containment, dicts key presence, sets membership.
     pub(crate) fn eval_in(&mut self, a: Value, b: Value) -> Result<Value, RuntimeError> {
         match b {
-            Value::Array(elems) => Ok(Value::Bool(elems.iter().any(|e| self.value_eq(&a, e)))),
+            Value::Array(elems) => Ok(Value::Bool(
+                elems.with(|items| items.iter().any(|e| self.value_eq(&a, e))),
+            )),
             Value::Dict(d) => {
                 let key = ValueKey::from_value(&a).ok_or_else(|| {
                     RuntimeError::Message("membership key must be a hashable value".into())
@@ -462,13 +500,13 @@ impl Evaluator {
         let (Value::Set(x), Value::Set(y)) = (a, b) else {
             return crate::error::err("set operator requires two sets");
         };
-        let out = match op {
+        let out: std::collections::HashSet<ValueKey> = match op {
             BinOp::Union => x.union(&y).cloned().collect(),
             BinOp::Intersect => x.intersection(&y).cloned().collect(),
             BinOp::Difference => x.difference(&y).cloned().collect(),
             _ => unreachable!(),
         };
-        Ok(Value::Set(out))
+        Ok(Value::Set(Box::new(out)))
     }
 
     /// Value equality used by membership/count/index (spec §11.3): numbers compare through the
@@ -648,7 +686,11 @@ impl Evaluator {
         // key. Ordering comparisons on collections are rejected.
         match (&a, &b) {
             (Value::Array(x), Value::Array(y)) => {
-                let eq = x.len() == y.len() && x.iter().zip(y).all(|(u, v)| self.value_eq(u, v));
+                let eq = x.with(|xs| {
+                    y.with(|ys| {
+                        xs.len() == ys.len() && xs.iter().zip(ys).all(|(u, v)| self.value_eq(u, v))
+                    })
+                });
                 return Ok(Value::Bool(match op {
                     BinOp::Eq => eq,
                     BinOp::Ne => !eq,
@@ -678,6 +720,7 @@ impl Evaluator {
                 // Promote to a common type before comparing (spec §6.4), so `1 == 1.0` holds.
                 let (x, y) = prima_core::number::promote(&x, &y);
                 match (x, y) {
+                    (Number::Small(x), Number::Small(y)) => Some(x.cmp(&y)),
                     (Number::Integer(x), Number::Integer(y)) => Some(x.cmp(&y)),
                     (Number::Rational(x), Number::Rational(y)) => Some(x.cmp(&y)),
                     (Number::Real(Real::F32(x)), Number::Real(Real::F32(y))) => x.partial_cmp(&y),
@@ -737,18 +780,14 @@ impl Evaluator {
                     Value::Number(n) => Ok(Value::Number(-n)),
                     // Elementwise negation (spec §11.4): every element must be numeric.
                     Value::Array(elems) => {
-                        let mut out = Vec::with_capacity(elems.len());
-                        for e in elems {
-                            match e {
-                                Value::Number(n) => out.push(Value::Number(-n)),
-                                _ => {
-                                    return crate::error::err(
-                                        "cannot negate a non-numeric array element",
-                                    );
-                                }
-                            }
-                        }
-                        Ok(Value::Array(out))
+                        let out: Result<Vec<Value>, RuntimeError> = elems
+                            .iter()
+                            .map(|e| match e {
+                                Value::Number(n) => Ok(Value::Number(-n)),
+                                _ => crate::error::err("cannot negate a non-numeric array element"),
+                            })
+                            .collect();
+                        Ok(Value::Array(out?.into()))
                     }
                     Value::Expr(id) => {
                         let node = self.pool.mul2(self.pool.integer(-1), id);

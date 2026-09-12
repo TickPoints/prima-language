@@ -21,7 +21,7 @@ fn eval_str(src: &str) -> String {
 
 fn eval_arr(src: &str) -> Vec<Value> {
     match eval(src) {
-        Value::Array(a) => a,
+        Value::Array(a) => a.to_vec(),
         other => panic!("expected Array for {src:?}, got {other:?}"),
     }
 }
@@ -217,4 +217,18 @@ fn unicode_aware() {
     );
     assert_eq!(eval_str(r#""aéa".replace("é", "b")"#), "aba");
     assert_eq!(eval_str(r#""héllo".to_upper()"#), "HÉLLO");
+}
+
+#[test]
+fn repeat_resource_limit_is_an_error_not_an_abort() {
+    // Resource limit (OOM guard): a result beyond the 256 MiB cap errors instead of aborting.
+    let err = Evaluator::new()
+        .eval_value("let s = \"x\".repeat(300 * 1024 * 1024);\n1")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("byte limit"),
+        "unexpected error: {err}"
+    );
+    // Boundary sanity: results under the cap keep working.
+    assert_eq!(eval_str(r#""x".repeat(255)"#), "x".repeat(255));
 }

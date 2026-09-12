@@ -17,4 +17,4 @@ pub use number::{Number, Real};
 pub use render::{render_latex, render_number};
 pub use simplify::simplify;
 pub use symbol::{SymbolId, SymbolTable};
-pub use value::{IndeterminateForm, Value, ValueKey};
+pub use value::{ArrayVal, IndeterminateForm, Value, ValueKey};

@@ -7,6 +7,36 @@ use crate::token::{Token, TokenKind};
 // Unary operator binding power: lower than power `^` (8), higher than mul/div (6/7), implementing `-x^2 == -(x^2)` (same as Julia, spec §2.2).
 const UNARY_BP: u8 = 7;
 
+/// Maximum expression nesting depth (spec §16.4): the deepest `Expr` tree the parser accepts.
+/// Every constructed wrapper node is checked against this budget, so the finished AST is
+/// guaranteed no deeper — protecting the evaluator (≈2 frames of a few hundred bytes per AST
+/// level ≈ 1.6 MB at 2 000), the static checker and AST `Drop` on an 8 MB stack. Legitimate
+/// source stays orders of magnitude below it.
+pub(crate) const MAX_EXPR_DEPTH: u32 = 2_000;
+
+/// Parser *recursion* limit (spec §16.4), separate from [`MAX_EXPR_DEPTH`]: transparent nesting
+/// (`((((x))))`, `{{{{…`) recurses without constructing nodes, so it needs its own bound. Sized
+/// against [`PARSE_STACK_SIZE`]: debug-build parser frames are large (≈15–30 KB per nesting level
+/// across `parse_expr_bp`/`parse_prefix`/`parse_atom`/`parse_paren_or_tuple`), so 512 levels use
+/// ≲16 MB of the 32 MB dedicated parser stack, in every build profile.
+pub(crate) const MAX_PARSE_RECURSION: u32 = 512;
+
+/// Stack size of the dedicated parser thread: the recursive-descent parser's frames are too large
+/// to trust to the caller's stack (which may be a default 2 MB thread), so `parse_checked` runs
+/// the parser on its own generously-sized thread (see [`MAX_PARSE_RECURSION`]).
+const PARSE_STACK_SIZE: usize = 32 * 1024 * 1024;
+
+/// The `SyntaxError` raised when the nesting budget is exceeded. The spec's appendix C has no
+/// dedicated "nesting too deep" entry, so the generic syntax error code `E0010` is used.
+pub(crate) fn nesting_error(span: Span) -> SyntaxError {
+    SyntaxError {
+        span,
+        message: format!(
+            "expression nesting is too deep (E0010); the parser accepts at most {MAX_EXPR_DEPTH} levels"
+        ),
+    }
+}
+
 /// Hand-written recursive-descent + Pratt climbing parser (implementation plan §2.2), covering all appendix A BNF productions.
 pub fn parse(src: &str) -> Result<Program, Vec<SyntaxError>> {
     let (program, errors, _) = parse_checked(src);
@@ -18,7 +48,26 @@ pub fn parse(src: &str) -> Result<Program, Vec<SyntaxError>> {
 }
 
 /// Parse and return the program plus all collected errors and warnings (spec §16.4/§16.5).
+///
+/// The parser runs on a dedicated [`PARSE_STACK_SIZE`] thread so the nesting guarantees of
+/// [`MAX_PARSE_RECURSION`] hold regardless of the caller's stack (which may be a default 2 MB
+/// thread). A parser panic (a bug) is resumed on the calling thread.
 pub fn parse_checked(src: &str) -> (Program, Vec<SyntaxError>, Vec<SyntaxWarning>) {
+    std::thread::scope(|scope| {
+        let handle = std::thread::Builder::new()
+            .name("prima-parse".into())
+            .stack_size(PARSE_STACK_SIZE)
+            .spawn_scoped(scope, || parse_checked_inner(src))
+            .expect("spawning the parser thread cannot fail");
+        match handle.join() {
+            Ok(result) => result,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    })
+}
+
+/// The parser proper, executed on the dedicated parser thread.
+fn parse_checked_inner(src: &str) -> (Program, Vec<SyntaxError>, Vec<SyntaxWarning>) {
     let tokens = match lex(src) {
         Ok(t) => t,
         Err(errors) => {
@@ -58,6 +107,14 @@ pub(crate) struct Parser {
     warnings: Vec<SyntaxWarning>,
     /// Disables struct-literal parsing in control-flow conditions (`if x {` must stay a block, not `x { ... }`).
     no_struct_literal: bool,
+    /// Recursion budget (spec §16.4): incremented on entry to every recursive construct
+    /// (`parse_expr_bp`/`parse_pattern`/`parse_block`/`parse_type`), decremented on exit. Protects
+    /// the parser's own stack against unbounded nesting (e.g. thousands of `(`).
+    nest: u32,
+    /// Exact depth of the most recently completed expression (spec §16.4 depth budget): leaves are
+    /// 1, each constructed wrapper node is `1 + max(child depths)`. Every construction site checks
+    /// its node against [`MAX_EXPR_DEPTH`], so the finished AST is guaranteed no deeper.
+    expr_depth: u32,
 }
 
 impl Parser {
@@ -67,7 +124,29 @@ impl Parser {
             pos: 0,
             warnings: Vec::new(),
             no_struct_literal: false,
+            nest: 0,
+            expr_depth: 0,
         }
+    }
+
+    /// Enter one recursion level; the caller must decrement `self.nest` on every exit path
+    /// (all call sites follow the `enter → run → decrement → return` pattern).
+    pub(crate) fn enter_nest(&mut self, at: Span) -> Result<(), SyntaxError> {
+        if self.nest >= MAX_PARSE_RECURSION {
+            return Err(nesting_error(at));
+        }
+        self.nest += 1;
+        Ok(())
+    }
+
+    /// Record a newly constructed wrapper node of depth `d`; errors when it would exceed the
+    /// nesting budget (spec §16.4).
+    pub(crate) fn check_expr_depth(&mut self, d: u32, span: Span) -> Result<(), SyntaxError> {
+        if d > MAX_EXPR_DEPTH {
+            return Err(nesting_error(span));
+        }
+        self.expr_depth = d;
+        Ok(())
     }
 }
 
@@ -616,5 +695,58 @@ mod tests {
             },
             other => panic!("expected Pub, got {other:?}"),
         }
+    }
+
+    // ————— nesting depth budget (spec §16.4) —————
+
+    fn assert_depth_rejected(src: String) {
+        let errs = crate::parse(&src).expect_err("hostile nesting must be rejected");
+        assert!(
+            errs.iter().any(|e| e.message.contains("too deep")),
+            "expected a nesting-depth error, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn flat_chain_beyond_depth_limit_is_rejected() {
+        // A 100 000-term `0+0+…` builds a left-leaning `Binary` chain deeper than the budget in an
+        // iterative Pratt loop; the construction-site check must reject it (no crash downstream).
+        assert_depth_rejected(format!("let x = {}0;", "0+".repeat(100_000)));
+    }
+
+    #[test]
+    fn nested_parens_beyond_depth_limit_are_rejected() {
+        // Parenthesized nesting recurses through `parse_expr_bp`; the recursion guard stops it.
+        assert_depth_rejected(format!(
+            "let x = {}0{};",
+            "(".repeat(100_000),
+            ")".repeat(100_000)
+        ));
+    }
+
+    #[test]
+    fn postfix_chain_beyond_depth_limit_is_rejected() {
+        // `a.m().m()…` wraps one node per link without recursing; the construction budget catches it.
+        assert_depth_rejected(format!("let x = a{};", ".m()".repeat(100_000)));
+    }
+
+    #[test]
+    fn deep_block_nesting_is_rejected() {
+        // `if` blocks recurse through `parse_block`; the recursion guard bounds the parser stack.
+        let depth = 100_000;
+        let src = format!("{}{}", "if true { ".repeat(depth), "}".repeat(depth));
+        assert_depth_rejected(src);
+    }
+
+    #[test]
+    fn normal_depth_programs_still_parse() {
+        // Everyday expressions sit orders of magnitude below the budget; 500 chained terms and
+        // nested calls/parens/indexing must parse cleanly.
+        let chain = format!("let s = 0{};", " + 1".repeat(500));
+        assert!(crate::parse(&chain).is_ok());
+        let calls = format!("let t = {}x{};", "f(".repeat(50), ")".repeat(50));
+        assert!(crate::parse(&calls).is_ok());
+        let postfix = format!("let u = a{};", ".m()".repeat(50));
+        assert!(crate::parse(&postfix).is_ok());
     }
 }

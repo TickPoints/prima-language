@@ -350,7 +350,7 @@ fn dist_dict(kind: &str, params: &[(&str, f64)]) -> Value {
     for (k, v) in params {
         m.insert(ValueKey::Str((*k).into()), num(*v));
     }
-    Value::Dict(m)
+    Value::Dict(Box::new(m))
 }
 
 /// Parse a distribution descriptor back into `(kind, params)`.
@@ -370,7 +370,7 @@ fn dist_arg(
                 }
             };
             let mut params = HashMap::new();
-            for (k, v) in m {
+            for (k, v) in m.iter() {
                 if let (ValueKey::Str(k), Value::Number(n)) = (k, v) {
                     params.insert(k.clone(), n.to_f64_lossy());
                 }
@@ -637,7 +637,7 @@ fn sample(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
         };
         out.push(num(v));
     }
-    Ok(Value::Array(out))
+    Ok(Value::Array(out.into()))
 }
 
 // ————————————————————————————————— math primitives —————————————————————————————————

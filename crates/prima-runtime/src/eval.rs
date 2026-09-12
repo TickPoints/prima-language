@@ -3,13 +3,13 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::Ordering as AtomicOrdering;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 use num_bigint::BigInt;
 use prima_core::simplify::simplify;
 use prima_core::{
-    BuiltinSymbols, ExprData, ExprId, ExprPool, Number, Real, SymbolId, SymbolTable, Value,
-    ValueKey,
+    ArrayVal, BuiltinSymbols, ExprData, ExprId, ExprPool, Number, Real, SymbolId, SymbolTable,
+    Value, ValueKey,
 };
 use prima_syntax::ast::{
     Annotation, AssignOp, BinOp, Block, ClassMemberKind, CompKind, ComprehensionClause, DocComment,
@@ -35,10 +35,13 @@ mod helpers;
 mod pattern;
 mod stmt;
 pub use helpers::value_type_name;
-pub(crate) use helpers::{stmt_span, syntax_err};
+pub(crate) use helpers::{expr_is_side_effect_free, number_mod};
+pub(crate) use helpers::{is_mutating_array_method, stmt_span, syntax_err};
 
 use env::BuiltinBackend;
 pub(crate) use env::BuiltinBackend as EvalBackend;
+pub(crate) use env::VmChunkCache;
+pub(crate) use env::func_epoch;
 pub use env::{Env, EnvRef, Function, HotState, JIT_CALL_THRESHOLD, NamespaceItem, NativeCall};
 
 /// The `core` builtins pre-imported into the root environment (spec §15.5), in declaration order.
@@ -197,6 +200,46 @@ pub struct Evaluator {
 impl Default for Evaluator {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Process-wide cancellation flag (host interruption of long-running evaluations): loop
+/// back-edges and statement boundaries check it and unwind with an "interrupted" error. A
+/// process-global flag (instead of a per-`Evaluator` field) keeps the C-ABI surface trivial —
+/// `prima_cancel`/`prima_cancel_reset` (see `crate::capi`) — and matches the C-ABI model of one
+/// interpreter run per host call.
+static CANCELLED: AtomicBool = AtomicBool::new(false);
+
+impl Evaluator {
+    /// The cancellation flag handle: hosts may hold it and `store(true, Relaxed)` directly, or
+    /// use [`Evaluator::request_cancel`]/[`prima_runtime::capi`] C exports.
+    pub fn cancel_handle() -> &'static AtomicBool {
+        &CANCELLED
+    }
+
+    /// Whether cancellation has been requested for the running evaluation.
+    pub fn is_cancelled() -> bool {
+        CANCELLED.load(AtomicOrdering::Relaxed)
+    }
+
+    /// Request cancellation of the running evaluation (safe to call from any thread).
+    pub fn request_cancel() {
+        CANCELLED.store(true, AtomicOrdering::Relaxed);
+    }
+
+    /// Clear the cancellation flag so a fresh evaluation can run.
+    pub fn clear_cancel() {
+        CANCELLED.store(false, AtomicOrdering::Relaxed);
+    }
+
+    /// Loop/statement cancellation check: returns the reused "interrupted" error when the flag
+    /// is set (spec §16).
+    pub(crate) fn check_cancelled(&self) -> Result<(), RuntimeError> {
+        if Self::is_cancelled() {
+            Err(RuntimeError::Message("interrupted".into()))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -435,11 +478,14 @@ g.greet(1)";
     fn array_element_assignment_writes_through() {
         assert_eq!(
             eval("let a = [1, 2, 3];\na[1] = 9;\na"),
-            Value::Array(vec![
-                Value::Number(Number::from(1)),
-                Value::Number(Number::from(9)),
-                Value::Number(Number::from(3)),
-            ])
+            Value::Array(
+                vec![
+                    Value::Number(Number::from(1)),
+                    Value::Number(Number::from(9)),
+                    Value::Number(Number::from(3)),
+                ]
+                .into()
+            )
         );
     }
 
@@ -447,11 +493,32 @@ g.greet(1)";
     fn array_slice_returns_subarray() {
         assert_eq!(
             eval("let a = [1, 2, 3, 4];\na[1..3]"),
-            Value::Array(vec![
-                Value::Number(Number::from(2)),
-                Value::Number(Number::from(3)),
-            ])
+            Value::Array(
+                vec![
+                    Value::Number(Number::from(2)),
+                    Value::Number(Number::from(3)),
+                ]
+                .into()
+            )
         );
+    }
+
+    #[test]
+    fn cancellation_stops_an_infinite_loop() {
+        // Host interruption (spec §16): a looping program must unwind with the reused
+        // "interrupted" error once the flag is set, in finite time.
+        Evaluator::clear_cancel();
+        let worker = std::thread::spawn(|| {
+            Evaluator::new().eval_value("let i = 0;\nwhile true { i += 1; }")
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        Evaluator::request_cancel();
+        let result = worker.join().expect("the loop thread panicked");
+        Evaluator::clear_cancel();
+        let err = result.expect_err("the infinite loop must be interrupted");
+        assert_eq!(err.to_string(), "interrupted");
+        // After the reset, evaluation works again.
+        assert_eq!(eval("1 + 1"), Value::Number(Number::from(2)));
     }
 
     #[test]

@@ -151,7 +151,7 @@ fn time_parse(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError
     let fmt = string_arg(args, 1, "time::parse")?;
     match parse_dt(&s, &fmt) {
         Ok(n) => Ok(Value::Result(Ok(Box::new(Value::Number(n))))),
-        Err(msg) => Ok(Value::Result(Err(msg))),
+        Err(msg) => Ok(Value::Result(Err(Box::new(msg)))),
     }
 }
 

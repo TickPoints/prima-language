@@ -51,11 +51,26 @@ enum Quoted {
 }
 
 impl<'a> Lexer<'a> {
-    fn cur(&self) -> Option<char> {
-        self.src
-            .get(self.pos..)
-            .and_then(|r| std::str::from_utf8(r).ok())
+    /// Decode the single character at `pos` (O(1)): the naive `from_utf8` over the whole remaining
+    /// slice re-validates up to `n` bytes per call and is quadratic on large inputs.
+    fn decode_at(src: &[u8], pos: usize) -> Option<char> {
+        let b = *src.get(pos)?;
+        let len = match b {
+            0x00..=0x7F => 1,
+            0xC2..=0xDF => 2,
+            0xE0..=0xEF => 3,
+            0xF0..=0xF4 => 4,
+            // Invalid continuation/lead byte: the input is a `&str`, so this cannot happen mid-char.
+            _ => return None,
+        };
+        let bytes = src.get(pos..pos + len)?;
+        std::str::from_utf8(bytes)
+            .ok()
             .and_then(|s| s.chars().next())
+    }
+
+    fn cur(&self) -> Option<char> {
+        Self::decode_at(self.src, self.pos)
     }
 
     fn peek(&self, n: usize) -> Option<u8> {
@@ -74,10 +89,7 @@ impl<'a> Lexer<'a> {
 
     /// Character `n` bytes ahead of the current position (used for lookahead over multi-byte chars).
     fn peek_char(&self, n: usize) -> Option<char> {
-        self.src
-            .get(self.pos + n..)
-            .and_then(|r| std::str::from_utf8(r).ok())
-            .and_then(|s| s.chars().next())
+        Self::decode_at(self.src, self.pos + n)
     }
 
     fn starts_with(&self, s: &str) -> bool {

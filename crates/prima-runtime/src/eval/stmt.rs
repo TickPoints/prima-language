@@ -3,8 +3,9 @@
 //! optimization. Ground-expression evaluation lives in `expr.rs`; pattern matching in `pattern.rs`.
 
 use super::helpers::{
-    ParforStep, ParforWriteVec, check_parfor_body, collect_read_names, normalize_index,
-    overload_key, pattern_is_refutable,
+    MAX_RANGE_ELEMS, ParforStep, ParforWriteVec, check_parfor_body, collect_read_names,
+    expr_is_side_effect_free, normalize_index, overload_key, pattern_is_refutable,
+    unalias_array_cycles, value_contains_array_buffer,
 };
 use super::*;
 
@@ -53,6 +54,10 @@ impl Evaluator {
     /// Evaluate one statement, attaching its source span to any error (spec §16.4).
     pub(crate) fn eval_stmt(&mut self, env: &EnvRef, stmt: &Stmt) -> Result<Flow, RuntimeError> {
         let span = stmt_span(stmt);
+        // Cancellation boundary (host interruption): one relaxed flag load per statement keeps
+        // runaway statement streams and non-looping recursion responsive.
+        self.check_cancelled()
+            .map_err(|e| crate::error::attach_span(e, span))?;
         self.eval_stmt_inner(env, stmt)
             .map_err(|e| crate::error::attach_span(e, span))
     }
@@ -143,6 +148,7 @@ impl Evaluator {
                         ret: ret.clone(),
                         body: body.clone(),
                         env: Rc::clone(env),
+                        vm: Rc::new(std::sync::OnceLock::new()),
                     };
                     env.borrow_mut().set_func(&name.value, f);
                     Ok(Flow::Continue)
@@ -221,9 +227,17 @@ impl Evaluator {
             } => {
                 let v = self.eval_expr(env, value)?;
                 // Collection element/slice assignment `A[i] = v` / `d[k] = v` / `A[lo..hi] = v`
-                // (spec §11.3/§11.6): writes back through the collection binding.
+                // (spec §11.3/§11.6): array slots mutate the binding's buffer in place
+                // (copy-on-write when the handle is aliased, spec §11.3 value semantics); dicts
+                // write back the whole value.
                 if let ExprKind::Index { base, index } = &target.kind {
-                    let (name, base_v) = self.eval_collection_lvalue(env, base)?;
+                    let name = match &base.kind {
+                        ExprKind::Path { segments } if segments.len() == 1 => {
+                            segments[0].value.clone()
+                        }
+                        _ => return crate::error::err("assignment target must be a variable"),
+                    };
+                    let base_v = self.eval_expr(env, base)?;
                     match base_v {
                         Value::Dict(mut d) => {
                             if index.items.len() != 1 {
@@ -261,7 +275,7 @@ impl Evaluator {
                             self.write_back(env, &name, Value::Dict(d));
                             return Ok(Flow::Continue);
                         }
-                        Value::Array(mut arr) => {
+                        Value::Array(a) => {
                             if index.items.len() != 1 {
                                 return crate::error::err(
                                     "multi-dimensional indexing is not supported yet",
@@ -270,22 +284,82 @@ impl Evaluator {
                             match &index.items[0] {
                                 IndexItem::Elem(e) => {
                                     let raw = self.eval_index_i64(env, e)?;
-                                    let idx = normalize_index(raw, arr.len()).ok_or_else(|| {
-                                        RuntimeError::IndexOutOfBounds(format!(
-                                            "index {raw} (length {})",
-                                            arr.len()
-                                        ))
-                                    })?;
-                                    let merged = match op {
-                                        AssignOp::Assign => v,
-                                        AssignOp::AddAssign => {
-                                            self.eval_binary(BinOp::Add, arr[idx].clone(), v)?
-                                        }
-                                        AssignOp::SubAssign => {
-                                            self.eval_binary(BinOp::Sub, arr[idx].clone(), v)?
+                                    let (len, idx, old) = {
+                                        let idx =
+                                            normalize_index(raw, a.len()).ok_or_else(|| {
+                                                RuntimeError::IndexOutOfBounds(format!(
+                                                    "index {raw} (length {})",
+                                                    a.len()
+                                                ))
+                                            })?;
+                                        let old = a.get(idx);
+                                        (a.len(), idx, old)
+                                    };
+                                    // A class operand can dispatch an operator overload (spec
+                                    // §18.5) whose user code could re-enter the interpreter.
+                                    let merged_is_pure = match op {
+                                        AssignOp::Assign => true,
+                                        _ => {
+                                            !matches!(old, Some(Value::Class(_)))
+                                                && !matches!(v, Value::Class(_))
                                         }
                                     };
-                                    arr[idx] = merged;
+                                    let merged = match op {
+                                        AssignOp::Assign => v,
+                                        AssignOp::AddAssign => self.eval_binary(
+                                            BinOp::Add,
+                                            old.ok_or_else(|| {
+                                                RuntimeError::IndexOutOfBounds(format!(
+                                                    "index {raw} (length {len})"
+                                                ))
+                                            })?,
+                                            v,
+                                        )?,
+                                        AssignOp::SubAssign => self.eval_binary(
+                                            BinOp::Sub,
+                                            old.ok_or_else(|| {
+                                                RuntimeError::IndexOutOfBounds(format!(
+                                                    "index {raw} (length {len})"
+                                                ))
+                                            })?,
+                                            v,
+                                        )?,
+                                    };
+                                    // Storing an array that references the target buffer itself
+                                    // would create a reference cycle; store a snapshot copy
+                                    // instead (the whole-value write-back semantics).
+                                    let mut merged = merged;
+                                    if value_contains_array_buffer(&merged, &a) {
+                                        unalias_array_cycles(&mut merged, &a);
+                                    }
+                                    if expr_is_side_effect_free(e) && merged_is_pure {
+                                        // In-place fast path: neither the index expression nor the
+                                        // merged-value computation can run user code, so the
+                                        // binding still holds this array; mutate its buffer
+                                        // through the chain (CoW when aliased).
+                                        drop(a);
+                                        let mut ok = false;
+                                        env.borrow_mut().update_value(&name, |slot| {
+                                            if let Value::Array(buf) = slot {
+                                                buf.with_mut(|items| items[idx] = merged);
+                                                ok = true;
+                                            }
+                                        });
+                                        if !ok {
+                                            return crate::error::err(
+                                                "assignment target must be an array or dict",
+                                            );
+                                        }
+                                    } else {
+                                        // Conservative path: the index expression or the
+                                        // merged-value computation may have rebound the binding;
+                                        // restore the array read above, like the whole-value
+                                        // write-back.
+                                        let mut arr = a;
+                                        arr.with_mut(|items| items[idx] = merged);
+                                        self.write_back(env, &name, Value::Array(arr));
+                                    }
+                                    return Ok(Flow::Continue);
                                 }
                                 IndexItem::Slice { start, end } => {
                                     if !matches!(op, AssignOp::Assign) {
@@ -302,13 +376,17 @@ impl Evaluator {
                                         env,
                                         start.as_ref(),
                                         end.as_ref(),
-                                        arr.len(),
+                                        a.len(),
                                     )?;
-                                    arr.splice(lo..hi, rhs);
+                                    let items = rhs.to_vec();
+                                    let mut arr = a;
+                                    arr.with_mut(|buf| {
+                                        buf.splice(lo..hi, items);
+                                    });
+                                    self.write_back(env, &name, Value::Array(arr));
+                                    return Ok(Flow::Continue);
                                 }
                             }
-                            self.write_back(env, &name, Value::Array(arr));
-                            return Ok(Flow::Continue);
                         }
                         other => {
                             return crate::error::err(format!(
@@ -388,6 +466,8 @@ impl Evaluator {
             }
             Stmt::While { cond, body, .. } => {
                 loop {
+                    // Cancellation (host interruption) at the loop back-edge (spec §16).
+                    self.check_cancelled()?;
                     if !self.eval_cond(env, cond)? {
                         break;
                     }
@@ -401,6 +481,7 @@ impl Evaluator {
                 pat, value, body, ..
             } => {
                 loop {
+                    self.check_cancelled()?;
                     let v = self.eval_expr(env, value)?;
                     let Some(bindings) = self.match_pattern(env, &v, pat) else {
                         break;
@@ -445,6 +526,8 @@ impl Evaluator {
                 };
                 let mut i = start;
                 while if step_v > 0 { i < end } else { i > end } {
+                    // Cancellation (host interruption) at the loop back-edge (spec §16).
+                    self.check_cancelled()?;
                     let scope = Env::child(env);
                     scope
                         .borrow_mut()
@@ -452,7 +535,11 @@ impl Evaluator {
                     if let flow @ Flow::Return(_) = self.eval_block_stmts(&scope, body)? {
                         return Ok(flow);
                     }
-                    i += step_v;
+                    // Checked step (spec §16.1 R0001): an overflowing loop index is an error, not
+                    // a silent wraparound.
+                    i = i.checked_add(step_v).ok_or_else(|| {
+                        RuntimeError::Overflow(format!("for-loop index overflow: {i} + {step_v}"))
+                    })?;
                 }
                 Ok(Flow::Continue)
             }
@@ -479,26 +566,6 @@ impl Evaluator {
                 body,
                 ..
             } => self.eval_parfor(env, var, range, step, body),
-        }
-    }
-
-    /// Evaluate a collection lvalue `A` (a plain variable holding an array or dict), for `A[i] = v`
-    /// / `d[k] = v` (spec §11.3/§11.6).
-    pub(crate) fn eval_collection_lvalue(
-        &mut self,
-        env: &EnvRef,
-        base: &Expr,
-    ) -> Result<(String, Value), RuntimeError> {
-        match &base.kind {
-            ExprKind::Path { segments } if segments.len() == 1 => {
-                let name = segments[0].value.clone();
-                match self.eval_expr(env, base)? {
-                    Value::Array(a) => Ok((name, Value::Array(a))),
-                    Value::Dict(d) => Ok((name, Value::Dict(d))),
-                    _ => crate::error::err("assignment target must be an array or dict"),
-                }
-            }
-            _ => crate::error::err("assignment target must be a variable"),
         }
     }
 
@@ -579,8 +646,9 @@ impl Evaluator {
         let cfg = self.current_config().clone();
         let var_name = var.value.clone();
 
-        // Snapshot the arrays being written (spec §17.2): read once, write back once.
-        let mut arrays: HashMap<String, Vec<Value>> = HashMap::new();
+        // Snapshot the arrays being written (spec §17.2): read once, write back once. The shared
+        // array handles are cloned (O(1)) and read-only on the rayon threads.
+        let mut arrays: HashMap<String, ArrayVal> = HashMap::new();
         let mut read_names: HashSet<String> = HashSet::new();
         read_names.insert(var_name.clone());
         for s in &steps {
@@ -608,37 +676,57 @@ impl Evaluator {
         let arrays_ro = arrays.clone();
 
         // Iteration count (closed form, same sequence as the sequential `for` loop, spec §17.2).
-        let n = if step_v > 0 {
+        // Computed in `i128`: `end - start` can overflow i64, and the count must never wrap or
+        // become negative (spec §16.1 R0001).
+        let n_i128: i128 = if step_v > 0 {
             if start >= end {
                 0
             } else {
-                (end - start - 1) / step_v + 1
+                ((end as i128 - start as i128 - 1) / step_v as i128) + 1
             }
         } else if start <= end {
             0
         } else {
-            (start - end - 1) / (-step_v) + 1
+            ((start as i128 - end as i128 - 1) / -(step_v as i128)) + 1
         };
+        // Resource limit (OOM guard): `parfor` eagerly materializes the index sequence before the
+        // rayon dispatch; a runaway count must fail here instead of exhausting memory.
+        if n_i128 > MAX_RANGE_ELEMS {
+            return Err(RuntimeError::Overflow(format!(
+                "parfor materializes {n_i128} iterations, exceeding the {MAX_RANGE_ELEMS} iteration limit"
+            )));
+        }
+        let n = i64::try_from(n_i128)
+            .map_err(|_| RuntimeError::Overflow("parfor iteration count overflows".into()))?;
 
         // Materialize the loop-index sequence, then process it in rayon chunks so each task evaluator
         // (and its read-only array bindings) is created once per thread rather than once per element.
-        let mut indices = Vec::with_capacity(n as usize);
+        let n_usize = usize::try_from(n)
+            .map_err(|_| RuntimeError::Overflow("parfor iteration count overflows".into()))?;
+        let mut indices = Vec::with_capacity(n_usize);
         if step_v > 0 {
             let mut i = start;
             while i < end {
                 indices.push(i);
-                i += step_v;
+                i = i.checked_add(step_v).ok_or_else(|| {
+                    RuntimeError::Overflow(format!("parfor index overflow: {i} + {step_v}"))
+                })?;
             }
         } else {
             let mut i = start;
             while i > end {
                 indices.push(i);
-                i += step_v;
+                i = i.checked_add(step_v).ok_or_else(|| {
+                    RuntimeError::Overflow(format!("parfor index overflow: {i} + {step_v}"))
+                })?;
             }
         }
 
         let steps_owned = steps.clone();
         let arrays_ro_c = arrays_ro.clone();
+        // Cancellation (host interruption): check before the rayon dispatch so an already-cancelled
+        // run never starts the parallel work.
+        self.check_cancelled()?;
         let chunk = (indices.len().max(1) / rayon::current_num_threads().max(1)).max(1);
         // Pre-resolve the read-only outer values so task threads never touch the (non-`Send`) env chain.
         let outer_reads: HashMap<String, Value> = read_names
@@ -648,6 +736,10 @@ impl Evaluator {
         let writes: Vec<Result<ParforWriteVec, RuntimeError>> = indices
             .par_chunks(chunk)
             .map(|chunk| {
+                // Mark this rayon thread as a `parfor` task (spec §17.2): JIT fallback execution
+                // is refused on it (the fallback dereferences the registering thread's `EnvRef`,
+                // which is not thread-safe — see `prima_runtime::jit`).
+                let _parfor_task = crate::jit::ParforTaskGuard::new();
                 let mut ev = Evaluator::spawn_task_evaluator(&cfg);
                 let call_env = Rc::new(RefCell::new(Env::new()));
                 // Bind read-only outer values (including the target arrays as pre-loop snapshots) so the
@@ -657,6 +749,10 @@ impl Evaluator {
                 }
                 let mut out: Vec<(String, usize, Value)> = Vec::new();
                 for &i in chunk {
+                    // Cancellation is checked per index so a long `parfor` stops promptly.
+                    if Evaluator::is_cancelled() {
+                        return Err(RuntimeError::Message("interrupted".into()));
+                    }
                     call_env
                         .borrow_mut()
                         .set_value(&var_name, Value::Number(Number::from(i)));
@@ -726,7 +822,7 @@ impl Evaluator {
                         arr.len()
                     )));
                 }
-                arr[idx] = val;
+                arr.with_mut(|items| items[idx] = val);
             }
         }
         // Write the arrays back along the shared chain (spec §12.2), creating locally if undefined.
@@ -792,10 +888,14 @@ impl Evaluator {
         let Some(acc) = acc else { return Ok(None) };
         let start = self.eval_to_i64(env, &range.0)?;
         let end = self.eval_to_i64(env, &range.1)?;
+        // Exact closed form (the loop accumulates exact `BigInt` sums, so the closed form must be
+        // exact too — computed in `BigInt`, never a wrapped i64 product).
         let sum = if start == 0 && end > 0 {
-            end * (end - 1) / 2
+            let e = BigInt::from(end);
+            (&e * (&e - 1u8)) / 2u8
         } else if start == 1 && end >= 1 {
-            end * (end + 1) / 2
+            let e = BigInt::from(end);
+            (&e * (&e + 1u8)) / 2u8
         } else {
             return Ok(None);
         };
@@ -803,7 +903,11 @@ impl Evaluator {
             .borrow()
             .get_value(&acc)
             .unwrap_or(Value::Number(Number::from(0)));
-        let merged = self.eval_binary(BinOp::Add, prev, Value::Number(Number::from(sum)))?;
+        let merged = self.eval_binary(
+            BinOp::Add,
+            prev,
+            Value::Number(Number::Integer(Box::new(sum))),
+        )?;
         let mut e = env.borrow_mut();
         if !e.set_existing(&acc, merged.clone()) {
             e.set_value(&acc, merged);

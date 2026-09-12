@@ -107,9 +107,9 @@ fn path_canonicalize(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, Runti
         Ok(c) => Ok(Value::Result(Ok(Box::new(Value::String(
             c.to_string_lossy().into_owned(),
         ))))),
-        Err(e) => Ok(Value::Result(Err(format!(
+        Err(e) => Ok(Value::Result(Err(Box::new(format!(
             "cannot canonicalize `{p}`: {e}"
-        )))),
+        ))))),
     }
 }
 
@@ -137,7 +137,11 @@ fn env_get(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
 fn env_args(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 0, "sys::env::args")?;
     Ok(Value::Array(
-        std::env::args().skip(1).map(Value::String).collect(),
+        std::env::args()
+            .skip(1)
+            .map(Value::String)
+            .collect::<Vec<Value>>()
+            .into(),
     ))
 }
 

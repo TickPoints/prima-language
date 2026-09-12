@@ -36,10 +36,10 @@ fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeEr
     }
 }
 
-/// Extract a `&[Value]` from a `Value::Array` argument (type error otherwise).
-fn array_arg<'a>(v: &'a Value, fname: &str, i: usize) -> Result<&'a [Value], RuntimeError> {
+/// Extract a `Vec<Value>` snapshot from a `Value::Array` argument (type error otherwise).
+fn array_arg(v: &Value, fname: &str, i: usize) -> Result<Vec<Value>, RuntimeError> {
     match v {
-        Value::Array(items) => Ok(items),
+        Value::Array(items) => Ok(items.to_vec()),
         other => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be an array, got {other:?}"
         ))),
@@ -61,7 +61,7 @@ fn ok(v: Value) -> Value {
 }
 
 fn err(msg: String) -> Value {
-    Value::Result(Err(msg))
+    Value::Result(Err(Box::new(msg)))
 }
 
 /// Register the `io` `@builtin` implementations (spec §18.4 / appendix B.2): file I/O, JSON, and
@@ -120,7 +120,11 @@ fn read_lines(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError
                     &lines[..]
                 };
             ok(Value::Array(
-                lines.iter().map(|l| Value::String(l.clone())).collect(),
+                lines
+                    .iter()
+                    .map(|l| Value::String(l.clone()))
+                    .collect::<Vec<Value>>()
+                    .into(),
             ))
         }
         Err(e) => err(format!("cannot read `{path}`: {e}")),
@@ -152,15 +156,19 @@ fn json_to_value(v: serde_json::Value) -> Value {
             }
         }
         serde_json::Value::String(s) => Value::String(s),
-        serde_json::Value::Array(items) => {
-            Value::Array(items.into_iter().map(json_to_value).collect())
-        }
+        serde_json::Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(json_to_value)
+                .collect::<Vec<Value>>()
+                .into(),
+        ),
         serde_json::Value::Object(map) => {
             let d: HashMap<ValueKey, Value> = map
                 .into_iter()
                 .map(|(k, v)| (ValueKey::Str(k), json_to_value(v)))
                 .collect();
-            Value::Dict(d)
+            Value::Dict(Box::new(d))
         }
     }
 }
@@ -183,13 +191,16 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, String> {
             }
         }
         Value::Array(items) => items
-            .iter()
-            .map(value_to_json)
-            .collect::<Result<Vec<_>, _>>()
+            .with(|elems| {
+                elems
+                    .iter()
+                    .map(value_to_json)
+                    .collect::<Result<Vec<_>, _>>()
+            })
             .map(serde_json::Value::Array),
         Value::Dict(map) => {
             let mut obj = serde_json::Map::new();
-            for (k, val) in map {
+            for (k, val) in map.iter() {
                 let ValueKey::Str(s) = k else {
                     return Err(format!("JSON object keys must be strings, got {k:?}"));
                 };
@@ -359,8 +370,16 @@ fn csv_parse(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError>
     Ok(match csv_parse_text(&s) {
         Ok(rows) => ok(Value::Array(
             rows.into_iter()
-                .map(|r| Value::Array(r.into_iter().map(Value::String).collect()))
-                .collect(),
+                .map(|r| {
+                    Value::Array(
+                        r.into_iter()
+                            .map(Value::String)
+                            .collect::<Vec<Value>>()
+                            .into(),
+                    )
+                })
+                .collect::<Vec<Value>>()
+                .into(),
         )),
         Err(e) => err(e),
     })
@@ -392,8 +411,16 @@ fn read_csv(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> 
         Ok(s) => match csv_parse_text(&s) {
             Ok(rows) => ok(Value::Array(
                 rows.into_iter()
-                    .map(|r| Value::Array(r.into_iter().map(Value::String).collect()))
-                    .collect(),
+                    .map(|r| {
+                        Value::Array(
+                            r.into_iter()
+                                .map(Value::String)
+                                .collect::<Vec<Value>>()
+                                .into(),
+                        )
+                    })
+                    .collect::<Vec<Value>>()
+                    .into(),
             )),
             Err(e) => err(format!("invalid CSV in `{path}`: {e}")),
         },

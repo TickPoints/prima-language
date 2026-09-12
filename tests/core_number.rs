@@ -108,17 +108,17 @@ fn fixed_width_stays_distinct() {
 fn fixed_width_arithmetic_normalizes_to_exact() {
     assert_eq!(
         Number::I8(100) + Number::from(50),
-        Number::Integer(BigInt::from(150))
+        Number::Integer(Box::new(BigInt::from(150)))
     );
     assert_eq!(
         Number::I16(7) * Number::from(6),
-        Number::Integer(BigInt::from(42))
+        Number::Integer(Box::new(BigInt::from(42)))
     );
     assert_eq!(
         Number::U8(3) - Number::from(10),
-        Number::Integer(BigInt::from(-7))
+        Number::Integer(Box::new(BigInt::from(-7)))
     );
-    assert_eq!(-Number::I8(5), Number::Integer(BigInt::from(-5)));
+    assert_eq!(-Number::I8(5), Number::Integer(Box::new(BigInt::from(-5))));
     let exact_div = Number::I64(6) / Number::I64(2);
     match exact_div {
         Number::Rational(r) => {
@@ -136,8 +136,8 @@ fn fixed_width_arithmetic_normalizes_to_exact() {
         other => panic!("expected Rational, got {other:?}"),
     }
     assert_eq!(
-        Number::U128(1) + Number::from(2),
-        Number::Integer(BigInt::from(3))
+        Number::U128(Box::new(1)) + Number::from(2),
+        Number::Integer(Box::new(BigInt::from(3)))
     );
 }
 
@@ -161,18 +161,18 @@ fn fixed_width_collapse_conversions() {
     assert_eq!(Number::I8(127).as_i8(), Some(127));
     assert_eq!(Number::I16(300).as_i8(), None);
     assert_eq!(Number::U8(200).as_i8(), None);
-    assert_eq!(Number::Integer(BigInt::from(7)).as_i8(), Some(7));
-    assert_eq!(Number::Integer(BigInt::from(128)).as_i8(), None);
+    assert_eq!(Number::Integer(Box::new(BigInt::from(7))).as_i8(), Some(7));
+    assert_eq!(Number::Integer(Box::new(BigInt::from(128))).as_i8(), None);
     assert_eq!(Number::from(3).as_i8(), Some(3));
     assert_eq!(Number::I8(-128).as_i16(), Some(-128));
-    assert_eq!(Number::I128(1).as_i128(), Some(1));
+    assert_eq!(Number::I128(Box::new(1)).as_i128(), Some(1));
     assert_eq!(Number::from(300).as_u8(), None);
     assert_eq!(Number::from(255).as_u8(), Some(255));
     assert_eq!(Number::U64(5).as_u64(), Some(5));
     assert_eq!(Number::I8(-1).as_u64(), None);
-    assert_eq!(Number::U128(9).as_u128(), Some(9));
+    assert_eq!(Number::U128(Box::new(9)).as_u128(), Some(9));
     assert_eq!(Number::Usize(5).as_usize(), Some(5));
-    assert_eq!(Number::I128(-3).as_usize(), None);
+    assert_eq!(Number::I128(Box::new(-3)).as_usize(), None);
     assert_eq!(Number::from(0).as_usize(), Some(0));
     assert_eq!(Number::I8(5).as_isize(), Some(5));
     assert_eq!(Number::I8(5).as_bigint(), Some(BigInt::from(5)));
@@ -239,5 +239,35 @@ fn fixed_width_zero_and_one_predicates() {
     assert!(Number::I8(0).is_zero());
     assert!(!Number::U64(1).is_zero());
     assert!(Number::I8(1).is_one());
-    assert!(!Number::U128(2).is_one());
+    assert!(!Number::U128(Box::new(2)).is_one());
+}
+
+#[test]
+fn boxed_representations_match_small_semantics() {
+    // `Integer`/`Rational` are boxed to keep `Number` compact; the boxed forms must stay
+    // semantically identical to the inlined representations (spec §6.1 exact layer).
+    assert_eq!(Number::Integer(Box::new(BigInt::from(5))), Number::from(5));
+    assert_eq!(Number::from(5), Number::Integer(Box::new(BigInt::from(5))));
+    assert_ne!(Number::Integer(Box::new(BigInt::from(5))), Number::from(6));
+    let q = Number::Rational(Box::new(BigRational::new(BigInt::from(1), BigInt::from(3))));
+    assert_eq!(q, Number::from(1) / Number::from(3));
+    assert_eq!(Number::from(1) / Number::from(3), q);
+    // Arithmetic across the boxed/inlined split stays exact (spec §6.4 promotion).
+    assert_eq!(
+        Number::Integer(Box::new(BigInt::from(2))) + Number::from(3),
+        Number::from(5)
+    );
+    assert_eq!(
+        Number::from(2) + q.clone(),
+        Number::Rational(Box::new(BigRational::new(BigInt::from(7), BigInt::from(3))))
+    );
+    // `from_bigint` still narrows to `Small` when the value fits `i64` (spec §6.1).
+    assert!(matches!(
+        Number::from_bigint(BigInt::from(5)),
+        Number::Small(5)
+    ));
+    assert!(matches!(
+        Number::from_bigint(BigInt::from(2).pow(80)),
+        Number::Integer(_)
+    ));
 }

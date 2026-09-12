@@ -56,12 +56,17 @@ impl Evaluator {
                                 a.len()
                             ))
                         })?;
-                        Ok(a[idx].clone())
+                        a.get(idx).ok_or_else(|| {
+                            RuntimeError::IndexOutOfBounds(format!(
+                                "index {raw} (length {})",
+                                a.len()
+                            ))
+                        })
                     }
                     IndexItem::Slice { start, end } => {
                         let (lo, hi) =
                             self.slice_bounds(env, start.as_ref(), end.as_ref(), a.len())?;
-                        Ok(Value::Array(a[lo..hi].to_vec()))
+                        Ok(Value::Array(a.with(|items| items[lo..hi].to_vec()).into()))
                     }
                 }
             }
@@ -186,11 +191,18 @@ impl Evaluator {
                 ret: _,
                 body,
                 env: f_env,
+                vm,
             } => {
                 // Bytecode VM fast path (spec §19.5, gated): when `vm` is enabled and the body is
                 // inside the compiled subset, run the chunk; otherwise fall back to the AST path.
+                // Tail-recursive bodies stay on the AST path: the trampoline (`apply_host_tco`,
+                // spec §10.2 item 6) runs them in constant stack space, which the compiled subset
+                // does not model — recursion depth must not regress.
+                let tco = self.current_config().opt_level >= OptLevel::O2
+                    && crate::opt::tail_call_of(body).is_some();
                 if self.current_config().vm
-                    && let Some(v) = self.try_vm_single(params, body, f_env, args.clone())?
+                    && !tco
+                    && let Some(v) = self.try_vm_single(params, body, f_env, vm, args.clone())?
                 {
                     return Ok(v);
                 }
@@ -297,12 +309,13 @@ impl Evaluator {
                 .iter()
                 .map(|a| self.eval_expr(&call_env, a))
                 .collect::<Result<_, _>>()?;
-            match next {
+            match next.as_ref() {
                 Function::Host {
                     params: np,
                     ret: _,
                     body: nb,
                     env: nenv,
+                    ..
                 } => {
                     if nargs.len() != np.len() {
                         return crate::error::err(format!(
@@ -311,12 +324,12 @@ impl Evaluator {
                             nargs.len()
                         ));
                     }
-                    cparams = np;
-                    cbody = nb;
-                    cenv = nenv;
+                    cparams = np.clone();
+                    cbody = nb.clone();
+                    cenv = Rc::clone(nenv);
                     cargs = nargs;
                 }
-                other => return self.apply_function(&other, nargs),
+                other => return self.apply_function(other, nargs),
             }
         }
     }
@@ -362,8 +375,8 @@ impl Evaluator {
                 if positions.contains(&j) {
                     if let Value::Array(a) = v {
                         // Only numeric elements participate in broadcast (spec §11.4, R0009).
-                        match &a[i] {
-                            Value::Number(n) => cargs.push(Value::Number(n.clone())),
+                        match a.get(i) {
+                            Some(Value::Number(n)) => cargs.push(Value::Number(n)),
                             _ => {
                                 return crate::error::err("cannot broadcast a non-numeric element");
                             }
@@ -381,7 +394,7 @@ impl Evaluator {
                 _ => return crate::error::err("broadcast result must be numeric"),
             }
         }
-        Ok(Value::Array(results))
+        Ok(Value::Array(results.into()))
     }
 
     /// Parallel broadcast of a `@parallel` MFn (spec §17.1/17.4): each rayon thread block runs an
@@ -406,8 +419,8 @@ impl Evaluator {
                 for (j, v) in args.iter().enumerate() {
                     if positions_owned.contains(&j) {
                         if let Value::Array(a) = v {
-                            match &a[i] {
-                                Value::Number(n) => cargs.push(Value::Number(n.clone())),
+                            match a.get(i) {
+                                Some(Value::Number(n)) => cargs.push(Value::Number(n)),
                                 _ => {
                                     return Err(RuntimeError::Message(
                                         "cannot broadcast a non-numeric element".into(),
@@ -447,7 +460,7 @@ impl Evaluator {
         for r in results {
             out.push(Value::Number(r?));
         }
-        Ok(Value::Array(out))
+        Ok(Value::Array(out.into()))
     }
 
     /// Binary array operation (spec §11.3/§11.4): `Array + Array` concatenates; `Array ∘ Array` for the
@@ -467,7 +480,7 @@ impl Evaluator {
             let Value::Array(bv) = b else {
                 unreachable!("checked above")
             };
-            av.extend(bv);
+            av.with_mut(|items| items.extend(bv.to_vec()));
             return Ok(Value::Array(av));
         }
         let out: Vec<Value> = match (a, b) {
@@ -478,10 +491,10 @@ impl Evaluator {
                 if av.is_empty() {
                     return crate::error::err("cannot operate on an empty array");
                 }
-                let av = require_numeric_array(&av)?;
-                let bv = require_numeric_array(&bv)?;
+                let av = av.with(require_numeric_array)?;
+                let bv = bv.with(require_numeric_array)?;
                 if let Some(v) = self.try_simd_arrays(op, &av, &bv) {
-                    return Ok(Value::Array(v));
+                    return Ok(Value::Array(v.into()));
                 }
                 let mut out = Vec::with_capacity(av.len());
                 for (x, y) in av.into_iter().zip(bv) {
@@ -497,9 +510,9 @@ impl Evaluator {
                 if av.is_empty() {
                     return crate::error::err("cannot operate on an empty array");
                 }
-                let av = require_numeric_array(&av)?;
+                let av = av.with(require_numeric_array)?;
                 if let Some(v) = self.try_simd_scalar(op, &av, &scalar) {
-                    return Ok(Value::Array(v));
+                    return Ok(Value::Array(v.into()));
                 }
                 let mut out = Vec::with_capacity(av.len());
                 for x in av {
@@ -515,9 +528,9 @@ impl Evaluator {
                 if bv.is_empty() {
                     return crate::error::err("cannot operate on an empty array");
                 }
-                let bv = require_numeric_array(&bv)?;
+                let bv = bv.with(require_numeric_array)?;
                 if let Some(v) = self.try_simd_scalar_left(op, &scalar, &bv) {
-                    return Ok(Value::Array(v));
+                    return Ok(Value::Array(v.into()));
                 }
                 let mut out = Vec::with_capacity(bv.len());
                 for y in bv {
@@ -530,7 +543,7 @@ impl Evaluator {
             }
             _ => return crate::error::err("invalid array operation"),
         };
-        Ok(Value::Array(out))
+        Ok(Value::Array(out.into()))
     }
 
     pub(crate) fn scalar_for_broadcast(&self, v: Value) -> Result<Number, RuntimeError> {

@@ -60,14 +60,22 @@ fn scalar(x: f64) -> Value {
 fn matrix_value(m: &DMatrix<f64>) -> Value {
     Value::Array(
         (0..m.nrows())
-            .map(|r| Value::Array((0..m.ncols()).map(|c| scalar(m[(r, c)])).collect()))
-            .collect(),
+            .map(|r| {
+                Value::Array(
+                    (0..m.ncols())
+                        .map(|c| scalar(m[(r, c)]))
+                        .collect::<Vec<Value>>()
+                        .into(),
+                )
+            })
+            .collect::<Vec<Value>>()
+            .into(),
     )
 }
 
 /// Convert a `DVector` back to the flat-array `Value` representation.
 fn vector_value(v: &DVector<f64>) -> Value {
-    Value::Array(v.iter().map(|&x| scalar(x)).collect())
+    Value::Array(v.iter().map(|&x| scalar(x)).collect::<Vec<Value>>().into())
 }
 
 fn type_err(fname: &str, msg: impl Into<String>) -> RuntimeError {
@@ -89,9 +97,9 @@ fn as_matrix(v: &Value, fname: &str) -> Result<DMatrix<f64>, RuntimeError> {
     if rows.is_empty() {
         return Err(type_err(fname, "empty matrix (R0014)"));
     }
-    let ncols = match &rows[0] {
-        Value::Array(r) if !r.is_empty() => r.len(),
-        Value::Array(_) => return Err(type_err(fname, "empty matrix row (R0014)")),
+    let ncols = match rows.get(0) {
+        Some(Value::Array(r)) if !r.is_empty() => r.len(),
+        Some(Value::Array(_)) => return Err(type_err(fname, "empty matrix row (R0014)")),
         other => {
             return Err(type_err(
                 fname,
@@ -100,20 +108,17 @@ fn as_matrix(v: &Value, fname: &str) -> Result<DMatrix<f64>, RuntimeError> {
         }
     };
     let mut data = Vec::with_capacity(rows.len() * ncols);
-    for row in rows {
-        let r = match row {
-            Value::Array(r) => r,
-            other => {
-                return Err(type_err(
-                    fname,
-                    format!("expected a numeric matrix (R0009), got row {other:?}"),
-                ));
-            }
+    for row in rows.iter() {
+        let Value::Array(r) = row else {
+            return Err(type_err(
+                fname,
+                format!("expected a numeric matrix (R0009), got row {row:?}"),
+            ));
         };
         if r.len() != ncols {
             return Err(type_err(fname, "ragged rows: dimension mismatch (R0004)"));
         }
-        for el in r {
+        for el in r.iter() {
             match el {
                 Value::Number(n) if !n.is_complex() => data.push(n.to_f64_lossy()),
                 other => {
@@ -143,7 +148,7 @@ fn as_vector(v: &Value, fname: &str) -> Result<DVector<f64>, RuntimeError> {
         return Err(type_err(fname, "empty vector (R0014)"));
     }
     let mut data = Vec::with_capacity(elems.len());
-    for el in elems {
+    for el in elems.iter() {
         match el {
             Value::Number(n) if !n.is_complex() => data.push(n.to_f64_lossy()),
             other => {
@@ -333,7 +338,7 @@ fn norm(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
         }
     };
     // Nested arrays are matrices; flat numeric arrays are vectors (spec §11.3).
-    let is_matrix = matches!(&args[0], Value::Array(rows) if !rows.is_empty() && matches!(&rows[0], Value::Array(_)));
+    let is_matrix = matches!(&args[0], Value::Array(rows) if !rows.is_empty() && matches!(rows.get(0), Some(Value::Array(_))));
     if is_matrix {
         let m = as_matrix(&args[0], "linalg::norm")?;
         Ok(scalar(matrix_norm(&m, p, "linalg::norm")?))
@@ -456,7 +461,8 @@ enum Rhs {
 }
 
 fn as_rhs(v: &Value, fname: &str) -> Result<Rhs, RuntimeError> {
-    if matches!(v, Value::Array(rows) if !rows.is_empty() && matches!(&rows[0], Value::Array(_))) {
+    if matches!(v, Value::Array(rows) if !rows.is_empty() && matches!(rows.get(0), Some(Value::Array(_))))
+    {
         as_matrix(v, fname).map(Rhs::Matrix)
     } else {
         as_vector(v, fname).map(Rhs::Vector)
@@ -480,7 +486,12 @@ fn rhs_as_matrix(rhs: &Rhs) -> DMatrix<f64> {
 /// Convert the solved `n x k` matrix back to a value, matching the RHS shape.
 fn rhs_solution(out: &DMatrix<f64>, rhs: &Rhs) -> Value {
     match rhs {
-        Rhs::Vector(_) => Value::Array((0..out.nrows()).map(|r| scalar(out[(r, 0)])).collect()),
+        Rhs::Vector(_) => Value::Array(
+            (0..out.nrows())
+                .map(|r| scalar(out[(r, 0)]))
+                .collect::<Vec<Value>>()
+                .into(),
+        ),
         Rhs::Matrix(_) => matrix_value(out),
     }
 }

@@ -30,8 +30,8 @@ fn build_fx() -> (ExprId, SymbolId) {
 /// `Add`/`Mul` n-ary nodes, `Pow`, applications of `sin`/`exp`, and numeric/symbol leaves.
 fn eval_dag(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId, x: SymbolId, xv: f64) -> f64 {
     match pool.get(id) {
-        Some(ExprData::Integer(i)) => Number::Integer(*i).to_f64_lossy(),
-        Some(ExprData::Rational(r)) => Number::Rational(*r).to_f64_lossy(),
+        Some(ExprData::Integer(i)) => Number::Integer(Box::new(*i)).to_f64_lossy(),
+        Some(ExprData::Rational(r)) => Number::Rational(Box::new(*r)).to_f64_lossy(),
         Some(ExprData::Real(Real::F64(v))) => v,
         Some(ExprData::Real(Real::F32(v))) => v as f64,
         Some(ExprData::Symbol(s)) if s == x => xv,

@@ -24,7 +24,9 @@ fn val(n: Number) -> NamespaceItem {
 
 /// Exact integer from decimal text (sizes exceed `i64` for some constants).
 fn exact_int(s: &str) -> Number {
-    Number::Integer(BigInt::parse_bytes(s.as_bytes(), 10).expect("valid decimal literal"))
+    Number::Integer(Box::new(
+        BigInt::parse_bytes(s.as_bytes(), 10).expect("valid decimal literal"),
+    ))
 }
 
 /// Exact rational `numer / denom` as decimal text; exact-layer division auto-reduces (spec §6.1).

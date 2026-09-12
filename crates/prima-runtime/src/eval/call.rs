@@ -16,20 +16,20 @@ impl Evaluator {
         // not first-class values) as well as a symbolic expression.
         if let ExprKind::Path { segments } = &callee.kind
             && segments.len() == 1
-            && let Some(Function::Builtin(b)) = self.resolve_func(env, segments)
+            && let Some(Function::Builtin(b)) = self.resolve_func(env, segments).as_deref()
             && matches!(
                 b,
                 Builtin::Derivative | Builtin::Partial | Builtin::Grad | Builtin::Limit
             )
         {
-            return self.eval_calc_call(env, b, args);
+            return self.eval_calc_call(env, *b, args);
         }
         // JIT compilation (spec §19.2): `jit(f)`/`jit(expr)`/`jit(grad(f))` are intercepted before generic
         // argument evaluation, so the argument may be an MFn *name* or a symbolic expression.
         if let ExprKind::Path { segments } = &callee.kind
             && segments.len() == 1
-            && let Some(Function::Builtin(b)) = self.resolve_func(env, segments)
-            && b == Builtin::Jit
+            && let Some(Function::Builtin(b)) = self.resolve_func(env, segments).as_deref()
+            && *b == Builtin::Jit
         {
             return self.eval_jit_call(env, args);
         }
@@ -38,10 +38,10 @@ impl Evaluator {
         // generic argument evaluation, mirroring `derivative`.
         if let ExprKind::Path { segments } = &callee.kind
             && segments.len() == 1
-            && let Some(Function::Builtin(b)) = self.resolve_func(env, segments)
+            && let Some(Function::Builtin(b)) = self.resolve_func(env, segments).as_deref()
             && matches!(b, Builtin::Map | Builtin::Filter | Builtin::Reduce)
         {
-            return self.eval_higher_order(env, b, args);
+            return self.eval_higher_order(env, *b, args);
         }
         // Class associated functions `T::name(args)` and `mod::T::name(args)` (spec §4.5).
         if let ExprKind::Path { segments } = &callee.kind {
@@ -150,16 +150,16 @@ impl Evaluator {
                 body,
                 env: f_env,
                 ..
-            }) = self.resolve_func(env, segments)
+            }) = self.resolve_func(env, segments).as_deref()
         {
-            let (dag, names) = self.body_dag(&params, &body, &f_env)?;
+            let (dag, names) = self.body_dag(params, body, f_env)?;
             let compiled = prima_jit::compile_scalar(self.pool, self.builtins, dag, &names);
             let id = crate::jit::register(crate::jit::JitCallable {
                 params: names,
                 n_out: 1,
                 compiled,
                 tape: None,
-                fallback: Some((params, body, f_env)),
+                fallback: Some((params.clone(), body.clone(), Rc::clone(f_env))),
                 expressions: None,
             });
             return Ok(Value::JitFunction(id));
@@ -174,7 +174,8 @@ impl Evaluator {
                 segments: callee_segs,
             } = &callee.kind
             && callee_segs.len() == 1
-            && let Some(Function::Builtin(Builtin::Grad)) = self.resolve_func(env, callee_segs)
+            && let Some(Function::Builtin(Builtin::Grad)) =
+                self.resolve_func(env, callee_segs).as_deref()
             && let ExprKind::Path {
                 segments: inner_segs,
             } = &inner[0].kind
@@ -184,9 +185,9 @@ impl Evaluator {
                 body,
                 env: f_env,
                 ..
-            }) = self.resolve_func(env, inner_segs)
+            }) = self.resolve_func(env, inner_segs).as_deref()
         {
-            let (dag, names) = self.body_dag(&params, &body, &f_env)?;
+            let (dag, names) = self.body_dag(params, body, f_env)?;
             let tape =
                 crate::ad::Tape::build(self.pool, self.builtins, dag, &names).ok_or_else(|| {
                     RuntimeError::Message(
@@ -282,7 +283,8 @@ impl Evaluator {
                 env: Rc::clone(env),
                 parallel: false,
                 hot: Arc::new(HotState::new(false)),
-            },
+            }
+            .into(),
             _ => {
                 return crate::error::err(
                     "`map`/`filter`/`reduce` first argument must be a function",
@@ -292,13 +294,14 @@ impl Evaluator {
         let Value::Array(elems) = self.eval_expr(env, &args[1])? else {
             return crate::error::err("`map`/`filter`/`reduce` second argument must be an array");
         };
+        let elems = elems.to_vec();
         match b {
             Builtin::Map => {
                 let mut out = Vec::with_capacity(elems.len());
                 for e in elems {
                     out.push(self.apply_function(&f, vec![e])?);
                 }
-                Ok(Value::Array(out))
+                Ok(Value::Array(out.into()))
             }
             Builtin::Filter => {
                 let mut out = Vec::new();
@@ -309,7 +312,7 @@ impl Evaluator {
                         _ => return crate::error::err("`filter` predicate must return a boolean"),
                     }
                 }
-                Ok(Value::Array(out))
+                Ok(Value::Array(out.into()))
             }
             Builtin::Reduce => {
                 let init = args.get(2).ok_or_else(|| {
@@ -340,16 +343,16 @@ impl Evaluator {
                 body,
                 env: f_env,
                 ..
-            }) = self.resolve_func(env, segments)
+            }) = self.resolve_func(env, segments).as_deref()
         {
-            let call_env = Env::child(&f_env);
+            let call_env = Env::child(f_env);
             for p in params.iter() {
                 let sym = self.pool.symbol(self.symbols.intern(&p.name.value));
                 call_env
                     .borrow_mut()
                     .set_value(&p.name.value, Value::Expr(sym));
             }
-            let v = self.eval_expr(&call_env, &body)?;
+            let v = self.eval_expr(&call_env, body)?;
             return self.to_expr_id(&v);
         }
         let v = self.eval_expr(env, e)?;
@@ -447,13 +450,13 @@ impl Evaluator {
         &self,
         env: &EnvRef,
         segments: &[Spanned<String>],
-    ) -> Option<Function> {
+    ) -> Option<Rc<Function>> {
         if segments.len() == 1 {
             env.borrow().get_func(&segments[0].value)
         } else {
             let ns = path_key(&segments[..segments.len() - 1]);
             match self.lookup_module_item_flat(env, &ns, &segments[segments.len() - 1].value) {
-                Some(NamespaceItem::Func(f)) => Some(f),
+                Some(NamespaceItem::Func(f)) => Some(Rc::new(f)),
                 _ => None,
             }
         }
@@ -490,7 +493,7 @@ impl Evaluator {
         match &e.kind {
             ExprKind::Call { callee, .. } => match &callee.kind {
                 ExprKind::Path { segments } if segments.len() == 1 => {
-                    match env.borrow().get_func(&segments[0].value) {
+                    match env.borrow().get_func(&segments[0].value).as_deref() {
                         Some(Function::Builtin(b)) => b.is_pure(),
                         Some(Function::User { .. }) => true,
                         // Rust-hosted stdlib functions (spec §18/§18.4) may have side effects; never pure.
