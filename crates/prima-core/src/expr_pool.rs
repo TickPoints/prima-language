@@ -2,8 +2,6 @@ use dashmap::DashMap;
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::One;
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock, RwLock};
@@ -45,15 +43,15 @@ pub enum ExprData {
     Indeterminate(IndeterminateForm),
 }
 
-// Thread-local cache (spec §8.1): hit the local cache first, fall back to the global pool, write back on a hit.
-thread_local! {
-    static LOCAL_CACHE: RefCell<HashMap<u64, ExprId>> = RefCell::new(HashMap::new());
-}
-
-/// Process-wide shared hash-consing pool (spec §8.1/§12.4): maps content hash → `ExprId`.
+/// Process-wide shared hash-consing pool (spec §8.1/§12.4): maps content hash → candidate `ExprId`s.
 /// The central store is append-only (the symbolic layer is acyclic and resident), concurrency-safe.
+///
+/// Each hash bucket holds **every** interned expression with that content hash; a hit is confirmed
+/// by an `ExprData` equality comparison against the store. This keeps the hash-consing invariant
+/// (equal content ⇒ equal `ExprId`) even under hash collisions — `DefaultHasher` is not
+/// cryptographic and is keyed identically in every process, so collisions are constructible.
 pub struct ExprPool {
-    global: DashMap<u64, ExprId>,
+    global: DashMap<u64, Vec<ExprId>>,
     store: RwLock<Vec<ExprData>>,
     alloc: Mutex<()>,
 }
@@ -79,31 +77,50 @@ impl ExprPool {
         h.finish()
     }
 
-    /// Intern flow (spec §8.1): content hash → local cache → global pool → append-allocate and write
-    /// back to both caches. The same `ExprData` always yields the same `ExprId`.
+    /// Intern flow (spec §8.1): content hash → bucket scan with equality confirmation →
+    /// append-allocate under the allocation lock. The same `ExprData` always yields the same
+    /// `ExprId` (hash-consing invariant), even when two distinct contents hash to the same bucket.
     pub fn intern(&self, data: ExprData) -> ExprId {
         let key = Self::hash_data(&data);
-        let cached = LOCAL_CACHE.with(|c| c.borrow().get(&key).copied());
-        if let Some(id) = cached {
-            return id;
-        }
-        if let Some(id) = self.global.get(&key) {
-            let id = *id;
-            LOCAL_CACHE.with(|c| c.borrow_mut().insert(key, id));
+        if let Some(id) = self.find(key, &data) {
             return id;
         }
         let _guard = self.alloc.lock().unwrap();
-        if let Some(id) = self.global.get(&key) {
-            let id = *id;
-            LOCAL_CACHE.with(|c| c.borrow_mut().insert(key, id));
+        // Re-check under the allocation lock: a concurrent intern may have appended the same
+        // content between the first scan and the lock acquisition.
+        if let Some(id) = self.find(key, &data) {
             return id;
         }
+        // Lock order is `store` → `global` here and `global` → `store` in `find`, but never the
+        // reverse pair while holding: `find` releases both guards before returning, and the
+        // `alloc` mutex serializes this section against other interns.
         let mut store = self.store.write().unwrap();
         let id = ExprId(store.len() as u32);
         store.push(data);
-        self.global.insert(key, id);
-        LOCAL_CACHE.with(|c| c.borrow_mut().insert(key, id));
+        drop(store);
+        self.global.entry(key).or_default().push(id);
         id
+    }
+
+    /// Scan the hash bucket for an entry whose stored content equals `data`; the bucket holds
+    /// every expression interned under this content hash, so an equality-confirmed hit is *the*
+    /// canonical `ExprId` for `data` (spec §8.1).
+    fn find(&self, key: u64, data: &ExprData) -> Option<ExprId> {
+        self.global
+            .get(&key)?
+            .iter()
+            .copied()
+            .find(|&id| self.eq_entry(id, data))
+    }
+
+    /// Whether the store entry at `id` equals `data` (structural equality; child `ExprId`s are
+    /// themselves content-canonical by induction, so `ExprData` equality is content equality).
+    fn eq_entry(&self, id: ExprId, data: &ExprData) -> bool {
+        self.store
+            .read()
+            .unwrap()
+            .get(id.0 as usize)
+            .is_some_and(|d| d == data)
     }
 
     pub fn get(&self, id: ExprId) -> Option<ExprData> {
@@ -124,12 +141,14 @@ impl ExprPool {
 
     pub fn number(&self, n: &Number) -> ExprId {
         match n {
-            Number::Integer(i) => self.intern(ExprData::Integer(Box::new(i.clone()))),
+            // `Small` interns to the same integer node as `Integer` (spec §6.1 exact layer).
+            Number::Small(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::Integer(i) => self.intern(ExprData::Integer(i.clone())),
             Number::Rational(r) => {
                 if *r.denom() == BigInt::one() {
                     self.intern(ExprData::Integer(Box::new(r.numer().clone())))
                 } else {
-                    self.intern(ExprData::Rational(Box::new(r.clone())))
+                    self.intern(ExprData::Rational(r.clone()))
                 }
             }
             Number::Real(r) => self.intern(ExprData::Real(*r)),
@@ -141,12 +160,12 @@ impl ExprPool {
             Number::I16(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
             Number::I32(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
             Number::I64(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
-            Number::I128(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::I128(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(**v)))),
             Number::U8(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
             Number::U16(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
             Number::U32(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
             Number::U64(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
-            Number::U128(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
+            Number::U128(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(**v)))),
             Number::Isize(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
             Number::Usize(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
             Number::BigFloat(f) => self.intern(ExprData::Real(Real::F64(*f))),
@@ -155,8 +174,8 @@ impl ExprPool {
 
     pub fn const_number(&self, id: ExprId) -> Option<Number> {
         match self.get(id)? {
-            ExprData::Integer(i) => Some(Number::Integer(*i)),
-            ExprData::Rational(r) => Some(Number::Rational(*r)),
+            ExprData::Integer(i) => Some(Number::Integer(i)),
+            ExprData::Rational(r) => Some(Number::Rational(r)),
             ExprData::Real(r) => Some(Number::Real(r)),
             _ => None,
         }
@@ -316,5 +335,59 @@ impl ExprPool {
 impl Default for ExprPool {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn int_data(v: i64) -> ExprData {
+        ExprData::Integer(Box::new(BigInt::from(v)))
+    }
+
+    /// Simulate a hash collision by re-keying two distinct interned expressions under one bucket:
+    /// interning either content must resolve to its own `ExprId`, never the other's.
+    #[test]
+    fn intern_distinguishes_hash_collisions() {
+        let pool = ExprPool::new();
+        let a = pool.intern(int_data(7));
+        let b = pool.intern(int_data(9));
+        assert_ne!(a, b);
+        // Force both candidates into the bucket of `a`'s content hash.
+        let key_a = ExprPool::hash_data(&int_data(7));
+        pool.global.insert(key_a, vec![a, b]);
+        assert_eq!(pool.intern(int_data(7)), a);
+        assert_eq!(pool.intern(int_data(9)), b);
+    }
+
+    /// A fresh content whose hash bucket already holds an unequal candidate must be appended as a
+    /// new entry (not silently replaced by the collision candidate).
+    #[test]
+    fn intern_appends_new_entry_on_collision() {
+        let pool = ExprPool::new();
+        let decoy = pool.intern(ExprData::Symbol(SymbolId(0)));
+        let target = ExprData::Integer(Box::new(BigInt::from(42)));
+        // Plant the decoy under the target content's hash: the naive "hash only" intern would
+        // return the decoy here.
+        pool.global.insert(ExprPool::hash_data(&target), vec![decoy]);
+        let id = pool.intern(target.clone());
+        assert_ne!(id, decoy);
+        assert_eq!(pool.get(id), Some(target));
+        // Both candidates now share the bucket; interning the decoy's content still works.
+        assert_eq!(pool.intern(ExprData::Symbol(SymbolId(0))), decoy);
+    }
+
+    /// The hash-consing invariant on the real path: repeated interning of equal content yields
+    /// one `ExprId`, and structurally different content yields different ids.
+    #[test]
+    fn intern_is_identity_for_equal_content() {
+        let pool = ExprPool::new();
+        let x = pool.symbol(SymbolId(3));
+        let a = pool.mul2(x, pool.integer(2));
+        let b = pool.mul2(pool.integer(2), x);
+        assert_eq!(a, b, "canonical ordering makes `x*2` and `2*x` the same node");
+        assert_eq!(pool.intern(int_data(5)), pool.intern(int_data(5)));
+        assert_ne!(pool.intern(int_data(5)), pool.intern(int_data(6)));
     }
 }

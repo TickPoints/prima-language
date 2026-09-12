@@ -9,6 +9,7 @@ use crate::symbol::SymbolTable;
 /// LaTeX view of a number (spec §8.3 default `print_format := latex`): rationals render as `\frac{n}{d}`.
 pub fn render_number(n: &Number) -> String {
     match n {
+        Number::Small(v) => v.to_string(),
         Number::Integer(i) => i.to_string(),
         Number::Rational(r) => format!("\\frac{{{}}}{{{}}}", r.numer(), r.denom()),
         Number::Real(Real::F64(f)) => f.to_string(),
@@ -36,7 +37,7 @@ pub fn render_latex(pool: &ExprPool, symbols: &SymbolTable, id: ExprId) -> Strin
     match pool.get(id) {
         Some(ExprData::Symbol(s)) => symbols.name(s).unwrap_or_else(|| format!("?{}", s.0)),
         Some(ExprData::Integer(i)) => i.to_string(),
-        Some(ExprData::Rational(r)) => render_number(&Number::Rational(*r)),
+        Some(ExprData::Rational(r)) => render_number(&Number::Rational(Box::new(*r.clone()))),
         Some(ExprData::Real(Real::F64(f))) => f.to_string(),
         Some(ExprData::Real(Real::F32(f))) => f.to_string(),
         Some(ExprData::Add(items)) => render_add(pool, symbols, &items),
@@ -72,7 +73,7 @@ fn render_signed(pool: &ExprPool, symbols: &SymbolTable, id: ExprId) -> String {
     match pool.get(id) {
         Some(ExprData::Integer(i)) if *i < BigInt::from(0) => format!("- {}", -(*i)),
         Some(ExprData::Rational(r)) if *r < BigRational::new(BigInt::from(0), BigInt::from(1)) => {
-            format!("- {}", render_number(&Number::Rational(r.abs())))
+            format!("- {}", render_number(&Number::Rational(Box::new(r.abs()))))
         }
         Some(ExprData::Real(Real::F64(f))) if f < 0.0 => format!("- {}", -f),
         Some(ExprData::Real(Real::F32(f))) if f < 0.0 => format!("- {}", -f),
@@ -122,7 +123,7 @@ fn is_atomic(pool: &ExprPool, id: ExprId) -> bool {
 
 fn render_pow(pool: &ExprPool, symbols: &SymbolTable, base: ExprId, exp: ExprId) -> String {
     let half = BigRational::new(BigInt::from(1), BigInt::from(2));
-    if matches!(pool.const_number(exp), Some(Number::Rational(r)) if r == half) {
+    if matches!(pool.const_number(exp), Some(Number::Rational(r)) if *r == half) {
         return format!("\\sqrt{{{}}}", render_latex(pool, symbols, base));
     }
     let base_s = render_latex(pool, symbols, base);

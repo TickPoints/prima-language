@@ -174,8 +174,8 @@ fn rational_pi_coefficient(
                     ExprData::Symbol(s) if s == builtins.pi => found_pi = true,
                     ExprData::Integer(_) | ExprData::Rational(_) => {
                         let c = match pool.const_number(it)? {
-                            Number::Integer(i) => BigRational::from_integer(i),
-                            Number::Rational(r) => r,
+                            Number::Integer(i) => BigRational::from_integer(*i),
+                            Number::Rational(r) => *r,
                             _ => return None,
                         };
                         coeff = Some(match coeff {
