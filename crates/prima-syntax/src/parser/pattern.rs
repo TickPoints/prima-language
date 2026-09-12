@@ -11,7 +11,17 @@ use crate::token::{TokenKind, describe};
 impl Parser {
     /// Full pattern grammar (spec §4.4): `_`, bindings, literals, tuple/array/struct/constructor patterns,
     /// range patterns, or-patterns, and grouping.
+    ///
+    /// Recursion guard (spec §16.4): tuple/array/struct/constructor patterns recurse through this
+    /// function, so the nesting budget bounds the parser stack (and the pattern AST depth).
     pub(crate) fn parse_pattern(&mut self) -> Result<Pattern, SyntaxError> {
+        self.enter_nest(self.span())?;
+        let r = self.parse_pattern_inner();
+        self.nest -= 1;
+        r
+    }
+
+    fn parse_pattern_inner(&mut self) -> Result<Pattern, SyntaxError> {
         self.skip_newlines();
         let first = self.parse_pattern_simple()?;
         self.skip_newlines();

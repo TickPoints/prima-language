@@ -629,7 +629,16 @@ impl Parser {
         })
     }
 
+    /// Type parsing (spec §4/§18.4). Recursion guard (spec §16.4): generic nesting
+    /// (`Array<Array<…>>`, `Result<A, B>`, fn types) recurses through this function.
     pub(crate) fn parse_type(&mut self) -> Result<Type, SyntaxError> {
+        self.enter_nest(self.span())?;
+        let r = self.parse_type_inner();
+        self.nest -= 1;
+        r
+    }
+
+    fn parse_type_inner(&mut self) -> Result<Type, SyntaxError> {
         self.skip_newlines();
         let t = self.bump();
         match t.kind {
@@ -747,7 +756,17 @@ impl Parser {
         Ok(types)
     }
 
+    /// Block parsing (spec §4.2): statements between `{` and `}`. Recursion guard (spec §16.4):
+    /// nested blocks (`if`/`while`/`fn` bodies) recurse through this function, so the nesting
+    /// budget bounds the parser stack and the statement AST depth.
     pub(crate) fn parse_block(&mut self) -> Result<Block, SyntaxError> {
+        self.enter_nest(self.span())?;
+        let r = self.parse_block_inner();
+        self.nest -= 1;
+        r
+    }
+
+    fn parse_block_inner(&mut self) -> Result<Block, SyntaxError> {
         self.skip_newlines();
         let start = self.expect(&TokenKind::LBrace, "`{`")?.span;
         let mut stmts = Vec::new();

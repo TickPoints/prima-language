@@ -1,13 +1,21 @@
 use crate::ast::{BinOp, Expr, ExprKind, Literal, Spanned, UnOp};
 use crate::error::SyntaxError;
+use crate::parser::{MAX_EXPR_DEPTH, MAX_PARSE_RECURSION, nesting_error};
 use crate::span::Span;
 
 /// MVP parsing subset for `tex"..."` literals (implementation plan §4.9): numbers/commands/`{}` grouping/`^` powers/implicit multiplication/`\frac`,
 /// producing the **same AST** as normal syntax, evaluated uniformly by the interpreter. TeX is only a view (spec §7); parsing goes the other way.
+///
+/// Depth budget (spec §16.4): every constructed wrapper node is checked against
+/// [`MAX_EXPR_DEPTH`] (leaves are 1, wrappers `1 + max(child depths)`), and the transparent
+/// `{}`/`()` group recursion is bounded by a balanced recursion guard — a hostile TeX literal
+/// cannot overflow the stack here or in the AST consumers.
 pub fn parse_tex(src: &str) -> Result<Expr, SyntaxError> {
     TexParser {
         chars: src.chars().collect(),
         pos: 0,
+        nest: 0,
+        depth: 0,
     }
     .parse_expr()
 }
@@ -15,9 +23,23 @@ pub fn parse_tex(src: &str) -> Result<Expr, SyntaxError> {
 struct TexParser {
     chars: Vec<char>,
     pos: usize,
+    /// Recursion budget for transparent `{}`/`()` group nesting (balanced inc/dec).
+    nest: u32,
+    /// Depth of the most recently completed expression (spec §16.4 budget).
+    depth: u32,
 }
 
 impl TexParser {
+    /// Record a newly constructed wrapper node of depth `d`; errors when it would exceed the
+    /// nesting budget.
+    fn check_depth(&mut self, d: u32) -> Result<(), SyntaxError> {
+        if d > MAX_EXPR_DEPTH {
+            return Err(nesting_error(self.span()));
+        }
+        self.depth = d;
+        Ok(())
+    }
+
     fn peek(&self) -> Option<char> {
         self.chars.get(self.pos).copied()
     }
@@ -90,21 +112,20 @@ impl TexParser {
     fn parse_expr(&mut self) -> Result<Expr, SyntaxError> {
         self.skip_ws();
         let mut lhs = self.parse_term()?;
+        let mut lhs_depth = self.depth;
         loop {
             self.skip_ws();
-            match self.peek() {
-                Some('+') => {
-                    self.bump();
-                    let rhs = self.parse_term()?;
-                    lhs = self.binary(BinOp::Add, lhs, rhs);
-                }
-                Some('-') => {
-                    self.bump();
-                    let rhs = self.parse_term()?;
-                    lhs = self.binary(BinOp::Sub, lhs, rhs);
-                }
+            let op = match self.peek() {
+                Some('+') => BinOp::Add,
+                Some('-') => BinOp::Sub,
                 _ => break,
-            }
+            };
+            self.bump();
+            let rhs = self.parse_term()?;
+            let d = lhs_depth.max(self.depth) + 1;
+            self.check_depth(d)?;
+            lhs_depth = d;
+            lhs = self.binary(op, lhs, rhs);
         }
         Ok(lhs)
     }
@@ -132,10 +153,16 @@ impl TexParser {
             return Err(self.err("expected a TeX expression"));
         }
         let mut e = factors.remove(0);
+        let mut e_depth = self.depth;
         for f in factors {
+            let d = e_depth.max(self.depth) + 1;
+            self.check_depth(d)?;
+            e_depth = d;
             e = self.binary(BinOp::Mul, e, f);
         }
+        self.depth = e_depth;
         if neg {
+            self.check_depth(self.depth + 1)?;
             e = self.unary(UnOp::Neg, e);
         }
         Ok(e)
@@ -144,15 +171,21 @@ impl TexParser {
     fn parse_factor(&mut self) -> Result<Expr, SyntaxError> {
         self.skip_ws();
         let base = self.parse_atom()?;
+        let base_depth = self.depth;
         self.skip_ws();
         if self.peek() == Some('^') {
             self.bump();
             let sup = self.parse_group_or_atom()?;
+            let d = base_depth.max(self.depth) + 1;
+            self.check_depth(d)?;
             return Ok(self.binary(BinOp::Pow, base, sup));
         }
         if self.peek() == Some('_') {
             self.bump();
+            // The subscript is source notation only; it produces no AST node, so the depth of the
+            // subscript expression is discarded with it.
             self.parse_group_or_atom()?;
+            self.depth = base_depth;
         }
         Ok(base)
     }
@@ -170,7 +203,15 @@ impl TexParser {
         if self.bump() != Some('{') {
             return Err(self.err("expected `{`"));
         }
-        let e = self.parse_expr()?;
+        // A group is transparent (it produces no node), so only the recursion guard protects
+        // against unbounded `{{{{…` nesting (spec §16.4).
+        if self.nest >= MAX_PARSE_RECURSION {
+            return Err(nesting_error(self.span()));
+        }
+        self.nest += 1;
+        let e = self.parse_expr();
+        self.nest -= 1;
+        let e = e?;
         self.skip_ws();
         if self.bump() != Some('}') {
             return Err(self.err("expected `}`"));
@@ -182,7 +223,13 @@ impl TexParser {
         if self.bump() != Some('(') {
             return Err(self.err("expected `(`"));
         }
-        let e = self.parse_expr()?;
+        if self.nest >= MAX_PARSE_RECURSION {
+            return Err(nesting_error(self.span()));
+        }
+        self.nest += 1;
+        let e = self.parse_expr();
+        self.nest -= 1;
+        let e = e?;
         self.skip_ws();
         if self.bump() != Some(')') {
             return Err(self.err("expected `)`"));
@@ -205,6 +252,7 @@ impl TexParser {
                     break;
                 }
             }
+            self.depth = 1;
             Ok(Expr {
                 kind: ExprKind::Literal(Literal::Integer(s)),
                 span: self.span(),
@@ -219,6 +267,7 @@ impl TexParser {
                     break;
                 }
             }
+            self.depth = 1;
             Ok(Expr {
                 kind: ExprKind::Symbol(Spanned {
                     value: s,
@@ -243,17 +292,22 @@ impl TexParser {
             self.skip_ws();
             if name == "frac" {
                 let num = self.parse_group()?;
+                let num_depth = self.depth;
                 let den = self.parse_group()?;
+                self.check_depth(1 + num_depth.max(self.depth))?;
                 return Ok(self.binary(BinOp::Div, num, den));
             }
             if self.peek() == Some('{') {
                 let arg = self.parse_group()?;
+                self.check_depth(self.depth + 1)?;
                 return Ok(self.call(name, vec![arg]));
             }
             if self.peek() == Some('(') {
                 let arg = self.parse_paren()?;
+                self.check_depth(self.depth + 1)?;
                 return Ok(self.call(name, vec![arg]));
             }
+            self.depth = 1;
             Ok(Expr {
                 kind: ExprKind::Symbol(Spanned {
                     value: name,

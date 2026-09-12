@@ -2,11 +2,14 @@
 //!
 //! This module owns the prefix/atom/postfix expression parsers, the precedence-climbing core, and the collection/comprehension/lambda/match expression forms; statements live in the sibling `stmt` module.
 
-use super::{Parser, UNARY_BP, binop_bp};
+use super::{Parser, UNARY_BP, binop_bp, nesting_error};
 use crate::ast::*;
 use crate::error::SyntaxError;
 use crate::span::Span;
 use crate::token::{Token, TokenKind, describe};
+
+/// Maximum allowed depth for a single constructed `Expr` node (`MAX_EXPR_DEPTH`, spec §16.4).
+use super::MAX_EXPR_DEPTH;
 
 impl Parser {
     /// `match <expr> {` — parse the scrutinee with struct literals disabled so `match x { ... }` treats `{` as the arms block.
@@ -23,8 +26,24 @@ impl Parser {
     }
 
     // Pratt climbing (implementation plan §2.2 precedence table): `^`/`**` highest and right-associative.
+    //
+    // Two nesting guards (spec §16.4):
+    // - `enter_nest` bounds the *recursion* of this function (each `(`/argument/unary/`^`-rhs
+    //   nesting level enters once) so the parser's own stack stays bounded;
+    // - the loop below constructs one `Binary` wrapper per iteration without recursing, so each
+    //   construction is checked against [`MAX_EXPR_DEPTH`] via `check_expr_depth`. Every node in
+    //   the finished AST is therefore no deeper than the limit, protecting the evaluator, the
+    //   static checker and AST `Drop`.
     pub(crate) fn parse_expr_bp(&mut self, min_bp: u8) -> Result<Expr, SyntaxError> {
+        self.enter_nest(self.span())?;
+        let r = self.parse_expr_bp_inner(min_bp);
+        self.nest -= 1;
+        r
+    }
+
+    fn parse_expr_bp_inner(&mut self, min_bp: u8) -> Result<Expr, SyntaxError> {
         let mut lhs = self.parse_prefix()?;
+        let mut lhs_depth = self.expr_depth;
         loop {
             self.skip_newlines();
             // `|>` was removed in v2.3 (spec §9.7); report it at the point of use instead of a generic `expected expression`.
@@ -42,8 +61,16 @@ impl Parser {
             if lbp < min_bp {
                 break;
             }
+            let op_span = self.span();
             self.bump();
             let rhs = self.parse_expr_bp(rbp)?;
+            // The new `Binary` node is one level deeper than its deepest child.
+            let d = lhs_depth.max(self.expr_depth) + 1;
+            if d > MAX_EXPR_DEPTH {
+                return Err(nesting_error(op_span));
+            }
+            self.expr_depth = d;
+            lhs_depth = d;
             let span = Span::merge(lhs.span, rhs.span);
             lhs = Expr {
                 kind: ExprKind::Binary {
@@ -64,6 +91,7 @@ impl Parser {
             TokenKind::Minus => {
                 let operand = self.parse_expr_bp(UNARY_BP)?;
                 let span = Span::merge(tok.span, operand.span);
+                self.check_expr_depth(self.expr_depth + 1, span)?;
                 Ok(Expr {
                     kind: ExprKind::Unary {
                         op: UnOp::Neg,
@@ -75,6 +103,7 @@ impl Parser {
             TokenKind::Bang => {
                 let operand = self.parse_expr_bp(UNARY_BP)?;
                 let span = Span::merge(tok.span, operand.span);
+                self.check_expr_depth(self.expr_depth + 1, span)?;
                 Ok(Expr {
                     kind: ExprKind::Unary {
                         op: UnOp::Not,
@@ -86,6 +115,7 @@ impl Parser {
             TokenKind::Plus => {
                 let operand = self.parse_expr_bp(UNARY_BP)?;
                 let span = Span::merge(tok.span, operand.span);
+                self.check_expr_depth(self.expr_depth + 1, span)?;
                 Ok(Expr {
                     kind: ExprKind::Unary {
                         op: UnOp::Pos,
@@ -128,11 +158,15 @@ impl Parser {
             TokenKind::TexStr(s) => ExprKind::Literal(Literal::Tex(s)),
             TokenKind::FStr(parts) => {
                 let mut out = Vec::with_capacity(parts.len());
+                let mut max_interp = 0u32;
                 for p in parts {
                     match p {
                         crate::token::FStringToken::Lit(s) => out.push(FStringPart::Literal(s)),
                         crate::token::FStringToken::Interp { expr, spec } => {
-                            let e = self.parse_fstring_interp(&expr, span)?;
+                            let (e, interp_depth) = self.parse_fstring_interp(&expr, span)?;
+                            // The interpolation is parsed by a sub-`Parser`; its finished depth
+                            // feeds the `FString` node's own depth (spec §16.4 budget).
+                            max_interp = max_interp.max(interp_depth);
                             out.push(FStringPart::Interp {
                                 expr: Box::new(e),
                                 spec,
@@ -140,6 +174,7 @@ impl Parser {
                         }
                     }
                 }
+                self.check_expr_depth(1 + max_interp, span)?;
                 ExprKind::FString(out)
             }
             TokenKind::KwTrue => ExprKind::Literal(Literal::Bool(true)),
@@ -167,18 +202,23 @@ impl Parser {
                 });
             }
         };
+        // A leaf atom has depth 1 (spec §16.4 depth budget); compound atoms set their own depth.
+        self.expr_depth = 1;
         Ok(Expr { kind, span })
     }
 
     /// Parse the already-lexed body of an f-string interpolation into an `Expr` (spec §18.1).
-    /// The body is a normal Prima expression; a leftover token is a parse error.
+    /// The body is a normal Prima expression, parsed by a sub-`Parser`; a leftover token is a
+    /// parse error. Returns the expression plus its finished AST depth (for the enclosing
+    /// `FString` node's depth budget, spec §16.4).
     pub(crate) fn parse_fstring_interp(
         &mut self,
         tokens: &[Token],
         fstring_span: Span,
-    ) -> Result<Expr, SyntaxError> {
+    ) -> Result<(Expr, u32), SyntaxError> {
         let mut sub = Parser::new(tokens.to_vec());
         let e = sub.parse_expr()?;
+        let depth = sub.expr_depth;
         sub.skip_newlines();
         if !sub.at(&TokenKind::Eof) {
             return Err(self.err(
@@ -187,14 +227,19 @@ impl Parser {
             ));
         }
         self.warnings.extend(sub.warnings);
-        Ok(e)
+        Ok((e, depth))
     }
 
+    /// Postfix chains (`f(x)[0].m()?`): the loop is iterative but every iteration wraps one node,
+    /// so each construction is depth-checked (spec §16.4). Only entered with leaf receivers
+    /// (`parse_prefix`), so the depth budget restarts at 1.
     pub(crate) fn parse_postfix(&mut self, mut e: Expr) -> Result<Expr, SyntaxError> {
+        self.expr_depth = 1;
         loop {
             self.skip_newlines();
             match self.peek().clone() {
                 TokenKind::LParen => {
+                    let callee_depth = self.expr_depth;
                     self.bump();
                     let args = self.parse_args()?;
                     let end = self.tokens[self.pos.saturating_sub(1)].span;
@@ -211,6 +256,7 @@ impl Parser {
                             "`format` was removed in v2.2 (W0006); use an f-string `f\"...{expr}...\"` instead (spec §18.1)".into(),
                         );
                     }
+                    self.check_expr_depth(1 + callee_depth.max(self.expr_depth), span)?;
                     e = Expr {
                         kind: ExprKind::Call {
                             callee: Box::new(e),
@@ -220,10 +266,12 @@ impl Parser {
                     };
                 }
                 TokenKind::LBracket => {
+                    let base_depth = self.expr_depth;
                     self.bump();
                     let index = self.parse_index()?;
                     let end = self.tokens[self.pos.saturating_sub(1)].span;
                     let span = Span::merge(e.span, end);
+                    self.check_expr_depth(1 + base_depth.max(self.expr_depth), span)?;
                     e = Expr {
                         kind: ExprKind::Index {
                             base: Box::new(e),
@@ -239,10 +287,12 @@ impl Parser {
                     let name = self.parse_ident("field or method name")?;
                     self.skip_newlines();
                     if self.at(&TokenKind::LParen) {
+                        let recv_depth = self.expr_depth;
                         self.bump();
                         let args = self.parse_args()?;
                         let end = self.tokens[self.pos.saturating_sub(1)].span;
                         let span = Span::merge(e.span, end);
+                        self.check_expr_depth(1 + recv_depth.max(self.expr_depth), span)?;
                         e = Expr {
                             kind: ExprKind::MethodCall {
                                 receiver: Box::new(e),
@@ -253,6 +303,7 @@ impl Parser {
                         };
                     } else {
                         let span = Span::merge(e.span, name.span);
+                        self.check_expr_depth(self.expr_depth + 1, span)?;
                         e = Expr {
                             kind: ExprKind::Field {
                                 receiver: Box::new(e),
@@ -266,6 +317,7 @@ impl Parser {
                     // `expr?` try operator (spec §16.3).
                     let q = self.bump();
                     let span = Span::merge(e.span, q.span);
+                    self.check_expr_depth(self.expr_depth + 1, span)?;
                     e = Expr {
                         kind: ExprKind::Try(Box::new(e)),
                         span,
@@ -287,12 +339,14 @@ impl Parser {
     }
 
     /// `T { a, b, ..base }` struct literal (spec §4.5); field shorthand `a` ≡ `a: a`.
+    /// Called from `parse_postfix` with a leaf path, so the depth budget starts at the path's depth.
     pub(crate) fn parse_struct_literal(
         &mut self,
         name: Spanned<String>,
         path: Expr,
     ) -> Result<Expr, SyntaxError> {
         self.expect(&TokenKind::LBrace, "`{`")?;
+        let mut max_d = self.expr_depth;
         let mut fields = Vec::new();
         let mut base = None;
         loop {
@@ -304,7 +358,9 @@ impl Parser {
             // Struct update syntax `..base` (copies remaining fields from an existing instance).
             if self.eat(&TokenKind::DotDot).is_some() {
                 self.skip_newlines();
-                base = Some(Box::new(self.parse_expr()?));
+                let b = self.parse_expr()?;
+                max_d = max_d.max(self.expr_depth);
+                base = Some(Box::new(b));
                 self.skip_newlines();
                 if self.eat(&TokenKind::RBrace).is_none() {
                     return Err(self.err(
@@ -318,7 +374,9 @@ impl Parser {
             self.skip_newlines();
             let value = if self.eat(&TokenKind::Colon).is_some() {
                 self.skip_newlines();
-                Some(self.parse_expr()?)
+                let v = self.parse_expr()?;
+                max_d = max_d.max(self.expr_depth);
+                Some(v)
             } else {
                 None
             };
@@ -333,6 +391,7 @@ impl Parser {
         }
         let end = self.tokens[self.pos.saturating_sub(1)].span;
         let span = Span::merge(path.span, end);
+        self.check_expr_depth(1 + max_d, span)?;
         Ok(Expr {
             kind: ExprKind::StructLiteral { name, fields, base },
             span,
@@ -341,10 +400,14 @@ impl Parser {
 
     pub(crate) fn parse_args(&mut self) -> Result<Vec<Expr>, SyntaxError> {
         let mut args = Vec::new();
+        // Fold the deepest argument's depth into `self.expr_depth` (the caller adds the wrapper
+        // node's level; spec §16.4 depth budget).
+        let mut max_d = 1u32;
         self.skip_newlines();
         if !self.at(&TokenKind::RParen) {
             loop {
                 args.push(self.parse_expr()?);
+                max_d = max_d.max(self.expr_depth);
                 self.skip_newlines();
                 if self.eat(&TokenKind::Comma).is_some() {
                     self.skip_newlines();
@@ -354,6 +417,7 @@ impl Parser {
             }
         }
         self.expect(&TokenKind::RParen, "`)`")?;
+        self.expr_depth = max_d;
         Ok(args)
     }
 
@@ -361,6 +425,7 @@ impl Parser {
         self.skip_newlines();
         if self.at(&TokenKind::RParen) {
             let end = self.bump().span;
+            self.expr_depth = 1;
             return Ok(Expr {
                 kind: ExprKind::Tuple(vec![]),
                 span: Span::merge(start, end),
@@ -370,10 +435,12 @@ impl Parser {
         self.skip_newlines();
         if self.eat(&TokenKind::Comma).is_some() {
             let mut items = vec![first];
+            let mut max_d = self.expr_depth;
             self.skip_newlines();
             if !self.at(&TokenKind::RParen) {
                 loop {
                     items.push(self.parse_expr()?);
+                    max_d = max_d.max(self.expr_depth);
                     self.skip_newlines();
                     if self.eat(&TokenKind::Comma).is_some() {
                         self.skip_newlines();
@@ -383,6 +450,7 @@ impl Parser {
                 }
             }
             let end = self.expect(&TokenKind::RParen, "`)`")?.span;
+            self.check_expr_depth(1 + max_d, Span::merge(start, end))?;
             Ok(Expr {
                 kind: ExprKind::Tuple(items),
                 span: Span::merge(start, end),
@@ -392,6 +460,7 @@ impl Parser {
             if self.at(&TokenKind::KwFor) {
                 let clauses = self.parse_comprehension_clauses()?;
                 let end = self.expect(&TokenKind::RParen, "`)`")?.span;
+                self.check_expr_depth(1 + self.expr_depth, Span::merge(start, end))?;
                 return Ok(Expr {
                     kind: ExprKind::Comprehension {
                         kind: CompKind::Tuple,
@@ -402,6 +471,7 @@ impl Parser {
                 });
             }
             let end = self.expect(&TokenKind::RParen, "`)`")?.span;
+            // A grouped expression is transparent: the inner node's depth carries over.
             Ok(Expr {
                 kind: first.kind,
                 span: Span::merge(start, end),
@@ -411,10 +481,12 @@ impl Parser {
 
     pub(crate) fn parse_array(&mut self, start: Span) -> Result<Expr, SyntaxError> {
         let mut items = Vec::new();
+        let mut max_d = 1u32;
         self.skip_newlines();
         if !self.at(&TokenKind::RBracket) {
             loop {
                 items.push(self.parse_expr()?);
+                max_d = max_d.max(self.expr_depth);
                 self.skip_newlines();
                 if self.eat(&TokenKind::Comma).is_some() {
                     self.skip_newlines();
@@ -434,6 +506,7 @@ impl Parser {
             let output = items.pop().unwrap();
             let clauses = self.parse_comprehension_clauses()?;
             let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
+            self.check_expr_depth(1 + self.expr_depth.max(max_d), Span::merge(start, end))?;
             return Ok(Expr {
                 kind: ExprKind::Comprehension {
                     kind: CompKind::Array,
@@ -444,6 +517,7 @@ impl Parser {
             });
         }
         let end = self.expect(&TokenKind::RBracket, "`]`")?.span;
+        self.check_expr_depth(1 + max_d, Span::merge(start, end))?;
         Ok(Expr {
             kind: ExprKind::Array(items),
             span: Span::merge(start, end),
@@ -456,17 +530,20 @@ impl Parser {
         self.skip_newlines();
         if self.at(&TokenKind::RBrace) {
             let end = self.bump().span;
+            self.expr_depth = 1;
             return Ok(Expr {
                 kind: ExprKind::Dict(vec![]),
                 span: Span::merge(start, end),
             });
         }
         let first = self.parse_expr()?;
+        let mut max_d = self.expr_depth;
         self.skip_newlines();
         if self.at(&TokenKind::KwFor) {
             // Set comprehension `{ output for var in iter [if cond] }` (spec §4.6).
             let clauses = self.parse_comprehension_clauses()?;
             let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
+            self.check_expr_depth(1 + self.expr_depth, Span::merge(start, end))?;
             return Ok(Expr {
                 kind: ExprKind::Comprehension {
                     kind: CompKind::Set,
@@ -479,10 +556,13 @@ impl Parser {
         if self.eat(&TokenKind::Colon).is_some() {
             // Dict: the first expression is a key; parse its value, then `key : value` entries.
             let value = self.parse_expr()?;
+            max_d = max_d.max(self.expr_depth);
             self.skip_newlines();
             if self.at(&TokenKind::KwFor) {
                 // Dict comprehension `{ key: value for var in iter [if cond] }` (spec §4.6).
                 let kv_span = Span::merge(first.span, value.span);
+                let kv_depth = 1 + max_d;
+                self.check_expr_depth(kv_depth, kv_span)?;
                 let output = Expr {
                     kind: ExprKind::KeyValue {
                         key: Box::new(first),
@@ -492,6 +572,7 @@ impl Parser {
                 };
                 let clauses = self.parse_comprehension_clauses()?;
                 let end = self.expect(&TokenKind::RBrace, "`}`")?.span;
+                self.check_expr_depth(1 + self.expr_depth, Span::merge(start, end))?;
                 return Ok(Expr {
                     kind: ExprKind::Comprehension {
                         kind: CompKind::Dict,
@@ -511,6 +592,7 @@ impl Parser {
                 self.expect(&TokenKind::Comma, "`,` or `}`")?;
                 self.skip_newlines();
                 let key = self.parse_expr()?;
+                max_d = max_d.max(self.expr_depth);
                 self.skip_newlines();
                 if self.eat(&TokenKind::Colon).is_none() {
                     return Err(
@@ -518,9 +600,11 @@ impl Parser {
                     );
                 }
                 let value = self.parse_expr()?;
+                max_d = max_d.max(self.expr_depth);
                 entries.push((key, value));
             }
             let end = self.tokens[self.pos.saturating_sub(1)].span;
+            self.check_expr_depth(1 + max_d, Span::merge(start, end))?;
             return Ok(Expr {
                 kind: ExprKind::Dict(entries),
                 span: Span::merge(start, end),
@@ -544,6 +628,7 @@ impl Parser {
             self.expect(&TokenKind::Comma, "`,` or `}`")?;
             self.skip_newlines();
             let elem = self.parse_expr()?;
+            max_d = max_d.max(self.expr_depth);
             self.skip_newlines();
             if self.at(&TokenKind::Colon) {
                 return Err(self.err(
@@ -555,6 +640,7 @@ impl Parser {
             elems.push(elem);
         }
         let end = self.tokens[self.pos.saturating_sub(1)].span;
+        self.check_expr_depth(1 + max_d, Span::merge(start, end))?;
         Ok(Expr {
             kind: ExprKind::Set(elems),
             span: Span::merge(start, end),
@@ -562,10 +648,14 @@ impl Parser {
     }
 
     /// Comprehension clauses after the output: any sequence of `for <var> in <iter>` / `if <cond>` (spec §11.7).
+    /// The deepest clause expression's depth is folded into `self.expr_depth` (the caller adds the
+    /// `Comprehension` wrapper's level; spec §16.4 depth budget).
     pub(crate) fn parse_comprehension_clauses(
         &mut self,
     ) -> Result<Vec<ComprehensionClause>, SyntaxError> {
         let mut clauses = Vec::new();
+        // `self.expr_depth` on entry is the output's depth; keep the deepest child's depth.
+        let mut max_d = self.expr_depth;
         loop {
             self.skip_newlines();
             match self.peek().clone() {
@@ -577,22 +667,27 @@ impl Parser {
                     self.expect(&TokenKind::KwIn, "`in`")?;
                     self.skip_newlines();
                     let iter = self.parse_expr()?;
+                    max_d = max_d.max(self.expr_depth);
                     clauses.push(ComprehensionClause::For { var, iter });
                 }
                 TokenKind::KwIf => {
                     self.bump();
                     self.skip_newlines();
                     let cond = self.parse_expr()?;
+                    max_d = max_d.max(self.expr_depth);
                     clauses.push(ComprehensionClause::If { cond });
                 }
                 _ => break,
             }
         }
+        self.expr_depth = max_d;
         Ok(clauses)
     }
 
     pub(crate) fn parse_index(&mut self) -> Result<Index, SyntaxError> {
         let mut items = Vec::new();
+        // Fold the deepest index item's depth into `self.expr_depth` (spec §16.4 depth budget).
+        let mut max_d = 1u32;
         loop {
             self.skip_newlines();
             let item = if self.at(&TokenKind::DotDot) {
@@ -600,17 +695,22 @@ impl Parser {
                 let end = if self.at(&TokenKind::Comma) || self.at(&TokenKind::RBracket) {
                     None
                 } else {
-                    Some(self.parse_expr()?)
+                    let e = self.parse_expr()?;
+                    max_d = max_d.max(self.expr_depth);
+                    Some(e)
                 };
                 IndexItem::Slice { start: None, end }
             } else {
                 let start = self.parse_expr()?;
+                max_d = max_d.max(self.expr_depth);
                 if self.at(&TokenKind::DotDot) {
                     self.bump();
                     let end = if self.at(&TokenKind::Comma) || self.at(&TokenKind::RBracket) {
                         None
                     } else {
-                        Some(self.parse_expr()?)
+                        let e = self.parse_expr()?;
+                        max_d = max_d.max(self.expr_depth);
+                        Some(e)
                     };
                     IndexItem::Slice {
                         start: Some(start),
@@ -629,6 +729,7 @@ impl Parser {
             break;
         }
         self.expect(&TokenKind::RBracket, "`]`")?;
+        self.expr_depth = max_d;
         Ok(Index { items })
     }
 
@@ -662,6 +763,7 @@ impl Parser {
         self.skip_newlines();
         let body = self.parse_expr()?;
         let span = Span::merge(start, body.span);
+        self.check_expr_depth(self.expr_depth + 1, span)?;
         Ok(Expr {
             kind: ExprKind::Lambda {
                 params,
@@ -676,20 +778,26 @@ impl Parser {
         let scrutinee = self.parse_scrutinee()?;
         let arms = self.parse_match_arms()?;
         let end = self.tokens[self.pos.saturating_sub(1)].span;
+        let span = Span::merge(start, end);
+        // `parse_match_arms` folds the deepest arm expression's depth into `self.expr_depth`.
+        self.check_expr_depth(1 + self.expr_depth, span)?;
         Ok(Expr {
             kind: ExprKind::Match {
                 scrutinee: Box::new(scrutinee),
                 arms,
             },
-            span: Span::merge(start, end),
+            span,
         })
     }
 
-    /// `{ pattern [if guard] => expr, ... }` (spec §4.4).
+    /// `{ pattern [if guard] => expr, ... }` (spec §4.4). The deepest guard/body depth is folded
+    /// into `self.expr_depth` (initialized from the scrutinee's depth by the caller).
     pub(crate) fn parse_match_arms(&mut self) -> Result<Vec<MatchArm>, SyntaxError> {
         self.skip_newlines();
         self.expect(&TokenKind::LBrace, "`{`")?;
         let mut arms = Vec::new();
+        // `self.expr_depth` on entry is the scrutinee's depth; keep the deepest child's depth.
+        let mut max_d = self.expr_depth;
         loop {
             self.skip_newlines();
             if self.at(&TokenKind::RBrace) {
@@ -700,7 +808,9 @@ impl Parser {
             self.skip_newlines();
             let guard = if self.eat(&TokenKind::KwIf).is_some() {
                 self.skip_newlines();
-                Some(self.parse_expr()?)
+                let g = self.parse_expr()?;
+                max_d = max_d.max(self.expr_depth);
+                Some(g)
             } else {
                 None
             };
@@ -708,6 +818,7 @@ impl Parser {
             self.expect(&TokenKind::FatArrow, "`=>`")?;
             self.skip_newlines();
             let body = self.parse_expr()?;
+            max_d = max_d.max(self.expr_depth);
             arms.push(MatchArm {
                 pattern,
                 guard,
@@ -717,6 +828,7 @@ impl Parser {
             self.eat(&TokenKind::Comma);
             self.eat(&TokenKind::Semicolon);
         }
+        self.expr_depth = max_d;
         Ok(arms)
     }
 }
