@@ -19,7 +19,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 
-use crate::bytecode::{Bytecode, Op};
+use crate::bytecode::{Bytecode, Op, MAX_PARAMS};
 
 /// A compiled numeric scalar function: reads `arity` f64 arguments from the buffer and returns the
 /// result. The `entry` pointer is executable machine code owned by the engine; call it from any
@@ -102,8 +102,9 @@ pub extern "C" fn pj_pow(a: f64, b: f64) -> f64 {
 /// The process-wide JIT engine: owns the `JITModule` so compiled code stays alive for the whole
 /// process (addresses are stored in `CompiledScalar.entry`). Compilation is serialized under a
 /// `Mutex` (cranelift `JITModule` compilation is not thread-safe); `CompiledScalar::call` is
-/// lock-free.
-static ENGINE: OnceLock<Mutex<JitEngine>> = OnceLock::new();
+/// lock-free. `None` means engine initialization failed — the JIT is then permanently unavailable
+/// for the process and every compilation degrades to the interpreter fallback.
+static ENGINE: OnceLock<Option<Mutex<JitEngine>>> = OnceLock::new();
 
 /// Declared `FuncId`s of the trampoline imports, resolved once per engine lifetime.
 #[derive(Clone, Copy)]
@@ -151,8 +152,10 @@ fn binary_addr(f: extern "C" fn(f64, f64) -> f64) -> *const u8 {
 }
 
 impl JitEngine {
-    fn init() -> JitEngine {
-        let mut builder = JITBuilder::new(default_libcall_names()).unwrap();
+    /// Build the engine, or `None` when cranelift cannot initialize (no panic across the API —
+    /// the JIT is optional and callers degrade to the interpreter).
+    fn init() -> Option<JitEngine> {
+        let mut builder = JITBuilder::new(default_libcall_names()).ok()?;
         // Register the trampoline addresses so the imports resolve deterministically from the
         // builder's own symbol table (the fallback is a platform dlsym search of the process).
         builder
@@ -169,20 +172,20 @@ impl JitEngine {
         let mut module = JITModule::new(builder);
         let unary = unary_signature(module.isa());
         let binary = binary_signature(module.isa());
-        let declare = |module: &mut JITModule, name: &str, sig: &Signature| -> FuncId {
-            module.declare_function(name, Linkage::Import, sig).unwrap()
+        let declare = |module: &mut JITModule, name: &str, sig: &Signature| -> Option<FuncId> {
+            module.declare_function(name, Linkage::Import, sig).ok()
         };
-        let sin = declare(&mut module, "pj_sin", &unary);
-        let cos = declare(&mut module, "pj_cos", &unary);
-        let tan = declare(&mut module, "pj_tan", &unary);
-        let exp = declare(&mut module, "pj_exp", &unary);
-        let ln = declare(&mut module, "pj_ln", &unary);
-        let log10 = declare(&mut module, "pj_log10", &unary);
-        let sqrt = declare(&mut module, "pj_sqrt", &unary);
-        let abs = declare(&mut module, "pj_abs", &unary);
-        let rem = declare(&mut module, "pj_rem", &binary);
-        let pow = declare(&mut module, "pj_pow", &binary);
-        JitEngine {
+        let sin = declare(&mut module, "pj_sin", &unary)?;
+        let cos = declare(&mut module, "pj_cos", &unary)?;
+        let tan = declare(&mut module, "pj_tan", &unary)?;
+        let exp = declare(&mut module, "pj_exp", &unary)?;
+        let ln = declare(&mut module, "pj_ln", &unary)?;
+        let log10 = declare(&mut module, "pj_log10", &unary)?;
+        let sqrt = declare(&mut module, "pj_sqrt", &unary)?;
+        let abs = declare(&mut module, "pj_abs", &unary)?;
+        let rem = declare(&mut module, "pj_rem", &binary)?;
+        let pow = declare(&mut module, "pj_pow", &binary)?;
+        Some(        JitEngine {
             module,
             tramps: Trampolines {
                 rem,
@@ -196,13 +199,17 @@ impl JitEngine {
                 cos,
                 tan,
             },
-        }
+        })
     }
 }
 
 /// Check that the bytecode is a well-formed straight-line stack program for `arity` parameters:
-/// every `Param` index is in range, the stack never underflows, and the program leaves one result.
+/// the arity is representable (`Op::Param` indexes with a `u8`), every `Param` index is in range,
+/// the stack never underflows, and the program leaves one result.
 fn validate_bytecode(bc: &Bytecode, arity: usize) -> Option<()> {
+    if arity > MAX_PARAMS {
+        return None;
+    }
     let mut height = 0usize;
     for op in &bc.0 {
         match op {
@@ -241,7 +248,9 @@ fn validate_bytecode(bc: &Bytecode, arity: usize) -> Option<()> {
 pub fn compile_bytecode(bc: &Bytecode, arity: usize) -> Option<Arc<CompiledScalar>> {
     validate_bytecode(bc, arity)?;
 
-    let engine = ENGINE.get_or_init(|| Mutex::new(JitEngine::init()));
+    let engine = ENGINE.get_or_init(|| JitEngine::init().map(Mutex::new));
+    // A `None` engine means initialization failed earlier; the JIT stays permanently unavailable.
+    let engine = engine.as_ref()?;
     let mut engine = engine.lock().ok()?;
     let JitEngine { module, tramps } = &mut *engine;
     let tramps = *tramps;
@@ -300,7 +309,9 @@ fn emit_op(
     match op {
         Op::Const(x) => builder.ins().f64const(x),
         Op::Param(i) => {
-            let offset = i32::from(8 * i);
+            // Byte offset of slot `i` in the f64 argument buffer; computed in `i32` so the multiply
+            // never overflows a narrower domain (a `u8` arithmetic would wrap at i >= 32).
+            let offset = i32::from(i) * 8;
             builder.ins().load(
                 types::F64,
                 MemFlagsData::new(),

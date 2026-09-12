@@ -31,3 +31,8 @@ pub enum Op {
 /// The program stack height never dips below 1 after the first push; the top at the end is the result.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bytecode(pub Vec<Op>);
+
+/// Maximum number of function parameters the bytecode can address: `Op::Param` carries a `u8`
+/// index, so a function with more parameters cannot be represented and must be rejected up front
+/// (never truncated to a wrong slot, spec §19.2).
+pub const MAX_PARAMS: usize = u8::MAX as usize + 1;

@@ -125,6 +125,59 @@ fn multi_param_function() {
     assert_eq!(f.call(&[10.0, 4.0, 3.0]), 18.0);
 }
 
+// ————— parameter-index representation limits (spec §19.2) —————
+
+#[test]
+fn sum_of_32_params() {
+    // Boundary arity: p0 + p1 + … + p31, every slot read through the buffer.
+    let mut ops = vec![Op::Param(0)];
+    for i in 1..32 {
+        ops.push(Op::Param(i as u8));
+        ops.push(Op::Add);
+    }
+    let f = compile(&Bytecode(ops), 32);
+    let args: Vec<f64> = (0..32).map(|i| i as f64).collect();
+    assert_eq!(f.call(&args), (0..32).sum::<usize>() as f64);
+}
+
+#[test]
+fn thirty_three_params_read_correct_slots() {
+    // Regression: the parameter buffer offset used to be computed in the `u8` domain
+    // (`i32::from(8 * i)` — debug panic at i >= 32, wrong slot when wrapping), so 33 parameters
+    // silently misread arguments. They must compile and compute the exact sum.
+    let pool = ExprPool::new();
+    let builtins = BuiltinSymbols::global();
+    let params: Vec<String> = (0..33).map(|i| format!("p{i}")).collect();
+    let mut expr = pool.symbol(SymbolTable::global().intern("p0"));
+    for i in 1..33 {
+        let s = pool.symbol(SymbolTable::global().intern(&format!("p{i}")));
+        expr = pool.add2(expr, s);
+    }
+    let f = prima_jit::compile_scalar(&pool, builtins, expr, &params)
+        .expect("33 parameters are representable");
+    let args: Vec<f64> = (0..33).map(|i| i as f64).collect();
+    assert_eq!(f.call(&args), (0..33).sum::<usize>() as f64);
+}
+
+#[test]
+fn arity_beyond_param_representation_is_none() {
+    // `Op::Param` addresses arguments with a `u8` index; arity 257 cannot be represented and must
+    // be rejected instead of silently truncating indices.
+    assert!(compile_bytecode(&Bytecode(vec![Op::Param(0)]), 257).is_none());
+}
+
+#[test]
+fn dag_param_index_beyond_u8_is_none() {
+    // A DAG referencing the 257th parameter cannot lower to `Op::Param(u8)`; it must be rejected,
+    // not truncated to a wrong slot.
+    let pool = ExprPool::new();
+    let builtins = BuiltinSymbols::global();
+    let params: Vec<String> = (0..257).map(|i| format!("p{i}")).collect();
+    let sym = pool.symbol(SymbolTable::global().intern("p256"));
+    assert!(dag_to_bytecode(&pool, builtins, sym, &params).is_none());
+    assert!(prima_jit::compile_scalar(&pool, builtins, sym, &params).is_none());
+}
+
 // ————————————————————— malformed bytecode —————————————————————
 
 #[test]
