@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use num_bigint::BigInt;
-use prima_core::{Number, Real, Value};
+use prima_core::{ArrayVal, Number, Real, Value};
 use prima_syntax::ast::{
     AssignOp, Block, ComprehensionClause, Expr, ExprKind, ImplOp, IndexItem, Literal, Pattern,
     Spanned, Stmt, Type, UnOp,
@@ -276,6 +276,52 @@ pub(crate) fn pattern_is_refutable(p: &Pattern) -> bool {
     }
 }
 
+/// Whether `v` contains (at any depth) an array handle sharing `target`'s buffer. Cheap for scalar
+/// values (returns immediately); used before storing a value into an array slot (spec §11.3).
+pub(crate) fn value_contains_array_buffer(v: &Value, target: &ArrayVal) -> bool {
+    match v {
+        Value::Array(av) => {
+            av.is_same_buffer(target)
+                || av.with(|items| items.iter().any(|it| value_contains_array_buffer(it, target)))
+        }
+        Value::Tuple(items) => items.iter().any(|it| value_contains_array_buffer(it, target)),
+        Value::Dict(d) => d.values().any(|it| value_contains_array_buffer(it, target)),
+        Value::Option(Some(inner)) | Value::Result(Ok(inner)) => {
+            value_contains_array_buffer(inner, target)
+        }
+        _ => false,
+    }
+}
+
+/// Replace every array handle in `v` that shares `target`'s buffer with a unique snapshot copy, so
+/// storing `v` into the array owning `target` cannot create a reference cycle (spec §11.3 value
+/// semantics: element assignment stores a snapshot of the source, as the whole-value copy did).
+pub(crate) fn unalias_array_cycles(v: &mut Value, target: &ArrayVal) {
+    match v {
+        Value::Array(av) => {
+            if av.is_same_buffer(target) {
+                *v = Value::Array(target.snapshot());
+            } else {
+                av.with_mut(|items| {
+                    items
+                        .iter_mut()
+                        .for_each(|it| unalias_array_cycles(it, target))
+                });
+            }
+        }
+        Value::Tuple(items) => items
+            .iter_mut()
+            .for_each(|it| unalias_array_cycles(it, target)),
+        Value::Dict(d) => d
+            .values_mut()
+            .for_each(|it| unalias_array_cycles(it, target)),
+        Value::Option(Some(inner)) | Value::Result(Ok(inner)) => {
+            unalias_array_cycles(inner, target)
+        }
+        _ => {}
+    }
+}
+
 /// Short display name of a value's type, for error messages.
 pub fn value_type_name(v: &Value) -> String {
     match v {
@@ -297,6 +343,27 @@ pub fn value_type_name(v: &Value) -> String {
         Value::Undefined => "undefined".into(),
         Value::Error(_) => "error".into(),
         Value::JitFunction(_) => "jit function".into(),
+    }
+}
+
+/// Whether evaluating `e` can run user code (a call, method call, field access, or an index that
+/// may dispatch a class overload, spec §18.5). Used by the `A[i] = v` hot path to prove that no
+/// re-entrant rebinding of the target can occur between reading the binding and mutating it
+/// in place (spec §11.3).
+pub(crate) fn expr_is_side_effect_free(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Literal(_)
+        | ExprKind::Symbol(_)
+        | ExprKind::Path { .. }
+        | ExprKind::Self_ => true,
+        ExprKind::Binary { lhs, rhs, .. } => {
+            expr_is_side_effect_free(lhs) && expr_is_side_effect_free(rhs)
+        }
+        ExprKind::Unary { operand, .. } => expr_is_side_effect_free(operand),
+        ExprKind::Tuple(items) | ExprKind::Array(items) => {
+            items.iter().all(expr_is_side_effect_free)
+        }
+        _ => false,
     }
 }
 
@@ -551,7 +618,7 @@ pub(crate) fn number_mod(x: &Number, y: &Number) -> Result<Number, RuntimeError>
         return crate::error::err("modulo by zero");
     }
     if let (Some(a), Some(b)) = (x.as_bigint(), y.as_bigint()) {
-        return Ok(Number::Integer(a % b));
+        return Ok(Number::Integer(Box::new(a % b)));
     }
     Ok(Number::Real(Real::F64(x.to_f64_lossy() % y.to_f64_lossy())))
 }
@@ -605,10 +672,27 @@ pub(crate) fn numeric_method_name(name: &str) -> String {
     }
 }
 
+/// Resource limit for the eager `range`/`parfor` materialization (OOM guard): the largest
+/// element count `range(...)` may materialize into an `Array` (and the largest iteration count
+/// `parfor` may plan). 100 million elements (~800 MB of `Value`s) is far beyond any working
+/// workload while capping the allocation; lazy ranges are a separate feature (spec §11.7) and
+/// are not part of this limit.
+pub(crate) const MAX_RANGE_ELEMS: i128 = 100_000_000;
+
+/// Resource limit for f-string `{:spec}` width/precision (OOM guard): 1,000,000 keeps any
+/// single interpolation's rendered text at ~1 MB — far beyond working formatting needs — while
+/// capping padding/precision allocation (see [`apply_spec`]).
+pub(crate) const MAX_SPEC_WIDTH: u64 = 1_000_000;
+
 /// Apply an f-string `:spec` refinement (spec §18.1): a `.N` precision formats float values to N
 /// decimal places; `[[fill]align][width]` pads/aligns the rendered text (Python `format`
 /// mini-language subset, with the leading-`0` zero-pad flag). Unknown or non-numeric forms are
 /// left untouched rather than breaking the interpolation.
+///
+/// Resource limit (OOM guard): width/precision are clamped to [`MAX_SPEC_WIDTH`] (with
+/// saturating parsing, so absurd digit runs like `10^19` cannot overflow `usize` in debug builds
+/// either). Raising the limit violation as a runtime error would need the f-string call site
+/// (`eval/expr.rs`) to thread a `Result`, which the rendering helper cannot do.
 pub(crate) fn apply_spec(v: &Value, text: &str, spec: Option<&str>) -> String {
     let Some(spec) = spec else {
         return text.to_owned();
@@ -636,23 +720,26 @@ pub(crate) fn apply_spec(v: &Value, text: &str, spec: Option<&str>) -> String {
         fill = '0';
         i += 1;
     }
-    let mut width = 0usize;
+    // Saturating parse, then clamp: a runaway width/precision must not overflow `usize` (panic
+    // in debug builds) or allocate gigabytes of padding (OOM guard, see the doc comment above).
+    let mut width: u64 = 0;
     while let Some(&c) = spec.get(i) {
         if c.is_ascii_digit() {
-            width = width * 10 + (c as usize - b'0' as usize);
+            width = width.saturating_mul(10).saturating_add((c as u8 - b'0') as u64);
             i += 1;
         } else {
             break;
         }
     }
+    let width = width.min(MAX_SPEC_WIDTH) as usize;
     let mut precision = None;
     if spec.get(i) == Some(&'.') {
         i += 1;
-        let mut p = 0usize;
+        let mut p: u64 = 0;
         let mut any = false;
         while let Some(&c) = spec.get(i) {
             if c.is_ascii_digit() {
-                p = p * 10 + (c as usize - b'0' as usize);
+                p = p.saturating_mul(10).saturating_add((c as u8 - b'0') as u64);
                 any = true;
                 i += 1;
             } else {
@@ -660,7 +747,7 @@ pub(crate) fn apply_spec(v: &Value, text: &str, spec: Option<&str>) -> String {
             }
         }
         if any {
-            precision = Some(p);
+            precision = Some(p.min(MAX_SPEC_WIDTH) as usize);
         }
     }
     let mut body = text.to_owned();
@@ -708,7 +795,7 @@ pub(crate) fn literal_value(e: &Expr) -> Option<Value> {
         ExprKind::Literal(Literal::Integer(s)) => s
             .parse::<BigInt>()
             .ok()
-            .map(Number::Integer)
+            .map(|b| Number::Integer(Box::new(b)))
             .map(Value::Number),
         ExprKind::Literal(Literal::Bool(b)) => Some(Value::Bool(*b)),
         ExprKind::Literal(Literal::String { value, .. }) => Some(Value::String(value.clone())),

@@ -20,7 +20,7 @@ fn eval_fmt(src: &str) -> String {
 }
 
 fn arr(vals: Vec<Value>) -> Value {
-    Value::Array(vals)
+    Value::Array(vals.into())
 }
 
 #[test]

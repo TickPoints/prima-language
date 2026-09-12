@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use prima_core::{BuiltinSymbols, ExprId, ExprPool, SymbolTable, Value};
 use prima_syntax::ast::{
@@ -390,6 +390,7 @@ impl Evaluator {
                         ret: ret.clone(),
                         body: body.clone(),
                         env: Rc::clone(env),
+                        vm: Rc::new(OnceLock::new()),
                     }
                 };
                 env.borrow_mut().set_func(&name.value, f.clone());
@@ -670,7 +671,8 @@ impl Evaluator {
             Value::Char(c) => c.to_string(),
             Value::String(s) => s.clone(),
             Value::Array(elems) => {
-                let inner: Vec<String> = elems.iter().map(|e| self.format_value(e)).collect();
+                let inner: Vec<String> =
+                    elems.with(|items| items.iter().map(|e| self.format_value(e)).collect());
                 format!("[{}]", inner.join(", "))
             }
             Value::Dict(d) => {

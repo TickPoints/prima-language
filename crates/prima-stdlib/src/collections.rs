@@ -3,7 +3,7 @@
 //! `modules/{array,dict,set}.pra`. The `.pra` fallback bodies are the semantic authority; these
 //! Rust implementations must match them (the O0/O2 consistency tests enforce this).
 
-use prima_core::Value;
+use prima_core::{Value, ValueKey};
 use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError, value_type_name};
 
@@ -34,7 +34,9 @@ fn dict_copy(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError>
 fn set_symmetric_difference(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     match (args.first(), args.get(1)) {
         (Some(Value::Set(a)), Some(Value::Set(b))) => {
-            Ok(Value::Set(a.symmetric_difference(b).cloned().collect()))
+            let out: std::collections::HashSet<ValueKey> =
+                a.symmetric_difference(b).cloned().collect();
+            Ok(Value::Set(Box::new(out)))
         }
         _ => Err(RuntimeError::Message(
             "`Set.symmetric_difference` expects a set receiver and a set argument".into(),

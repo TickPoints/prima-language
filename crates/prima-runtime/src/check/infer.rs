@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 use prima_syntax::ast::{BinOp, CompKind, Expr, ExprKind, Literal, Pattern, Type, UnOp};
 
+use super::depth::enter_walk_depth;
 use super::signature::{Signature, lookup_call_signature};
 
 /// Refutable-pattern check for `let` (spec §4.4): only bindings, wildcards and grouped tuples/arrays
@@ -27,7 +28,14 @@ pub(crate) fn pattern_is_refutable(p: &Pattern) -> bool {
 /// Static type name of a literal/simple expression (spec §6.3 literal type inference). Returns
 /// `"unknown"` for anything not statically decidable; stdlib calls resolve through the harvested
 /// signature table. `"Expr"` is the symbolic catch-all for builtin math functions.
+///
+/// Recursion budget (spec §16.4): `"unknown"` is the permissive fallback when the walk depth is
+/// exhausted (`assignable` never rejects `"unknown"`), so pathological nesting degrades to fewer
+/// checks instead of a stack overflow.
 pub(crate) fn infer(expr: &Expr, sigs: &HashMap<String, Vec<Signature>>) -> String {
+    let Some(_depth) = enter_walk_depth() else {
+        return "unknown".into();
+    };
     match &expr.kind {
         ExprKind::Literal(lit) => match lit {
             Literal::Integer(_) | Literal::Hex(_) | Literal::Binary(_) => "Integer".into(),

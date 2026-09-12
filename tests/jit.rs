@@ -62,6 +62,7 @@ fn jit_grad_multi_var_returns_array() {
     let Value::Array(items) = v else {
         panic!("expected an array, got {v:?}");
     };
+    let items = items.to_vec();
     assert_eq!(items.len(), 2);
     assert!(
         (as_f64(&items[0]) - 4.0).abs() < 1e-9,

@@ -4,8 +4,11 @@
 //! a reverse-mode gradient tape, a list of symbolic gradient expressions, or an interpreted fallback —
 //! so a `JitFunction` keeps working even when native compilation is unavailable.
 //!
-//! Ids are process-local (like `Value::Class` handles, spec §5) and never die for the process lifetime.
+//! Ids are process-local (like `Value::Class` handles, spec §5) and are never recycled; entries
+//! themselves are evicted oldest-first once the registry capacity is reached (a resource limit —
+//! see [`REGISTRY_CAPACITY`]).
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -52,21 +55,35 @@ impl JitCallable {
     }
 }
 
-/// Process-global registry: `Value::JitFunction(id)` ids are never recycled (like class instances).
+/// Registry capacity (resource limit): every `jit(...)` call registers a fresh callable, so an
+/// ever-growing registry leaks memory for loops like `while … { f = jit(x^2); f(1.0); }`. The
+/// registry keeps at most this many callables, evicting the oldest (smallest) ids; 1024 far
+/// exceeds the number of JIT functions a working program registers. An evicted handle reports
+/// "unknown JIT function handle" at call time.
+const REGISTRY_CAPACITY: usize = 1024;
+
+/// Process-global registry: `Value::JitFunction(id)` ids are never recycled (like class
+/// instances); entries are evicted oldest-first beyond [`REGISTRY_CAPACITY`].
 ///
-/// The callables are only ever created and invoked from the interpreter's evaluating thread (`jit(...)`
-/// and `JitFunction` calls resolve through `eval_call` on that thread; rayon tasks run self-contained
-/// numeric bodies, never registered callables). `JitCallable` is nevertheless not `Send`/`Sync` because
-/// `fallback` holds an `EnvRef` (`Rc<RefCell<Env>>`, spec §5), so the wrapper claims both bounds explicitly.
+/// Callables are created and invoked from the interpreter's evaluating thread (`jit(...)` and
+/// `JitFunction` calls resolve through `eval_call` on that thread). Rayon `parfor` tasks may
+/// *look up* a callable and run its compiled/tape/symbolic forms (all thread-safe reads), but
+/// never execute the `fallback` form: `ParforTaskGuard` marks worker threads and [`call`] refuses
+/// the fallback there, because it dereferences the registering thread's `EnvRef`
+/// (`Rc<RefCell<Env>>`, spec §5). `JitCallable` is therefore not `Send`/`Sync` and the wrapper
+/// claims both bounds explicitly.
 struct Registry(Mutex<HashMap<u32, Arc<JitCallable>>>);
 
-// SAFETY: every access to the registry (`register`/`lookup`/`call`) happens on the evaluating thread
-// and is guarded by the mutex; the non-`Send` `EnvRef` inside a callable is only ever dereferenced by
-// that thread (the `Arc` keeps it alive for the process lifetime).
+// SAFETY: all registry map access is guarded by the mutex; the non-`Send` `EnvRef` inside a
+// callable is only ever *dereferenced* on the evaluating thread (worker threads are refused by
+// the `ParforTaskGuard` check in `call`). Cross-thread `Arc` clones are safe: the registry
+// always retains one strong reference while the entry is live, and eviction happens only in
+// `register` on the evaluating thread — which is blocked for the duration of a `parfor` — so an
+// `Arc` dropped on a worker thread is never the last reference.
 #[allow(clippy::arc_with_non_send_sync)]
 unsafe impl Send for Registry {}
-// SAFETY: see above — the mutex serializes access, and cross-thread sharing of callables never occurs
-// (rayon tasks never touch registered callables).
+// SAFETY: see above — the mutex serializes access; the fallback `EnvRef` is dereferenced only on
+// the evaluating thread (worker access to the compiled/tape/symbolic forms is read-only).
 #[allow(clippy::arc_with_non_send_sync)]
 unsafe impl Sync for Registry {}
 
@@ -78,17 +95,56 @@ fn registry() -> &'static Registry {
     REGISTRY.get_or_init(|| Registry(Mutex::new(HashMap::new())))
 }
 
+thread_local! {
+    /// Marks rayon threads running `parfor` tasks (spec §17.2): set by [`ParforTaskGuard`] at the
+    /// worker closure entry, checked in [`call`] before the fallback dispatch.
+    static PARFOR_TASK: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Marks the current thread as a `parfor` worker task for the guard's lifetime: JIT fallback
+/// execution is refused there (the fallback's `EnvRef` is not thread-safe).
+pub(crate) struct ParforTaskGuard;
+
+impl ParforTaskGuard {
+    pub(crate) fn new() -> ParforTaskGuard {
+        PARFOR_TASK.with(|f| f.set(true));
+        ParforTaskGuard
+    }
+}
+
+impl Drop for ParforTaskGuard {
+    fn drop(&mut self) {
+        PARFOR_TASK.with(|f| f.set(false));
+    }
+}
+
+/// Whether the current thread is running a `parfor` worker task (spec §17.2).
+pub(crate) fn in_parfor_task() -> bool {
+    PARFOR_TASK.with(Cell::get)
+}
+
 /// Register a callable and return its process-local handle id.
 // The `Arc<JitCallable>` is intentionally not `Send`/`Sync` (it may hold an `EnvRef`); the `Registry`
 // only ever hands callables to the evaluating thread (see the `unsafe impl` safety comments above).
 #[allow(clippy::arc_with_non_send_sync)]
 pub fn register(c: JitCallable) -> u32 {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    registry().0.lock().unwrap().insert(id, Arc::new(c));
+    let mut entries = registry().0.lock().unwrap();
+    entries.insert(id, Arc::new(c));
+    // Ids are monotonic, so the smallest key is the oldest registration; evict it while over
+    // capacity (resource limit — see [`REGISTRY_CAPACITY`]).
+    while entries.len() > REGISTRY_CAPACITY {
+        let oldest = entries
+            .keys()
+            .copied()
+            .min()
+            .expect("over-capacity registry is non-empty");
+        entries.remove(&oldest);
+    }
     id
 }
 
-/// Look up a registered callable by handle id.
+/// Look up a registered callable by handle id; evicted (expired) handles return `None`.
 pub fn lookup(id: u32) -> Option<Arc<JitCallable>> {
     registry().0.lock().unwrap().get(&id).cloned()
 }
@@ -133,7 +189,7 @@ pub fn call(ev: &mut Evaluator, id: u32, args: Vec<Value>) -> Result<Value, Runt
         return Ok(if callable.n_out == 1 {
             number_result(out)
         } else {
-            Value::Array(vec![number_result(out)])
+            Value::Array(vec![number_result(out)].into())
         });
     }
     if let Some(tape) = &callable.tape {
@@ -141,7 +197,7 @@ pub fn call(ev: &mut Evaluator, id: u32, args: Vec<Value>) -> Result<Value, Runt
         return Ok(if callable.n_out == 1 {
             number_result(grad[0])
         } else {
-            Value::Array(grad.into_iter().map(number_result).collect())
+            Value::Array(grad.into_iter().map(number_result).collect::<Vec<Value>>().into())
         });
     }
     if let Some((ids, params)) = &callable.expressions {
@@ -153,10 +209,18 @@ pub fn call(ev: &mut Evaluator, id: u32, args: Vec<Value>) -> Result<Value, Runt
         return Ok(if callable.n_out == 1 {
             out.pop().unwrap_or_else(|| number_result(0.0))
         } else {
-            Value::Array(out)
+            Value::Array(out.into())
         });
     }
     if let Some((params, body, env)) = &callable.fallback {
+        // The interpreted fallback dereferences the registering thread's `EnvRef`
+        // (`Rc<RefCell<Env>>`); running it inside a `parfor` worker task would be a cross-thread
+        // data race, so it is refused with an actionable message (spec §17.2).
+        if in_parfor_task() {
+            return crate::error::err(
+                "JIT fallback is not available inside parfor; provide a compilable function",
+            );
+        }
         return ev.apply_jit_fallback(params, body, env, args);
     }
     crate::error::err(format!("JIT function `{}` has no executable form", id))
@@ -188,14 +252,19 @@ fn eval_symbolic(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex as StdMutex;
 
     fn setup() -> Vec<String> {
         let params = vec!["x".to_string()];
         params
     }
 
+    /// The registry is process-global, so tests that register/look up must not interleave.
+    static TEST_LOCK: StdMutex<()> = StdMutex::new(());
+
     #[test]
     fn register_lookup_roundtrip() {
+        let _g = TEST_LOCK.lock().unwrap();
         let params = setup();
         let c = JitCallable::scalar(params, None, None);
         let id = register(c);
@@ -206,6 +275,7 @@ mod tests {
 
     #[test]
     fn ids_are_monotonic() {
+        let _g = TEST_LOCK.lock().unwrap();
         let params = setup();
         let a = register(JitCallable::scalar(params.clone(), None, None));
         let b = register(JitCallable::scalar(params, None, None));
@@ -215,6 +285,7 @@ mod tests {
 
     #[test]
     fn lookup_unknown_is_none() {
+        let _g = TEST_LOCK.lock().unwrap();
         assert!(lookup(999_999).is_none());
     }
 
@@ -225,5 +296,70 @@ mod tests {
         assert_eq!(c.n_out, 1);
         assert!(c.tape.is_none());
         assert!(c.expressions.is_none());
+    }
+
+    #[test]
+    fn registry_is_bounded() {
+        let _g = TEST_LOCK.lock().unwrap();
+        // Register past the capacity: the map must stop growing (oldest entries evicted).
+        let mut last = 0;
+        for _ in 0..REGISTRY_CAPACITY + 128 {
+            last = register(JitCallable::scalar(setup(), None, None));
+        }
+        let entries = registry().0.lock().unwrap();
+        assert!(
+            entries.len() <= REGISTRY_CAPACITY,
+            "registry grew to {} entries",
+            entries.len()
+        );
+        // The most recent registration is always retained.
+        assert!(entries.contains_key(&last));
+    }
+
+    #[test]
+    fn parfor_task_guard_marks_the_thread() {
+        assert!(!in_parfor_task());
+        {
+            let _g = ParforTaskGuard::new();
+            assert!(in_parfor_task());
+        }
+        assert!(!in_parfor_task(), "guard drop clears the marker");
+    }
+
+    /// The fallback must be refused on a thread marked as a `parfor` task (the guard's whole
+    /// point): the call returns the actionable error instead of dereferencing the `EnvRef`.
+    #[test]
+    fn fallback_call_refused_inside_parfor_task() {
+        use crate::eval::Env;
+        use std::cell::RefCell as StdRefCell;
+        use std::rc::Rc;
+
+        std::thread::spawn(|| {
+            let _lock = TEST_LOCK.lock().unwrap();
+            let _task = ParforTaskGuard::new();
+            assert!(in_parfor_task());
+            // Build the callable on this thread (the `EnvRef` is thread-local by construction);
+            // a fallback-only callable with no parameters reaches the guard before any argument
+            // handling error.
+            let program = prima_syntax::parse("x").expect("parse");
+            let body = match &program.stmts[0] {
+                prima_syntax::ast::Stmt::Expr(e) => e.clone(),
+                other => panic!("expected an expression statement, got {other:?}"),
+            };
+            let env: EnvRef = Rc::new(StdRefCell::new(Env::new()));
+            let id = register(JitCallable::scalar(
+                vec![],
+                None,
+                Some((vec![], body, env)),
+            ));
+            let mut ev = Evaluator::new();
+            let err = call(&mut ev, id, vec![]).unwrap_err();
+            assert!(
+                err.to_string().contains("JIT fallback"),
+                "unexpected error: {err}"
+            );
+        })
+        .join()
+        .expect("worker thread panicked");
     }
 }

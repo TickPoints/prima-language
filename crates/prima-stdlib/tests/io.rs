@@ -35,7 +35,7 @@ io::json_parse("{\"a\": 1, \"b\": [true, null]}")"#,
             );
             assert_eq!(
                 d.get(&ValueKey::Str("b".into())),
-                Some(&Value::Array(vec![Value::Bool(true), Value::Nil]))
+                Some(&Value::Array(vec![Value::Bool(true), Value::Nil].into()))
             );
         }
         other => panic!("expected Dict, got {other:?}"),
@@ -63,7 +63,7 @@ io::json_parse("\"hi\"")"#
             r#"import io;
 io::json_parse("[]")"#
         )),
-        Value::Array(vec![])
+        Value::Array(vec![].into())
     );
     assert_eq!(
         ok_of(eval(
@@ -104,12 +104,12 @@ fn csv_parse_handles_quoted_commas() {
     assert_eq!(
         v,
         Value::Array(vec![
-            Value::Array(vec![Value::String("a".into()), Value::String("b".into())]),
+            Value::Array(vec![Value::String("a".into()), Value::String("b".into())].into()),
             Value::Array(vec![
                 Value::String("1".into()),
                 Value::String("x, y".into())
-            ]),
-        ])
+            ].into()),
+        ].into())
     );
 }
 
@@ -124,12 +124,12 @@ fn csv_parse_handles_escaped_quotes_and_newlines() {
             Value::Array(vec![
                 Value::String("h".into()),
                 Value::String("q\"q".into())
-            ]),
+            ].into()),
             Value::Array(vec![
                 Value::String("1".into()),
                 Value::String("line1\nline2".into())
-            ]),
-        ])
+            ].into()),
+        ].into())
     );
 }
 
@@ -217,7 +217,7 @@ fn read_lines_splits_content() {
             Value::String("a".into()),
             Value::String("b".into()),
             Value::String("c".into()),
-        ])
+        ].into())
     );
     let _ = std::fs::remove_file(&path);
 }
@@ -251,7 +251,7 @@ fn read_write_json_roundtrip() {
             Some(&Value::Array(vec![
                 Value::Number(Number::from(1)),
                 Value::Number(Number::from(2)),
-            ]))
+            ].into()))
         ),
         other => panic!("expected Dict, got {other:?}"),
     }
@@ -273,12 +273,12 @@ fn read_write_csv_roundtrip() {
     assert_eq!(
         v,
         Value::Array(vec![
-            Value::Array(vec![Value::String("a".into()), Value::String("b".into())]),
+            Value::Array(vec![Value::String("a".into()), Value::String("b".into())].into()),
             Value::Array(vec![
                 Value::String("1".into()),
                 Value::String("x, y".into())
-            ]),
-        ])
+            ].into()),
+        ].into())
     );
     let _ = std::fs::remove_file(&path);
 }

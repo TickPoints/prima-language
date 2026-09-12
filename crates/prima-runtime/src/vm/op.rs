@@ -5,8 +5,12 @@
 //! with slot allocation, upvalue descriptors, and a line table for diagnostics.
 //!
 //! The instruction set is deliberately minimal and monomorphic on purpose: operands are stack-typed
-//! (`Value`), so the dispatch loop stays small and branch-predictable. Specialization opportunities
-//! (numeric fast paths, string/integer interning) are added later as `F64`/tagged fast ops.
+//! (`Value`), so the dispatch loop stays small and branch-predictable. Numeric fast paths live in
+//! the executor (spec §19.5); further specialization opportunities are added later as `F64`/tagged
+//! fast ops.
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// A constant reference into the chunk's constant pool.
 pub type Reg = u16;
@@ -29,8 +33,31 @@ pub enum Op {
     // —— stores / pops ——
     /// Store the stack top into local `slot` and pop it.
     SetLocal(Reg),
+    /// Store the stack top into local `slot` and discard it (no push-back). Emitted where the
+    /// compiler previously emitted `SetLocal` + `Pop` (bindings and assignments, spec §12.2).
+    SetLocalNc(Reg),
+    /// `slots[slot] += imm` in place (no stack traffic): `Small` checked addition, widening
+    /// through the `Number` tower on overflow (spec §6.1). Emitted for `x += <small literal>`.
+    AddImmLocal { slot: Reg, imm: i64 },
+    /// `slots[slot] = slots[slot] + <popped rhs>` (no push-back): the fused form of
+    /// `x = x + expr` for a local target (spec §12.2).
+    AddToSlot(Reg),
     /// Store the stack top into upvalue `slot` and pop it.
     SetUpvalue(Reg),
+    /// Loop condition test on two local slots: if NOT `slots[a] < slots[b]`, jump by `off`
+    /// (forward, out of the loop). The fused form of `LoadLocal a; LoadLocal b; Lt;
+    /// JumpIfFalse` (spec §14 `while`/`for` loops); non-`Small` operands fall back to the
+    /// general comparison path.
+    BranchLocalLt { a: Reg, b: Reg, off: i32 },
+    /// Loop condition test on two local slots: if NOT `slots[a] <= slots[b]`, jump by `off`
+    /// (forward, out of the loop). The fused form of `LoadLocal a; LoadLocal b; Le;
+    /// JumpIfFalse` (spec §14); non-`Small` operands fall back to the general comparison path.
+    BranchLocalLe { a: Reg, b: Reg, off: i32 },
+    /// Bind the top `n` operand-stack values to the frame's parameter slots `0..n` (in push
+    /// order: the value pushed first is slot 0) and remove them from the stack. Emitted once at
+    /// the start of a function chunk; both call paths (entry args and `CallName` frames) push
+    /// arguments in order, so binding is uniform (spec §11).
+    BindParams(Reg),
     /// Pop one value and discard it.
     Pop,
     // —— arithmetic / logic (stack → stack) ——
@@ -77,17 +104,30 @@ pub enum Op {
     MakeDict(u16),
     /// Index a value: `base[index]` → push result.
     Index,
-    /// Index assign: `base[index] = value`, leaving the assigned value on the stack.
-    IndexStore,
-    /// `SetLocal` for an array slot write-back (receiver mutation, spec §11.3).
+    /// Index assign into a local slot's array: `slot[index] = value` (stack: `[index, value]`).
+    /// The slot's array is mutated in place (copy-on-write when its handle is aliased) and the
+    /// assigned value is left on the stack (spec §11.3).
+    IndexStoreLocal(Reg),
+    /// Index assign into an environment name's array: `name[index] = value` (stack:
+    /// `[index, value]`); the binding is mutated in place along the chain and the assigned value
+    /// is left on the stack (spec §11.3/§12.2).
+    IndexStoreName(Reg),
     // ————— calls —————
     /// Call a function value on the stack with the top `argc` arguments (args pushed in order);
     /// the callee is immediately below the args.
     Call { argc: u16 },
     /// Call a method by name constant index with `argc` arguments pushed above the receiver.
     Method { name: Reg, argc: u16 },
+    /// Call a mutating `Array` method (spec §11.3) on a local slot's array: the slot's array is
+    /// mutated in place and stored back so later loads observe the mutation. `argc` arguments are
+    /// on the stack; the receiver stays in its slot.
+    MethodLocal { name: Reg, argc: u16, slot: Reg },
     /// Call a function name (const pool `Const::Name` index) with `argc` arguments pushed above it.
     CallName { name: Reg, argc: u16 },
+    /// Call a mutating `Array` method (spec §11.3) on an environment binding (a non-local receiver
+    /// name, const pool `Const::Name` index): the binding's array is mutated in place along the
+    /// scope chain, mirroring the AST's `mutate_array` path. `argc` arguments are on the stack.
+    MethodName { name: Reg, argc: u16 },
     /// Push a global/builtin name reference (const pool `Const::Name` index), resolved against the
     /// environment at runtime. Used for non-local symbols and builtins.
     LoadName(Reg),
@@ -133,6 +173,16 @@ pub struct Upvalue {
     pub slot: Reg,
 }
 
+/// A call-site resolution cached across executions (spec §19.5): either a core builtin (dispatched
+/// directly) or a function chunk of the same program (entered as a frame). Cached entries are
+/// validated against the process-wide function-definition epoch (see `crate::eval::env`), so a
+/// user redefinition (shadowing a builtin, rebinding a `fn`) always re-resolves.
+#[derive(Debug, Clone, Copy)]
+pub enum Callee {
+    Builtin(crate::builtins::Builtin),
+    ProgramFn(u32),
+}
+
 /// One compiled function entry: bytecode + constants + local/upvalue metadata.
 #[derive(Debug, Clone)]
 pub struct Chunk {
@@ -141,9 +191,17 @@ pub struct Chunk {
     pub locals: Vec<Local>,
     /// Number of stack slots reserved for locals/upvalues (max slot index + 1).
     pub slot_count: u16,
+    /// Expected parameter count for function chunks (spec §11); used to reject arity mismatches
+    /// at the call site (the AST path reports the authoritative error). Root chunks carry `0`.
+    pub arity: u16,
     pub upvalues: Vec<Upvalue>,
     /// Source line per instruction (offset-indexed), for diagnostics.
     pub lines: Vec<u32>,
+    /// Per-`CallName`-site resolved-callee cache (spec §19.5), indexed by the instruction's name
+    /// constant index, each entry `(epoch, callee)`. Interior-mutable: resolved lazily on first
+    /// execution and invalidated by epoch changes. Only builtin/program-function callees are
+    /// cached; environment-dependent callees (host `fn`, MFn, natives) always re-resolve.
+    pub callee_cache: RefCell<Vec<Option<(u64, Callee)>>>,
 }
 
 impl Chunk {
@@ -153,8 +211,10 @@ impl Chunk {
             constants: Vec::new(),
             locals: Vec::new(),
             slot_count: 0,
+            arity: 0,
             upvalues: Vec::new(),
             lines: Vec::new(),
+            callee_cache: RefCell::new(Vec::new()),
         }
     }
 
@@ -215,6 +275,34 @@ impl Chunk {
             *off = target as i32 - at as i32;
         }
     }
+
+    /// Emit a fused `BranchLocalLt` with a placeholder offset, returning the instruction index.
+    pub fn emit_branch_local_lt(&mut self, a: Reg, b: Reg, line: u32) -> usize {
+        let i = self.code.len();
+        self.emit(Op::BranchLocalLt { a, b, off: 0 }, line);
+        i
+    }
+
+    /// Patch a prior `BranchLocalLt` placeholder to the given absolute code offset.
+    pub fn patch_branch_local_lt(&mut self, at: usize, target: usize) {
+        if let Some(Op::BranchLocalLt { off, .. }) = self.code.get_mut(at) {
+            *off = target as i32 - at as i32;
+        }
+    }
+
+    /// Emit a fused `BranchLocalLe` with a placeholder offset, returning the instruction index.
+    pub fn emit_branch_local_le(&mut self, a: Reg, b: Reg, line: u32) -> usize {
+        let i = self.code.len();
+        self.emit(Op::BranchLocalLe { a, b, off: 0 }, line);
+        i
+    }
+
+    /// Patch a prior `BranchLocalLe` placeholder to the given absolute code offset.
+    pub fn patch_branch_local_le(&mut self, at: usize, target: usize) {
+        if let Some(Op::BranchLocalLe { off, .. }) = self.code.get_mut(at) {
+            *off = target as i32 - at as i32;
+        }
+    }
 }
 
 impl Default for Chunk {
@@ -224,12 +312,13 @@ impl Default for Chunk {
 }
 
 /// A compiled VM program entry: the root chunk, the set of function chunks (indexed by function id),
-/// and the function-name → chunk-index table.
+/// and the function-name → chunk-index table. Chunks are shared through `Rc` so entering the VM (or
+/// calling a compiled function) never deep-copies bytecode (spec §19.5).
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub root: Chunk,
+    pub root: Rc<Chunk>,
     /// All non-root function/method/closure chunks, keyed by function id (`u32`).
-    pub functions: Vec<Chunk>,
+    pub functions: Vec<Rc<Chunk>>,
     /// Name → index into `functions` for the VM's call dispatch.
     pub names: std::collections::HashMap<String, u32>,
 }

@@ -5,6 +5,7 @@ use prima_syntax::Span;
 use prima_syntax::{SyntaxWarning, parse};
 
 mod collect;
+mod depth;
 mod error;
 mod infer;
 mod names;
@@ -368,5 +369,33 @@ mod tests {
         let (errors, _) = check_src_checked("import linalg; let x = linalg::det([1]);");
         // `linalg`/`det` are module/constructor refs, not single-segment vars, so no E0040.
         assert!(errors.is_empty(), "got: {errors:?}");
+    }
+
+    // ————— nesting depth budget (spec §16.4) —————
+
+    #[test]
+    fn deeply_nested_source_surfaces_as_error_not_crash() {
+        // Hostile input: the parser rejects nesting beyond its budget; `check_src` surfaces that
+        // as a located error instead of overflowing any recursive walk (parser/infer/collect).
+        let src = format!("let x = {}0{};", "(".repeat(100_000), ")".repeat(100_000));
+        let errs = check_src(&src);
+        assert_eq!(errs.len(), 1);
+        assert!(
+            errs[0].message.contains("too deep"),
+            "got: {:?}",
+            errs[0].message
+        );
+    }
+
+    #[test]
+    fn flat_chain_beyond_depth_limit_surfaces_as_error_not_crash() {
+        let src = format!("let x = {}0;", "0+".repeat(100_000));
+        let errs = check_src(&src);
+        assert_eq!(errs.len(), 1);
+        assert!(
+            errs[0].message.contains("too deep"),
+            "got: {:?}",
+            errs[0].message
+        );
     }
 }

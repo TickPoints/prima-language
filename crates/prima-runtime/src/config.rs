@@ -93,9 +93,9 @@ pub struct Config {
     pub num_to_big: bool,
     pub print_format: PrintFormat,
     pub overload_policy: OverloadPolicy,
-    /// Bytecode VM execution (spec §19.5, Milestone B): when `true`, the interpreter lowers and
-    /// executes through the stack bytecode VM (default `false` while the VM is validated = gated,
-    /// spec §19.5 gate). The AST interpreter remains the authoritative fallback.
+    /// Bytecode VM execution (spec §19.5): when `true`, function bodies inside the compiled subset
+    /// run through the stack bytecode VM (default `true`; results are identical to the AST
+    /// interpreter, which remains the authoritative fallback outside the compiled subset).
     pub vm: bool,
 }
 
@@ -113,7 +113,7 @@ impl Default for Config {
             num_to_big: true,
             print_format: PrintFormat::Latex,
             overload_policy: OverloadPolicy::Warn,
-            vm: false,
+            vm: true,
         }
     }
 }

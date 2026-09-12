@@ -43,7 +43,7 @@ fn broadcast_op_works_when_disabled() {
             Value::Number(Number::from(1)),
             Value::Number(Number::from(4)),
             Value::Number(Number::from(9))
-        ])
+        ].into())
     );
 }
 

@@ -71,8 +71,9 @@ impl Evaluator {
                 if *rest && elems.len() < pats.len() {
                     return None;
                 }
+                let elems = elems.to_vec();
                 let mut out = Vec::new();
-                for (pat, e) in pats.iter().zip(elems) {
+                for (pat, e) in pats.iter().zip(&elems) {
                     out.extend(self.match_pattern(env, e, pat)?);
                 }
                 Some(out)
@@ -115,7 +116,7 @@ impl Evaluator {
                 },
                 "Err" => match v {
                     Value::Result(Err(msg)) if args.len() == 1 => {
-                        self.match_pattern(env, &Value::String(msg.clone()), &args[0])
+                        self.match_pattern(env, &Value::String((**msg).clone()), &args[0])
                     }
                     _ => None,
                 },
@@ -159,6 +160,7 @@ impl Evaluator {
     pub(crate) fn number_cmp(&self, a: &Number, b: &Number) -> Option<Ordering> {
         let (x, y) = prima_core::number::promote(a, b);
         match (x, y) {
+            (Number::Small(x), Number::Small(y)) => Some(x.cmp(&y)),
             (Number::Integer(x), Number::Integer(y)) => Some(x.cmp(&y)),
             (Number::Rational(x), Number::Rational(y)) => Some(x.cmp(&y)),
             (Number::Real(Real::F32(x)), Number::Real(Real::F32(y))) => x.partial_cmp(&y),

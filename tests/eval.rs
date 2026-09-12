@@ -29,7 +29,7 @@ fn mfn_broadcasts_over_array() {
             Value::Number(Number::from(1)),
             Value::Number(Number::from(4)),
             Value::Number(Number::from(9))
-        ])
+        ].into())
     );
 }
 
@@ -85,7 +85,7 @@ fn array_binary_broadcast() {
             Value::Number(Number::from(11)),
             Value::Number(Number::from(12)),
             Value::Number(Number::from(13))
-        ])
+        ].into())
     );
     assert_eq!(
         eval("[1, 2, 3] + [10, 20, 30]"),
@@ -96,7 +96,7 @@ fn array_binary_broadcast() {
             Value::Number(Number::from(10)),
             Value::Number(Number::from(20)),
             Value::Number(Number::from(30))
-        ])
+        ].into())
     );
     assert_eq!(
         eval("[1, 2, 3]^2"),
@@ -104,7 +104,7 @@ fn array_binary_broadcast() {
             Value::Number(Number::from(1)),
             Value::Number(Number::from(4)),
             Value::Number(Number::from(9))
-        ])
+        ].into())
     );
 }
 
@@ -117,12 +117,12 @@ fn nested_array_allowed_as_data() {
             Value::Array(vec![
                 Value::Number(Number::from(1)),
                 Value::Number(Number::from(2))
-            ]),
+            ].into()),
             Value::Array(vec![
                 Value::Number(Number::from(3)),
                 Value::Number(Number::from(4))
-            ]),
-        ])
+            ].into()),
+        ].into())
     );
 }
 

@@ -5,7 +5,7 @@
 use super::helpers::{
     did_you_mean, is_mutating_array_method, is_mutating_dict_method, is_mutating_set_method,
     method_note, native_method_error, normalize_index, normalize_insert, numeric_method_name,
-    path_key, with_notes,
+    path_key, unalias_array_cycles, value_contains_array_buffer, with_notes,
 };
 use super::*;
 
@@ -863,15 +863,18 @@ impl Evaluator {
             return crate::error::err("`get` expects an integer index");
         };
         match normalize_index(i, a.len()) {
-            Some(i) => Ok(Value::Option(Some(Box::new(a[i].clone())))),
+            Some(i) => Ok(Value::Option(Some(Box::new(
+                a.get(i).unwrap_or(Value::Nil),
+            )))),
             None => Ok(Value::Option(None)),
         }
     }
 
-    /// Read-only array methods (spec §11.3): operate on a value-semantic copy of the array.
+    /// Read-only array methods (spec §11.3): operate on the receiver's buffer through a read-only
+    /// borrow; results are fresh values.
     pub(crate) fn call_array_method(
         &mut self,
-        a: &[Value],
+        a: &ArrayVal,
         name: &str,
         args: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
@@ -896,15 +899,17 @@ impl Evaluator {
             }
             "get" => {
                 arity(1)?;
-                self.call_array_get(Value::Array(a.to_vec()), args[0].clone())
+                self.call_array_get(Value::Array(a.snapshot()), args[0].clone())
             }
             "contains" => {
                 arity(1)?;
-                Ok(Value::Bool(a.iter().any(|e| self.value_eq(e, &args[0]))))
+                Ok(Value::Bool(a.with(|items| {
+                    items.iter().any(|e| self.value_eq(e, &args[0]))
+                })))
             }
             "index" => {
                 arity(1)?;
-                match a.iter().position(|e| self.value_eq(e, &args[0])) {
+                match a.with(|items| items.iter().position(|e| self.value_eq(e, &args[0]))) {
                     Some(i) => Ok(Value::Number(Number::from(i as i64))),
                     None => crate::error::err("element not found"),
                 }
@@ -912,33 +917,45 @@ impl Evaluator {
             "count" => {
                 arity(1)?;
                 Ok(Value::Number(Number::from(
-                    a.iter().filter(|e| self.value_eq(e, &args[0])).count() as i64,
+                    a.with(|items| {
+                        items
+                            .iter()
+                            .filter(|e| self.value_eq(e, &args[0]))
+                            .count()
+                    }) as i64,
                 )))
             }
             "first" => {
                 arity(0)?;
-                Ok(a.first()
-                    .map(|v| Value::Option(Some(Box::new(v.clone()))))
-                    .unwrap_or(Value::Option(None)))
+                Ok(a.with(|items| {
+                    items
+                        .first()
+                        .map(|v| Value::Option(Some(Box::new(v.clone()))))
+                        .unwrap_or(Value::Option(None))
+                }))
             }
             "last" => {
                 arity(0)?;
-                Ok(a.last()
-                    .map(|v| Value::Option(Some(Box::new(v.clone()))))
-                    .unwrap_or(Value::Option(None)))
+                Ok(a.with(|items| {
+                    items
+                        .last()
+                        .map(|v| Value::Option(Some(Box::new(v.clone()))))
+                        .unwrap_or(Value::Option(None))
+                }))
             }
             "copy" => {
                 arity(0)?;
-                Ok(Value::Array(a.to_vec()))
+                Ok(Value::Array(a.snapshot()))
             }
             _ => crate::error::err(format!("unknown `Array` method `{name}`")),
         }
     }
 
     /// Mutating array methods (spec §11.3): the receiver must be a single-segment path (a variable
-    /// binding); the mutated copy is written back to the binding.
+    /// binding); the binding's buffer is mutated in place through the chain (copy-on-write when
+    /// the handle is aliased, spec §11.3 value semantics).
     pub(crate) fn mutate_array(
-        &mut self,
+        &self,
         env: &EnvRef,
         receiver: &Expr,
         name: &str,
@@ -948,13 +965,48 @@ impl Evaluator {
             ExprKind::Path { segments } if segments.len() == 1 => segments[0].value.clone(),
             _ => return crate::error::err("cannot mutate a temporary value"),
         };
-        let cur = env
-            .borrow()
-            .get_value(&var)
-            .ok_or_else(|| RuntimeError::Message(format!("unknown variable `{var}`")))?;
-        let Value::Array(mut arr) = cur else {
-            return crate::error::err("expected an array binding");
-        };
+        match env.borrow().get_value(&var) {
+            Some(Value::Array(_)) => {}
+            Some(_) => return crate::error::err("expected an array binding"),
+            None => return Err(RuntimeError::Message(format!("unknown variable `{var}`"))),
+        }
+        let mut out: Option<Result<Value, RuntimeError>> = None;
+        env.borrow_mut().update_value(&var, |slot| {
+            if let Value::Array(a) = slot {
+                out = Some(self.mutate_array_handle(a, name, args));
+            }
+        });
+        out.unwrap_or_else(|| Err(RuntimeError::Message(format!("unknown variable `{var}`"))))
+    }
+
+    /// Apply a mutating `Array` method to an owned array handle in place (spec §11.3): the mutation
+    /// runs through `with_mut` (copy-on-write when the handle is aliased). Shared by the AST
+    /// receiver path (mutating through the binding) and the VM local-slot path. Payloads that
+    /// reference the target buffer itself are replaced by snapshot copies so no reference cycle
+    /// can form.
+    pub(crate) fn mutate_array_handle(
+        &self,
+        arr: &mut ArrayVal,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let mut args = args;
+        for a in &mut args {
+            if value_contains_array_buffer(a, arr) {
+                unalias_array_cycles(a, arr);
+            }
+        }
+        arr.with_mut(|items| self.apply_array_mutation(items, name, &args))
+    }
+
+    /// The item-level application of a mutating array method over the element buffer (spec §11.3).
+    /// Arity and index errors match the whole-value path exactly.
+    fn apply_array_mutation(
+        &self,
+        arr: &mut Vec<Value>,
+        name: &str,
+        args: &[Value],
+    ) -> Result<Value, RuntimeError> {
         let arity = |n: usize| -> Result<(), RuntimeError> {
             if args.len() == n {
                 Ok(())
@@ -973,35 +1025,36 @@ impl Evaluator {
                 _ => crate::error::err(format!("`Array.{name}` index must be an integer")),
             }
         };
-        let out = match name {
+        match name {
             "push" => {
                 arity(1)?;
                 arr.push(args[0].clone());
-                Value::Nil
+                Ok(Value::Nil)
             }
             "pop" => {
                 arity(0)?;
-                arr.pop()
+                Ok(arr
+                    .pop()
                     .map(|v| Value::Option(Some(Box::new(v))))
-                    .unwrap_or(Value::Option(None))
+                    .unwrap_or(Value::Option(None)))
             }
             "append" => {
                 arity(1)?;
                 arr.push(args[0].clone());
-                Value::Nil
+                Ok(Value::Nil)
             }
             "extend" => {
                 arity(1)?;
                 match &args[0] {
-                    Value::Array(elems) => arr.extend(elems.iter().cloned()),
-                    other => {
-                        return crate::error::err(format!(
-                            "`Array.extend` expects an array, got {}",
-                            value_type_name(other)
-                        ));
+                    Value::Array(elems) => {
+                        arr.extend(elems.to_vec());
+                        Ok(Value::Nil)
                     }
+                    other => crate::error::err(format!(
+                        "`Array.extend` expects an array, got {}",
+                        value_type_name(other)
+                    )),
                 }
-                Value::Nil
             }
             "insert" => {
                 arity(2)?;
@@ -1010,7 +1063,7 @@ impl Evaluator {
                     RuntimeError::IndexOutOfBounds(format!("index {i} (length {})", arr.len()))
                 })?;
                 arr.insert(i, args[1].clone());
-                Value::Nil
+                Ok(Value::Nil)
             }
             "remove" => {
                 arity(1)?;
@@ -1018,36 +1071,34 @@ impl Evaluator {
                 let i = normalize_index(i, arr.len()).ok_or_else(|| {
                     RuntimeError::IndexOutOfBounds(format!("index {i} (length {})", arr.len()))
                 })?;
-                arr.remove(i)
+                Ok(arr.remove(i))
             }
             "clear" => {
                 arity(0)?;
                 arr.clear();
-                Value::Nil
+                Ok(Value::Nil)
             }
             // `sort` orders numeric elements only (spec §11.3); `reverse` works on any elements.
             "sort" => {
                 arity(0)?;
                 let mut nums = Vec::with_capacity(arr.len());
-                for e in &arr {
+                for e in arr.iter() {
                     match e {
                         Value::Number(n) => nums.push(n.clone()),
                         _ => return crate::error::err("`Array.sort` requires an array of numbers"),
                     }
                 }
                 nums.sort_by(|x, y| self.number_cmp(x, y).unwrap_or(Ordering::Equal));
-                arr = nums.into_iter().map(Value::Number).collect();
-                Value::Nil
+                *arr = nums.into_iter().map(Value::Number).collect();
+                Ok(Value::Nil)
             }
             "reverse" => {
                 arity(0)?;
                 arr.reverse();
-                Value::Nil
+                Ok(Value::Nil)
             }
-            _ => return crate::error::err(format!("unknown `Array` method `{name}`")),
-        };
-        self.write_back(env, &var, Value::Array(arr));
-        Ok(out)
+            _ => crate::error::err(format!("unknown `Array` method `{name}`")),
+        }
     }
 
     /// Read-only dict methods (spec §11.6): `keys`/`values`/`items` return arrays in deterministic
@@ -1095,7 +1146,8 @@ impl Evaluator {
                     self.sorted_dict_keys(d)
                         .iter()
                         .map(|k| k.to_value())
-                        .collect(),
+                        .collect::<Vec<Value>>()
+                        .into(),
                 ))
             }
             "values" => {
@@ -1104,7 +1156,8 @@ impl Evaluator {
                     self.sorted_dict_keys(d)
                         .iter()
                         .map(|k| d[k].clone())
-                        .collect(),
+                        .collect::<Vec<Value>>()
+                        .into(),
                 ))
             }
             "items" => {
@@ -1113,7 +1166,8 @@ impl Evaluator {
                     self.sorted_dict_keys(d)
                         .iter()
                         .map(|k| Value::Tuple(vec![k.to_value(), d[k].clone()]))
-                        .collect(),
+                        .collect::<Vec<Value>>()
+                        .into(),
                 ))
             }
             _ => crate::error::err(format!("unknown `Dict` method `{name}`")),
@@ -1177,7 +1231,7 @@ impl Evaluator {
                 let Value::Dict(other) = &args[0] else {
                     return crate::error::err("`Dict.update` expects a dict argument");
                 };
-                for (k, v) in other {
+                for (k, v) in other.iter() {
                     d.insert(k.clone(), v.clone());
                 }
                 // `d.update(other)` returns the merged dict (spec §11.6 example `let dd = d.update(…)`).
@@ -1247,14 +1301,14 @@ impl Evaluator {
                 let Value::Set(other) = &args[0] else {
                     return crate::error::err("`Set.{name}` expects a set argument");
                 };
-                let out = match name {
+                let out: HashSet<ValueKey> = match name {
                     "union" => s.union(other).cloned().collect(),
                     "intersection" => s.intersection(other).cloned().collect(),
                     "difference" => s.difference(other).cloned().collect(),
                     "symmetric_difference" => s.symmetric_difference(other).cloned().collect(),
                     _ => unreachable!(),
                 };
-                Ok(Value::Set(out))
+                Ok(Value::Set(Box::new(out)))
             }
             "issubset" | "issuperset" | "isdisjoint" => {
                 arity(1)?;
@@ -1271,7 +1325,7 @@ impl Evaluator {
             }
             "copy" => {
                 arity(0)?;
-                Ok(Value::Set(s.clone()))
+                Ok(Value::Set(Box::new(s.clone())))
             }
             _ => crate::error::err(format!("unknown `Set` method `{name}`")),
         }
@@ -1347,13 +1401,13 @@ impl Evaluator {
                 arity(1)?;
                 match &args[0] {
                     Value::Set(other) => {
-                        for k in other {
+                        for k in other.iter() {
                             s.insert(k.clone());
                         }
                     }
                     Value::Array(elems) => {
-                        for e in elems {
-                            let k = ValueKey::from_value(e).ok_or_else(|| {
+                        for e in elems.iter() {
+                            let k = ValueKey::from_value(&e).ok_or_else(|| {
                                 RuntimeError::Message("set element must be a hashable value".into())
                             })?;
                             s.insert(k);

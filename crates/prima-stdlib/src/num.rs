@@ -100,14 +100,14 @@ fn fibonacci(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError>
         a = std::mem::replace(&mut b, t);
         i += 1;
     }
-    Ok(Value::Number(Number::Integer(a)))
+    Ok(Value::Number(Number::Integer(Box::new(a))))
 }
 
 fn gcd(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 2, "num::gcd")?;
     let a = int_arg(args, 0, "num::gcd")?;
     let b = int_arg(args, 1, "num::gcd")?;
-    Ok(Value::Number(Number::Integer(bigint_gcd(&a, &b))))
+    Ok(Value::Number(Number::Integer(Box::new(bigint_gcd(&a, &b)))))
 }
 
 fn lcm(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -120,7 +120,7 @@ fn lcm(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     } else {
         bigint_abs(a) * (bigint_abs(b) / g)
     };
-    Ok(Value::Number(Number::Integer(result)))
+    Ok(Value::Number(Number::Integer(Box::new(result))))
 }
 
 fn is_prime(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -132,7 +132,7 @@ fn is_prime(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> 
 fn next_prime(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "num::next_prime")?;
     let n = int_arg(args, 0, "num::next_prime")?;
-    Ok(Value::Number(Number::Integer(bigint_next_prime(&n))))
+    Ok(Value::Number(Number::Integer(Box::new(bigint_next_prime(&n)))))
 }
 
 fn random_integer(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -146,7 +146,7 @@ fn random_integer(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeE
     }
     let range = &b - &a + BigInt::from(1);
     let offset = BigInt::from(next_u64()) % &range;
-    Ok(Value::Number(Number::Integer(a + offset)))
+    Ok(Value::Number(Number::Integer(Box::new(a + offset))))
 }
 
 fn to_base(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -162,11 +162,11 @@ fn from_base(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError>
     let radix = radix_arg(args, 1, "num::from_base")?;
     match parse_base(&s, radix) {
         Some(v) => Ok(Value::Result(Ok(Box::new(Value::Number(Number::Integer(
-            v,
+            Box::new(v),
         )))))),
-        None => Ok(Value::Result(Err(format!(
+        None => Ok(Value::Result(Err(Box::new(format!(
             "cannot parse `{s}` in base {radix}"
-        )))),
+        ))))),
     }
 }
 

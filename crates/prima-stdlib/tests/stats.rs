@@ -270,7 +270,7 @@ fn sample_uniform_returns_array_in_range() {
     match v {
         Value::Array(items) => {
             assert_eq!(items.len(), 5, "expected 5 samples");
-            for it in items {
+            for it in items.iter() {
                 let x = match it {
                     Value::Number(n) => n.to_f64_lossy(),
                     other => panic!("sample element not numeric: {other:?}"),
@@ -285,7 +285,7 @@ fn sample_uniform_returns_array_in_range() {
 #[test]
 fn sample_normal_zero_count_is_empty() {
     let v = eval("import stats;\nstats::sample(stats::Normal(0.0, 1.0), 0)");
-    assert_eq!(v, Value::Array(vec![]));
+    assert_eq!(v, Value::Array(vec![].into()));
 }
 
 /// Evaluate an in-memory program expected to error; assert that it does.

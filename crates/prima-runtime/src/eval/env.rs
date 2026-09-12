@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
 
 use prima_core::Value;
@@ -23,6 +23,14 @@ pub type NativeCall = fn(&mut super::Evaluator, &[Value]) -> Result<Value, Runti
 
 /// Default call count before an MFn body is JIT-compiled (spec §19.2); `@jit` functions skip the countdown.
 pub const JIT_CALL_THRESHOLD: u64 = 100;
+
+/// Per-`fn` compiled bytecode cache (spec §19.5): the body is compiled at most once per function
+/// definition; a compile failure (body outside the compiled subset) is cached as `None` so it is
+/// never retried. Shared by every clone of the function (mirrors the JIT `HotState`). `Rc` because
+/// evaluation (and therefore compilation) is single-threaded per environment. The cache holds the
+/// whole single-entry [`crate::vm::op::Program`] (chunk + dispatch table), so a recursive call
+/// re-enters the VM without rebuilding either.
+pub type VmChunkCache = Rc<OnceLock<Option<Rc<crate::vm::op::Program>>>>;
 
 /// Per-MFn hot-path state (spec §19.2): a monotonic call counter and the compiled artifact, guarded by a
 /// `OnceLock` so the body is compiled at most once per `Function::User` instance. Compilation failure is
@@ -65,6 +73,8 @@ pub enum Function {
         ret: Option<Type>,
         body: Block,
         env: EnvRef,
+        /// Bytecode VM chunk cache (spec §19.5), shared by every clone of the function.
+        vm: VmChunkCache,
     },
     /// `get(array, index) -> Option<Number>`: safe array access returning `None` out of range (spec §11.3).
     NativeGet,
@@ -125,9 +135,19 @@ pub type EnvRef = Rc<RefCell<Env>>;
 #[derive(Clone, Default)]
 pub struct Env {
     pub(crate) values: HashMap<String, Value>,
-    pub(crate) funcs: HashMap<String, Function>,
+    pub(crate) funcs: HashMap<String, Rc<Function>>,
     pub(crate) modules: HashMap<String, HashMap<String, NamespaceItem>>,
     pub(crate) parent: Option<EnvRef>,
+}
+
+/// Process-wide function-definition epoch (spec §12.2): bumped by every [`Env::set_func`], so
+/// per-call-site resolved-callee caches in the bytecode VM (spec §19.5) can detect redefinitions
+/// and re-resolve (user code may shadow a core builtin at any time).
+pub(crate) static FUNC_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// The current function-definition epoch (see [`FUNC_EPOCH`]).
+pub(crate) fn func_epoch() -> u64 {
+    FUNC_EPOCH.load(AtomicOrdering::Relaxed)
 }
 
 impl Env {
@@ -183,15 +203,33 @@ impl Env {
         false
     }
 
-    pub(crate) fn get_func(&self, name: &str) -> Option<Function> {
+    /// Apply `f` to an existing binding's value in place, along the shared chain (spec §12.2).
+    /// Used by the collection hot paths (`A[i] = v`, mutating `Array` methods): the binding's
+    /// buffer is mutated in place (copy-on-write when its handle is aliased, spec §11.3), so no
+    /// whole-array clone + write-back is needed. Returns `false` if the binding is undefined.
+    pub(crate) fn update_value(&mut self, name: &str, f: impl FnOnce(&mut Value)) -> bool {
+        if let Some(v) = self.values.get_mut(name) {
+            f(v);
+            return true;
+        }
+        if let Some(p) = &self.parent {
+            return p.borrow_mut().update_value(name, f);
+        }
+        false
+    }
+
+    /// Resolve a function by name, returning the shared `Rc` handle (a clone bumps the reference
+    /// count; the function body is never deep-copied, spec §12.2).
+    pub(crate) fn get_func(&self, name: &str) -> Option<Rc<Function>> {
         if let Some(f) = self.funcs.get(name) {
-            return Some(f.clone());
+            return Some(Rc::clone(f));
         }
         self.parent.as_ref().and_then(|p| p.borrow().get_func(name))
     }
 
     pub(crate) fn set_func(&mut self, name: &str, f: Function) {
-        self.funcs.insert(name.to_string(), f);
+        FUNC_EPOCH.fetch_add(1, AtomicOrdering::Relaxed);
+        self.funcs.insert(name.to_string(), Rc::new(f));
     }
 
     /// Register a module namespace (key is the module path or alias, spec §15.1). Returns `true` if it already existed.

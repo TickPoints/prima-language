@@ -142,7 +142,7 @@ fn split_yields_array_of_strings() {
             Value::String("a".into()),
             Value::String("b".into()),
             Value::String("c".into()),
-        ])
+        ].into())
     );
 }
 
@@ -207,7 +207,7 @@ fn format_call_is_removed() {
 fn fixed_width_collapse_round_trips() {
     assert_eq!(eval("to_u8(255)"), Value::Number(Number::U8(255)));
     assert_eq!(eval("to_usize(42)"), Value::Number(Number::Usize(42)));
-    assert_eq!(eval("to_i128(-7)"), Value::Number(Number::I128(-7)));
+    assert_eq!(eval("to_i128(-7)"), Value::Number(Number::I128(Box::new(-7))));
     assert_eq!(eval("to_i32(to_u8(255))"), Value::Number(Number::I32(255)));
     assert!(
         Evaluator::new().eval_value("to_u8(256)").is_err(),
@@ -240,7 +240,7 @@ fn string_method_basics() {
             Value::String("a".into()),
             Value::String("b".into()),
             Value::String("c".into()),
-        ])
+        ].into())
     );
     assert_eq!(
         eval("let s = \"hi\";\ns.insert(1, \"o\")"),

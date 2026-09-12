@@ -93,9 +93,9 @@ fn string_insert(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeEr
     let sub = str_arg(args, 2, "insert")?;
     let len = s.chars().count() as i64;
     if idx < 0 || idx > len {
-        return Ok(Value::Result(Err(format!(
+        return Ok(Value::Result(Err(Box::new(format!(
             "insert index {idx} out of range (length {len})"
-        ))));
+        )))));
     }
     let idx = idx as usize;
     let mut out: String = s.chars().take(idx).collect();
@@ -162,6 +162,15 @@ fn string_repeat(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeEr
         return Err(RuntimeError::Message(
             "`String.repeat` count must be non-negative".into(),
         ));
+    }
+    // Resource limit (OOM guard): the result byte length is checked in `u128` before the
+    // allocation — `s.repeat(n)` with a runaway `n` would otherwise abort the process.
+    const MAX_REPEAT_BYTES: u128 = 256 * 1024 * 1024; // 256 MiB
+    let result_bytes = s.len() as u128 * n as u128;
+    if result_bytes > MAX_REPEAT_BYTES {
+        return Err(RuntimeError::Message(format!(
+            "`String.repeat` result of {result_bytes} bytes exceeds the {MAX_REPEAT_BYTES} byte limit"
+        )));
     }
     Ok(Value::String(s.repeat(n as usize)))
 }
@@ -299,13 +308,13 @@ fn string_split(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErr
     let sep = str_arg(args, 1, "split")?;
     if sep.is_empty() {
         let parts: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
-        return Ok(Value::Array(parts));
+        return Ok(Value::Array(parts.into()));
     }
     let parts: Vec<Value> = s
         .split(&sep)
         .map(|p| Value::String(p.to_string()))
         .collect();
-    Ok(Value::Array(parts))
+    Ok(Value::Array(parts.into()))
 }
 
 fn string_replace(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -358,7 +367,7 @@ fn string_join(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErro
             out.push_str(&s);
         }
         match p {
-            Value::String(p) => out.push_str(p),
+            Value::String(p) => out.push_str(&p),
             _ => {
                 return Err(RuntimeError::Message(
                     "`String.join` requires an array of strings".into(),

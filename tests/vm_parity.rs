@@ -70,6 +70,32 @@ const KERNEL_DOT: &str = r#"pub fn main(n: Integer) -> F64 {
     to_f64(s)
 }"#;
 
+const KERNEL_SIEVE: &str = r#"pub fn main(n: Integer) -> Integer {
+    let mut mark = [];
+    for i in 0..n { mark.push(true); }
+    mark[0] = false;
+    mark[1] = false;
+    for i in 2..n {
+        let mut j = i * i;
+        while j < n { mark[j] = false; j += i; }
+    }
+    let mut c = 0;
+    for i in 0..n { if mark[i] { c += 1; } }
+    c
+}"#;
+
+/// Aliasing + index-store parity: `let b = a; b[0] = 100` must copy-on-write, so the sum over
+/// `a` is unaffected and only `b[0]` changes (spec §11.3 value semantics).
+const KERNEL_ALIAS: &str = r#"pub fn main(n: Integer) -> Integer {
+    let mut a = [];
+    for i in 0..n { a.push(i); }
+    let b = a;
+    b[0] = 100;
+    let mut s = 0;
+    for i in 0..n { s += a[i]; }
+    s + b[0]
+}"#;
+
 /// Load a kernel and call `main` with `args`, optionally gating the VM. Writes the kernel to a temp
 /// `.pra` file, evaluates it keeping its env, then calls `main` through `call_function` (AST) or
 /// `vm_call_function` (bytecode VM, spec §19.5).
@@ -142,12 +168,52 @@ fn vm_dot_matches_ast() {
     assert_close(&ast, &vm, "dot");
 }
 
+#[test]
+fn vm_sieve_matches_ast() {
+    // `push` + slot index-store + reads: the mutating array path must run natively in the VM and
+    // agree with the AST interpreter exactly (integers).
+    let ast = call(KERNEL_SIEVE, vec![int(200)], false);
+    let vm = call(KERNEL_SIEVE, vec![int(200)], true);
+    assert_eq!(ast, vm, "sieve");
+    assert_eq!(ast, Value::Number(Number::from(46)));
+}
+
+#[test]
+fn vm_alias_copy_on_write_matches_ast() {
+    // Without CoW in the VM the in-place store would corrupt `a` and the sum would differ.
+    let ast = call(KERNEL_ALIAS, vec![int(50)], false);
+    let vm = call(KERNEL_ALIAS, vec![int(50)], true);
+    assert_eq!(ast, vm, "alias");
+    assert_eq!(ast, Value::Number(Number::from(1225 + 100)));
+}
+
 /// The VM gate defaults to off; the AST interpreter is the authoritative path.
 #[test]
 fn vm_gate_defaults_off() {
     let ast = call(KERNEL_SUMSQ, vec![int(100)], false);
     let vm = call(KERNEL_SUMSQ, vec![int(100)], true);
     assert_close(&ast, &vm, "gate");
+}
+
+/// Multi-parameter `fn` through the VM: parameter slots must bind to the arguments in order
+/// (regression: per-parameter `SetLocal` bound every parameter to the last-pushed argument).
+#[test]
+fn vm_two_param_binding_matches_ast() {
+    let kernel = "pub fn main(a: Integer, b: Integer) -> Integer { a * 10 + b }\n";
+    let ast = call(kernel, vec![int(3), int(7)], false);
+    let vm = call(kernel, vec![int(3), int(7)], true);
+    assert_eq!(ast, vm, "two-param binding");
+    assert_eq!(vm, Value::Number(Number::from(37)));
+}
+
+/// Tail-recursive accumulation through the VM matches the AST trampolined path (spec §10.2/§19.5).
+#[test]
+fn vm_tail_recursive_accumulation_matches_ast() {
+    let kernel = "pub fn main(n: Integer, acc: Integer) -> Integer {\n    if n == 0 { return acc }\n    return main(n - 1, acc + n)\n}\n";
+    let ast = call(kernel, vec![int(1000), int(0)], false);
+    let vm = call(kernel, vec![int(1000), int(0)], true);
+    assert_eq!(ast, vm, "tail-recursive accumulation");
+    assert_eq!(vm, Value::Number(Number::from(500500)));
 }
 
 fn assert_close(a: &Value, b: &Value, what: &str) {

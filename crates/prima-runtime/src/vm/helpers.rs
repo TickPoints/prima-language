@@ -41,7 +41,7 @@ pub(crate) fn vm_index(
     match base {
         Value::Array(a) => {
             let i = index_to_usize(eval, &idx, "array index", a.len())?;
-            a.get(i).cloned().ok_or_else(|| {
+            a.get(i).ok_or_else(|| {
                 crate::error::RuntimeError::IndexOutOfBounds(format!(
                     "index {i} (length {})",
                     a.len()
@@ -79,26 +79,31 @@ pub(crate) fn vm_index(
     }
 }
 
-/// Index write `base[idx] = value` for a mutable array (in place).
+/// Index write `base[idx] = value` on an owned `&mut Value` (in place). The caller passes a
+/// mutable slot into the base's storage (a VM local slot or an env binding), so the write is
+/// never lost on a stack copy; the shared handle copies the buffer first when aliased (CoW,
+/// spec §11.3 value semantics).
 pub(crate) fn vm_index_store(
     eval: &mut Evaluator,
-    base: Value,
+    base: &mut Value,
     idx: Value,
     value: Value,
 ) -> Result<(), crate::error::RuntimeError> {
     match base {
-        Value::Array(mut a) => {
+        Value::Array(a) => {
             let len = a.len();
             let i = index_to_usize(eval, &idx, "array index", len)?;
-            let slot = a.get_mut(i).ok_or_else(|| {
-                crate::error::RuntimeError::IndexOutOfBounds(format!("index {i} (length {len})"))
-            })?;
-            *slot = value;
+            if i >= len {
+                return Err(crate::error::RuntimeError::IndexOutOfBounds(format!(
+                    "index {i} (length {len})"
+                )));
+            }
+            a.with_mut(|items| items[i] = value);
             Ok(())
         }
         other => Err(crate::error::RuntimeError::Message(format!(
             "cannot index-assign {}",
-            crate::eval::value_type_name(&other)
+            crate::eval::value_type_name(other)
         ))),
     }
 }
@@ -221,12 +226,12 @@ fn is_mutating(name: &str) -> bool {
 }
 
 /// Whether a dict method mutates the receiver (spec §11.6).
-fn is_dict_mutating(name: &str) -> bool {
+pub(crate) fn is_dict_mutating(name: &str) -> bool {
     matches!(name, "insert" | "remove" | "clear" | "update")
 }
 
 /// Whether a set method mutates the receiver (spec §11.6).
-fn is_set_mutating(name: &str) -> bool {
+pub(crate) fn is_set_mutating(name: &str) -> bool {
     matches!(name, "add" | "remove" | "clear" | "update")
 }
 

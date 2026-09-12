@@ -15,6 +15,7 @@ use prima_syntax::ast::{
 
 use super::Ctx;
 use super::TypeError;
+use super::depth::enter_walk_depth;
 use super::error::{c_param_ok, push_err, type_display, type_span};
 use super::infer::{annot_accepts, annot_name, infer, pattern_is_refutable};
 use super::line_col;
@@ -330,6 +331,9 @@ pub(crate) fn check_annotation_errors(
 
 /// Descend an expression tree, flagging `?` outside a `Result`/`Option`-returning function (spec
 /// §16.3 `E0054`) and validating stdlib call sites against harvested signatures (spec §18.4).
+///
+/// Recursion budget (spec §16.4): stops descending with a located "too deep" error when the walk
+/// depth is exhausted, so pathological nesting cannot overflow the stack.
 pub(crate) fn collect_expr_errors(
     src: &str,
     expr: &Expr,
@@ -337,6 +341,15 @@ pub(crate) fn collect_expr_errors(
     ctx: Ctx,
     sigs: &HashMap<String, Vec<Signature>>,
 ) {
+    let Some(_depth) = enter_walk_depth() else {
+        push_err(
+            src,
+            errors,
+            expr.span,
+            "expression nesting is too deep to check".into(),
+        );
+        return;
+    };
     match &expr.kind {
         ExprKind::Try(inner) => {
             if !ctx.allow_try {
