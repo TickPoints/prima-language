@@ -9,10 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
-This round closes the remaining gap to CPython: **all six cross-language kernels now run at or
-below CPython parity** (`benches/RESULTS.md`, Python × 0.3–0.9 on the default VM path). The
-structural fix is a register channel in the bytecode VM that keeps hot numeric and collection
-values in local slots instead of shuffling boxed `Value`s through the operand stack.
+This round adds whole-function native compilation (`opt_level >= O2`), and the cross-language
+benchmark now runs **7×–1700× faster than CPython on every kernel** (`benches/RESULTS.md`,
+default path). An earlier register channel plus lock-free arrays had already brought the VM to
+CPython parity (Python × 0.3–0.9); the JIT supersedes it on pure numeric bodies.
+
+- **Whole-function JIT for the pure numeric subset (spec §19.2).** A typed register IR
+  (`prima_jit::ir`) and a cranelift lowering (`prima_jit::func`) compile complete `fn` bodies:
+  `i64`/`f64`/`bool` locals, dense local arrays, arithmetic/comparisons, `to_f64`,
+  `if`/`while`/`for`/`return`, `local.push`/`len` and indexing. The interpreter lowers a body to
+  the IR (`prima-runtime::jit_fn`); only pure numeric bodies lower, everything else stays on the
+  VM/AST. Generated code is exact — integer arithmetic is checked and array accesses are
+  bounds-checked, and an overflow or out-of-range index sets an error flag so the call is re-run
+  on the interpreter (the JIT is pure). Loop back-edges poll host cancellation, so interruption
+  behaves like the interpreter. Dense arrays are arena-allocated and freed at the single
+  epilogue; compilations are cached per function definition.
+
+- **Pooled VM frame and operand-stack buffers (spec §19.5).** `run_vm` reuses frame/stack buffers
+  across calls (and nested calls), avoiding reallocation.
+
+- **VM subset: dict index assignment and slice assignment (spec §11.3/§11.6).** `d[k] = v` and
+  `arr[lo..hi] = rhs` now run natively in the VM (dict/set literals compile too), removing AST
+  fallbacks for them; dict/set *mutating method* calls still fall back to the AST.
 
 - **Register-form local instructions (spec §19.5).** A new instruction family operates directly
   on local slots (`RegBin`/`RegBinImm`, `RegMulAdd`, `RegNeg`, `RegToF64`, `RegMove`, `RegIndex`,

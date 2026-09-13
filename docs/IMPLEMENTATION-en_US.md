@@ -862,6 +862,15 @@ All remaining design (three-world architecture, Number tower, ExprPool, the thre
 > `Arc::make_mut`, and P7 replaced SipHash with `rustc-hash`. P2/P3/P5/P6 were not needed — P1
 > already brought all six kernels to CPython parity. `perf` shows the remaining cost is the
 > `Arc::make_mut` uniqueness check, `Value` clone/drop, and dispatch itself.
+>
+> **Second round (JIT)**: P6 landed as a whole-function cranelift JIT for the pure numeric subset
+> (`prima-jit`'s `ir`/`func`/`rt` + `prima-runtime::jit_fn`; at `opt_level >= O2` a `fn` body is
+> compiled once and cached, checked integer arithmetic and bounds failures deopt to the
+> interpreter, and loop back-edges poll cancellation), taking the six kernels to **7×–1700×**
+> CPython. P3 pools VM frame/operand-stack buffers; P5 compiles dict index assignment, slice
+> assignment and dict/set literals in the VM (dict/set mutating *methods* still fall back). **P2
+> (slim `Value` to 24B) is deferred**: the JIT already covers hot numeric loops, and the
+> mechanical ~250-site `Number::Real`/`Real` change has limited upside and high regression risk.
 
 ### 8.1 Performance (next round)
 

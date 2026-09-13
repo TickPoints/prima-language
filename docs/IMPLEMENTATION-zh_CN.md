@@ -858,6 +858,13 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 > P4 将 `ArrayVal` 改为无锁 `Arc<Vec<Value>>` + `Arc::make_mut`，P7 以 `rustc-hash` 替换
 > SipHash；P2/P3/P5/P6 未实施——P1 已使全部 6 内核达到 Python 平价，无需进一步改造。
 > `perf` 显示剩余成本为 `Arc::make_mut` 唯一性检查、`Value` 的 clone/drop 与分派本身。
+>
+> **第二轮落地结果（JIT）**：P6 实现了纯数值子集的整函数 cranelift JIT（`prima-jit` 的 `ir`/`func`/
+> `rt` + `prima-runtime::jit_fn`；`opt_level >= O2` 时对 `fn` 体编译一次并缓存，精确整数运算与数组
+> 越界检查失败即去优化回解释器，循环回边轮询取消标志），使 6 个内核达到 Python 的 **7×–1700×**；
+> P3 池化 VM 帧/操作数栈缓冲；P5 补充字典索引赋值、切片赋值与字典/集合字面量的 VM 编译（字典/集合
+> 变异方法仍回退 AST）。**P2（`Value` 瘦身至 24B）未实施**：JIT 已覆盖热点数值循环，跨 ~250 处
+> `Number::Real`/`Real` 的机械改造收益有限而风险高，保留为后续可选项。
 
 ### 8.1 性能优化（下一轮）
 
