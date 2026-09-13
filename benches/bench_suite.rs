@@ -65,7 +65,8 @@ fn time_prima(pra: &str, n: i64, samples: u32, warmup: u32, vm: bool) -> (Durati
     let d = time_median(
         || {
             let v = if vm {
-                ev.vm_call_function(&env, "main", vec![arg.clone()])
+                // Default execution path: whole-function JIT → bytecode VM → AST.
+                ev.call_function(&env, "main", vec![arg.clone()])
             } else {
                 ev.ast_call_function(&env, "main", vec![arg.clone()])
             }
@@ -298,25 +299,24 @@ fn main() {
         "implementation is *faster* than Prima (1.0× = equal, higher = reference wins).\n\n",
     );
     table.push_str(
-        "NOTE: the `Prima VM` column is the default execution path (`vm := true`, bytecode VM,\n",
+        "NOTE: the `Prima default` column is the default execution path — the whole-function JIT\n",
     );
     table.push_str(
-        "spec §19.5); the `Prima AST` column is the authoritative AST interpreter, forced with\n",
+        "(spec §19.2) at `opt_level >= O2`, else the bytecode VM (spec §19.5), else the AST; the\n",
     );
     table.push_str(
-        "`Evaluator::ast_call_function` so the two paths are measured independently. `Python ×`\n",
+        "`Prima AST` column is the authoritative AST interpreter (`Evaluator::ast_call_function`).\n",
     );
-    table.push_str("is the default-path (VM) multiplier — the acceptance metric.\n\n");
+    table.push_str(
+        "`Python ×` and `Rust ×` are the default-path multipliers — the acceptance metric.\n\n",
+    );
     table.push_str(
         "Regenerate with `cargo bench --bench bench_suite` (see benches/bench_suite.rs).\n\n",
     );
     table.push_str(
-        "The `Prima VM` column runs the same kernel through the bytecode VM (spec §19.5);\n",
+        "`default/AST ×` is how much faster the default path is than the AST interpreter.\n\n",
     );
-    table.push_str(
-        "`VM/AST ×` is how much faster the VM is than the AST interpreter on that kernel.\n\n",
-    );
-    table.push_str("| workload | n | Prima AST (ns) | Prima VM (ns) | Python (ns) | Rust (ns) | VM/AST × | Python × | Rust × |\n");
+    table.push_str("| workload | n | Prima AST (ns) | Prima default (ns) | Python (ns) | Rust (ns) | default/AST × | Python × | Rust × |\n");
     table.push_str("|---|---|---|---|---|---|---|---|---|\n");
 
     println!(
@@ -352,9 +352,9 @@ fn main() {
         );
 
         let vm_ast = p.as_secs_f64() / pv_t.as_secs_f64();
-        // Acceptance is measured on the default execution path (the VM), not the AST reference.
+        // Acceptance is measured on the default execution path, not the AST reference.
         let py_mult = pv_t.as_secs_f64() / py.as_secs_f64();
-        let rust_mult = p.as_secs_f64() / r.as_secs_f64();
+        let rust_mult = pv_t.as_secs_f64() / r.as_secs_f64();
         println!(
             "{:<8} ast={:<14} vm={:<14} python={:<14} rust={:<14} vm/ast={:.1}×",
             w.name,

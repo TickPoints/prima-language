@@ -6,21 +6,20 @@ kernel with `perf_counter` so interpreter startup is excluded too. Times are med
 repeated runs; the `Python ×` and `Rust ×` columns are the multiplier by which the reference
 implementation is *faster* than Prima (1.0× = equal, higher = reference wins).
 
-NOTE: the `Prima VM` column is the default execution path (`vm := true`, bytecode VM,
-spec §19.5); the `Prima AST` column is the authoritative AST interpreter, forced with
-`Evaluator::ast_call_function` so the two paths are measured independently. `Python ×`
-is the default-path (VM) multiplier — the acceptance metric.
+NOTE: the `Prima default` column is the default execution path — the whole-function JIT
+(spec §19.2) at `opt_level >= O2`, else the bytecode VM (spec §19.5), else the AST; the
+`Prima AST` column is the authoritative AST interpreter (`Evaluator::ast_call_function`).
+`Python ×` and `Rust ×` are the default-path multipliers — the acceptance metric.
 
 Regenerate with `cargo bench --bench bench_suite` (see benches/bench_suite.rs).
 
-The `Prima VM` column runs the same kernel through the bytecode VM (spec §19.5);
-`VM/AST ×` is how much faster the VM is than the AST interpreter on that kernel.
+`default/AST ×` is how much faster the default path is than the AST interpreter.
 
-| workload | n | Prima AST (ns) | Prima VM (ns) | Python (ns) | Rust (ns) | VM/AST × | Python × | Rust × |
+| workload | n | Prima AST (ns) | Prima default (ns) | Python (ns) | Rust (ns) | default/AST × | Python × | Rust × |
 |---|---|---|---|---|---|---|---|---|
-| sumsq | 200000 | 122378298 ns | 4661749 ns | 17544000 ns | 91766 ns | 26.3× | 0.3× | 1333.59× |
-| pi | 100000 | 152223094 ns | 8156173 ns | 12403000 ns | 111151 ns | 18.7× | 0.7× | 1369.52× |
-| fib | 30 | 26717 ns | 2111 ns | 4000 ns | 57 ns | 12.7× | 0.5× | 468.72× |
-| sieve | 5000 | 185590775 ns | 469996 ns | 509000 ns | 7809 ns | 394.9× | 0.9× | 23766.27× |
-| dot | 3000 | 155634684 ns | 670463 ns | 834000 ns | 9926 ns | 232.1× | 0.8× | 15679.50× |
-| poly | 50000 | 119497867 ns | 7941221 ns | 8697000 ns | 100596 ns | 15.0× | 0.9× | 1187.90× |
+| sumsq | 200000 | 118528178 ns | 891777 ns | 17597000 ns | 91669 ns | 132.9× | 0.1× | 9.73× |
+| pi | 100000 | 148568462 ns | 500356 ns | 12404000 ns | 111150 ns | 296.9× | 0.0× | 4.50× |
+| fib | 30 | 26087 ns | 297 ns | 4000 ns | 51 ns | 87.8× | 0.1× | 5.82× |
+| sieve | 5000 | 176589600 ns | 103696 ns | 505000 ns | 7777 ns | 1703.0× | 0.2× | 13.33× |
+| dot | 3000 | 156823989 ns | 62887 ns | 836000 ns | 9991 ns | 2493.7× | 0.1× | 6.29× |
+| poly | 50000 | 113700076 ns | 243291 ns | 8782000 ns | 100605 ns | 467.3× | 0.0× | 2.42× |
