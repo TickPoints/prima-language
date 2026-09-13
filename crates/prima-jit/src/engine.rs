@@ -20,6 +20,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 
 use crate::bytecode::{Bytecode, MAX_PARAMS, Op};
+use crate::ir::ScalarType;
 
 /// A compiled numeric scalar function: reads `arity` f64 arguments from the buffer and returns the
 /// result. The `entry` pointer is executable machine code owned by the engine; call it from any
@@ -121,9 +122,63 @@ struct Trampolines {
     tan: FuncId,
 }
 
-struct JitEngine {
-    module: JITModule,
+/// Trampolines used by whole-function JIT code (arena + dense-array support, see `rt.rs`).
+#[derive(Clone, Copy)]
+pub(crate) struct FuncTrampolines {
+    pub arena_new: FuncId,
+    pub arena_alloc: FuncId,
+    pub arena_free: FuncId,
+    pub memcpy: FuncId,
+    pub fill_u8: FuncId,
+    pub fill_i64: FuncId,
+    pub fill_f64: FuncId,
+    pub i64_rem: FuncId,
+    pub f64_rem: FuncId,
+    pub cancel: FuncId,
+}
+
+pub(crate) struct JitEngine {
+    pub(crate) module: JITModule,
     tramps: Trampolines,
+    pub(crate) func: FuncTrampolines,
+}
+
+/// A mutable per-call context handed to JIT code. Generated code sets `error` and returns a default
+/// when it hits an exact-arithmetic overflow or an out-of-range index; the caller then re-runs the
+/// call on the interpreter (the JIT is pure, so re-running cannot duplicate side effects).
+#[derive(Default)]
+pub struct JitContext {
+    pub error: u32,
+}
+
+/// The raw entry point of a compiled function: `(ctx, args, len) -> result`, with every argument
+/// and the result passed as 64-bit words (i64, or f64 bits, or bool as 0/1).
+pub type JitEntry = unsafe extern "C" fn(*mut JitContext, *const u64, usize) -> u64;
+
+/// A compiled whole function.
+pub struct CompiledFunction {
+    pub arity: usize,
+    pub params: Vec<ScalarType>,
+    pub ret: ScalarType,
+    pub(crate) entry: JitEntry,
+}
+
+impl CompiledFunction {
+    /// Call the compiled function. `args` must hold one word per parameter (i64 / f64 bits / bool),
+    /// in order; the result is returned as a word (interpret per [`Self::ret`]).
+    pub fn call_raw(&self, ctx: &mut JitContext, args: &[u64]) -> u64 {
+        debug_assert_eq!(args.len(), self.arity);
+        // SAFETY: the entry point is generated machine code with the declared `(ctx, args, len)`
+        // ABI; it only reads `args.len()` words from the buffer.
+        unsafe { (self.entry)(ctx, args.as_ptr(), args.len()) }
+    }
+}
+
+/// Run `f` with the locked process-wide JIT engine, or `None` when the engine is unavailable.
+pub(crate) fn with_engine<R>(f: impl FnOnce(&mut JitEngine) -> Option<R>) -> Option<R> {
+    let engine = ENGINE.get_or_init(|| JitEngine::init().map(Mutex::new));
+    let mut guard = engine.as_ref()?.lock().ok()?;
+    f(&mut guard)
 }
 
 fn unary_signature(isa: &dyn TargetIsa) -> Signature {
@@ -151,6 +206,18 @@ fn binary_addr(f: extern "C" fn(f64, f64) -> f64) -> *const u8 {
     f as *const u8
 }
 
+/// Build a cranelift signature from parameter/return types.
+fn build_sig(isa: &dyn TargetIsa, params: &[Type], ret: Option<Type>) -> Signature {
+    let mut s = Signature::new(isa.default_call_conv());
+    for p in params {
+        s.params.push(AbiParam::new(*p));
+    }
+    if let Some(r) = ret {
+        s.returns.push(AbiParam::new(r));
+    }
+    s
+}
+
 impl JitEngine {
     /// Build the engine, or `None` when cranelift cannot initialize (no panic across the API —
     /// the JIT is optional and callers degrade to the interpreter).
@@ -168,7 +235,40 @@ impl JitEngine {
             .symbol("pj_sqrt", unary_addr(pj_sqrt))
             .symbol("pj_abs", unary_addr(pj_abs))
             .symbol("pj_rem", binary_addr(pj_rem))
-            .symbol("pj_pow", binary_addr(pj_pow));
+            .symbol("pj_pow", binary_addr(pj_pow))
+            .symbol(
+                "pj_arena_new",
+                crate::rt::pj_arena_new as *const () as *const u8,
+            )
+            .symbol(
+                "pj_arena_alloc",
+                crate::rt::pj_arena_alloc as *const () as *const u8,
+            )
+            .symbol(
+                "pj_arena_free",
+                crate::rt::pj_arena_free as *const () as *const u8,
+            )
+            .symbol("pj_memcpy", crate::rt::pj_memcpy as *const () as *const u8)
+            .symbol(
+                "pj_fill_u8",
+                crate::rt::pj_fill_u8 as *const () as *const u8,
+            )
+            .symbol(
+                "pj_fill_i64",
+                crate::rt::pj_fill_i64 as *const () as *const u8,
+            )
+            .symbol(
+                "pj_fill_f64",
+                crate::rt::pj_fill_f64 as *const () as *const u8,
+            )
+            .symbol(
+                "pj_i64_rem",
+                crate::rt::pj_i64_rem as *const () as *const u8,
+            )
+            .symbol(
+                "pj_check_cancel",
+                crate::rt::pj_check_cancel as *const () as *const u8,
+            );
         let mut module = JITModule::new(builder);
         let unary = unary_signature(module.isa());
         let binary = binary_signature(module.isa());
@@ -185,6 +285,30 @@ impl JitEngine {
         let abs = declare(&mut module, "pj_abs", &unary)?;
         let rem = declare(&mut module, "pj_rem", &binary)?;
         let pow = declare(&mut module, "pj_pow", &binary)?;
+
+        // Whole-function trampolines (arena + dense arrays).
+        let ptr = module.isa().pointer_type();
+        let s_arena_new = build_sig(module.isa(), &[], Some(ptr));
+        let s_arena_alloc = build_sig(module.isa(), &[ptr, types::I64], Some(ptr));
+        let s_arena_free = build_sig(module.isa(), &[ptr], None);
+        let s_memcpy = build_sig(module.isa(), &[ptr, ptr, types::I64], None);
+        let s_fill_u8 = build_sig(module.isa(), &[ptr, types::I64, types::I8], None);
+        let s_fill_i64 = build_sig(module.isa(), &[ptr, types::I64, types::I64], None);
+        let s_fill_f64 = build_sig(module.isa(), &[ptr, types::I64, types::F64], None);
+        let s_i64_rem = build_sig(module.isa(), &[types::I64, types::I64], Some(types::I64));
+        let s_cancel = build_sig(module.isa(), &[], Some(types::I8));
+        let func = FuncTrampolines {
+            arena_new: declare(&mut module, "pj_arena_new", &s_arena_new)?,
+            arena_alloc: declare(&mut module, "pj_arena_alloc", &s_arena_alloc)?,
+            arena_free: declare(&mut module, "pj_arena_free", &s_arena_free)?,
+            memcpy: declare(&mut module, "pj_memcpy", &s_memcpy)?,
+            fill_u8: declare(&mut module, "pj_fill_u8", &s_fill_u8)?,
+            fill_i64: declare(&mut module, "pj_fill_i64", &s_fill_i64)?,
+            fill_f64: declare(&mut module, "pj_fill_f64", &s_fill_f64)?,
+            i64_rem: declare(&mut module, "pj_i64_rem", &s_i64_rem)?,
+            f64_rem: rem,
+            cancel: declare(&mut module, "pj_check_cancel", &s_cancel)?,
+        };
         Some(JitEngine {
             module,
             tramps: Trampolines {
@@ -199,6 +323,7 @@ impl JitEngine {
                 cos,
                 tan,
             },
+            func,
         })
     }
 }
@@ -252,7 +377,7 @@ pub fn compile_bytecode(bc: &Bytecode, arity: usize) -> Option<Arc<CompiledScala
     // A `None` engine means initialization failed earlier; the JIT stays permanently unavailable.
     let engine = engine.as_ref()?;
     let mut engine = engine.lock().ok()?;
-    let JitEngine { module, tramps } = &mut *engine;
+    let JitEngine { module, tramps, .. } = &mut *engine;
     let tramps = *tramps;
 
     let isa = module.isa();

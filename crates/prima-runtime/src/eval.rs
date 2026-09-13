@@ -40,6 +40,7 @@ pub(crate) use helpers::{is_mutating_array_method, stmt_span, syntax_err};
 
 use env::BuiltinBackend;
 pub(crate) use env::BuiltinBackend as EvalBackend;
+pub(crate) use env::JitFnCache;
 pub(crate) use env::VmChunkCache;
 pub(crate) use env::func_epoch;
 pub use env::{Env, EnvRef, Function, HotState, JIT_CALL_THRESHOLD, NamespaceItem, NativeCall};
@@ -195,6 +196,11 @@ pub struct Evaluator {
     pub(crate) self_values: Vec<Value>,
     /// Module path currently being evaluated (`""` for the root module), for `pub(mod)` visibility (spec §15.2).
     pub(crate) current_module: String,
+    /// Pool of reusable bytecode-VM frame buffers (spec §19.5): each `run_vm` call takes a buffer
+    /// and returns it, so repeated and nested calls avoid reallocating the frame stack.
+    pub(crate) vm_frames_pool: Vec<Vec<crate::vm::exec::Frame>>,
+    /// Pool of reusable bytecode-VM operand-stack buffers (companion to `vm_frames_pool`).
+    pub(crate) vm_stack_pool: Vec<Vec<Value>>,
 }
 
 impl Default for Evaluator {

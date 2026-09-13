@@ -115,7 +115,7 @@ fn call(kernel: &str, args: Vec<Value>, vm: bool) -> Value {
     let v = if vm {
         ev.vm_call_function(&env, "main", args)
     } else {
-        ev.call_function(&env, "main", args)
+        ev.ast_call_function(&env, "main", args)
     }
     .expect("main must run");
     drop(tmp);
@@ -258,6 +258,74 @@ fn vm_fill_and_count_idioms_match_ast() {
     let vm = call(kernel, vec![int(500)], true);
     assert_eq!(ast, vm, "fill + count idioms");
     assert_eq!(vm, Value::Number(Number::from(501)));
+}
+
+/// Run `main` through the default execution path (whole-function JIT → bytecode VM → AST).
+fn call_default(kernel: &str, args: Vec<Value>) -> Result<Value, prima_runtime::RuntimeError> {
+    prima_stdlib::init();
+    let mut tmp = NamedTempFile::new().expect("cannot create temp kernel");
+    tmp.write_all(kernel.as_bytes())
+        .expect("cannot write temp kernel");
+    let path = tmp.path().to_path_buf();
+    let mut ev = Evaluator::new();
+    let env = ev
+        .eval_file_keep_env(&path)
+        .expect("kernel must parse + evaluate");
+    let v = ev.call_function(&env, "main", args);
+    drop(tmp);
+    v
+}
+
+/// The whole-function JIT (default path) must agree with the AST interpreter on every kernel.
+#[test]
+fn jit_matches_ast_on_kernels() {
+    for (kernel, n) in [
+        (KERNEL_SUMSQ, 5_000),
+        (KERNEL_PI, 10_000),
+        (KERNEL_FIB, 25),
+        (KERNEL_POLY, 5_000),
+        (KERNEL_DOT, 300),
+        (KERNEL_SIEVE, 500),
+    ] {
+        let ast = call(kernel, vec![int(n)], false);
+        let jit = call_default(kernel, vec![int(n)]).expect("jit/default path");
+        assert_eq!(ast, jit, "jit vs ast (n={n})");
+    }
+}
+
+/// Exact-integer overflow in the JIT deopts to the interpreter and still yields the exact result.
+#[test]
+fn jit_deopts_on_integer_overflow() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut s = 0; let mut i = 0; while i < n { s = s + 9223372036854775807; i += 1; } s }";
+    let ast = call(kernel, vec![int(5)], false);
+    let jit = call_default(kernel, vec![int(5)]).expect("jit/default path");
+    assert_eq!(ast, jit, "overflow deopt");
+}
+
+/// Negative indices are normalized identically by the JIT and the AST.
+#[test]
+fn jit_negative_index_matches_ast() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut a = []; for i in 0..n { a.push(i * 10); } a[-1] + a[-2] }";
+    let ast = call(kernel, vec![int(4)], false);
+    let jit = call_default(kernel, vec![int(4)]).expect("jit/default path");
+    assert_eq!(ast, jit, "negative index");
+}
+
+/// Bool arrays and the modulo convention match the AST.
+#[test]
+fn jit_bool_array_and_remainder_match_ast() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut a = []; for i in 0..n { a.push(i % 3 == 0); } let mut c = 0; for i in 0..n { if a[i] { c += 1; } } c }";
+    let ast = call(kernel, vec![int(20)], false);
+    let jit = call_default(kernel, vec![int(20)]).expect("jit/default path");
+    assert_eq!(ast, jit, "bool array + remainder");
+}
+
+/// An out-of-range array read is an error in both paths (the JIT deopts, the interpreter reports).
+#[test]
+fn jit_out_of_bounds_errors_like_ast() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut a = []; a.push(1); let mut s = 0; for i in 0..n { s += a[i]; } s }";
+    // The JIT deopts and the interpreter reports the out-of-range index.
+    assert!(call_default(kernel, vec![int(5)]).is_err(), "must error");
 }
 
 fn assert_close(a: &Value, b: &Value, what: &str) {

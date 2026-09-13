@@ -149,6 +149,7 @@ impl Evaluator {
                         body: body.clone(),
                         env: Rc::clone(env),
                         vm: Rc::new(std::sync::OnceLock::new()),
+                        jit: Rc::new(std::sync::OnceLock::new()),
                     };
                     env.borrow_mut().set_func(&name.value, f);
                     Ok(Flow::Continue)

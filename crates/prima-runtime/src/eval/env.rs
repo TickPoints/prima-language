@@ -34,6 +34,12 @@ pub const JIT_CALL_THRESHOLD: u64 = 100;
 /// re-enters the VM without rebuilding either.
 pub type VmChunkCache = Rc<OnceLock<Option<Rc<crate::vm::op::Program>>>>;
 
+/// Per-`fn` whole-function JIT cache (spec §19.2): the body is lowered and compiled at most once
+/// per function definition; a failure (outside the numeric subset, or cranelift unavailable) is
+/// cached as `None` so it is never retried. `Rc` because compilation is single-threaded per
+/// environment and shared across every clone of the function.
+pub type JitFnCache = Rc<OnceLock<Option<Arc<prima_jit::CompiledFunction>>>>;
+
 /// Per-MFn hot-path state (spec §19.2): a monotonic call counter and the compiled artifact, guarded by a
 /// `OnceLock` so the body is compiled at most once per `Function::User` instance. Compilation failure is
 /// cached as `None` so a non-numeric body is never retried.
@@ -77,6 +83,8 @@ pub enum Function {
         env: EnvRef,
         /// Bytecode VM chunk cache (spec §19.5), shared by every clone of the function.
         vm: VmChunkCache,
+        /// Whole-function JIT cache (spec §19.2), shared by every clone of the function.
+        jit: JitFnCache,
     },
     /// `get(array, index) -> Option<Number>`: safe array access returning `None` out of range (spec §11.3).
     NativeGet,

@@ -10,6 +10,7 @@ pub mod docs;
 pub mod error;
 pub mod eval;
 pub mod jit;
+pub(crate) mod jit_fn;
 pub mod module;
 pub mod opt;
 pub mod simd;

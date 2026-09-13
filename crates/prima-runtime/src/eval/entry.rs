@@ -25,7 +25,15 @@ use super::helpers::{DEFAULT_CONFIG, syntax_errors};
 use super::{Env, EnvRef, Evaluator, Flow, Function, HotState, NamespaceItem};
 
 impl Evaluator {
+    /// Register the process-wide JIT hooks (idempotent): JIT loop back-edges poll the same
+    /// cancellation flag as the interpreter (spec §16).
+    fn register_jit_hooks() {
+        static ONCE: OnceLock<()> = OnceLock::new();
+        ONCE.get_or_init(|| prima_jit::rt::set_cancel_check(Self::is_cancelled));
+    }
+
     pub fn new() -> Evaluator {
+        Self::register_jit_hooks();
         Evaluator {
             pool: ExprPool::global(),
             symbols: SymbolTable::global(),
@@ -41,10 +49,13 @@ impl Evaluator {
             self_stack: Vec::new(),
             self_values: Vec::new(),
             current_module: String::new(),
+            vm_frames_pool: Vec::new(),
+            vm_stack_pool: Vec::new(),
         }
     }
 
     pub fn with_sink(output: impl FnMut(String) + 'static) -> Evaluator {
+        Self::register_jit_hooks();
         Evaluator {
             pool: ExprPool::global(),
             symbols: SymbolTable::global(),
@@ -60,6 +71,8 @@ impl Evaluator {
             self_stack: Vec::new(),
             self_values: Vec::new(),
             current_module: String::new(),
+            vm_frames_pool: Vec::new(),
+            vm_stack_pool: Vec::new(),
         }
     }
 
@@ -416,6 +429,7 @@ impl Evaluator {
                         body: body.clone(),
                         env: Rc::clone(env),
                         vm: Rc::new(OnceLock::new()),
+                        jit: Rc::new(OnceLock::new()),
                     }
                 };
                 env.borrow_mut().set_func(&name.value, f.clone());

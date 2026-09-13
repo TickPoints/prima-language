@@ -82,13 +82,17 @@ impl Evaluator {
         program: &VmProgram,
         entry: Option<(&str, Vec<Value>)>,
     ) -> Result<Value, crate::error::RuntimeError> {
+        // Reuse a pooled frame/stack buffer (spec §19.5): repeated and nested calls avoid
+        // reallocating; an early error return simply drops the buffers.
         let mut vm = Vm {
-            frames: Vec::new(),
-            stack: Vec::new(),
+            frames: self.vm_frames_pool.pop().unwrap_or_default(),
+            stack: self.vm_stack_pool.pop().unwrap_or_default(),
             table: &program.names,
             functions: &program.functions,
             to_f64_builtin: None,
         };
+        vm.frames.clear();
+        vm.stack.clear();
         match entry {
             Some((name, args)) => {
                 let idx = *vm.table.get(name).ok_or_else(|| {
@@ -1116,7 +1120,10 @@ impl Evaluator {
                 }
             }
         }
-        Ok(vm.stack.pop().unwrap_or(Value::Nil))
+        let result = vm.stack.pop().unwrap_or(Value::Nil);
+        self.vm_frames_pool.push(vm.frames);
+        self.vm_stack_pool.push(vm.stack);
+        Ok(result)
     }
 }
 /// Array+`Small` index read for the register-form index ops (spec §11.3): negative-index
