@@ -545,4 +545,26 @@ g.greet(1)";
             Value::Number(Number::from(42))
         );
     }
+
+    #[test]
+    fn fstring_spec_pads_by_chars_not_bytes() {
+        use super::helpers::apply_spec;
+        // `héllo` is 5 chars / 6 bytes; right-aligned to width 7 with a multi-byte fill `★`
+        // must add 2 fill chars (a byte-counted width would add only 1).
+        assert_eq!(
+            apply_spec(&Value::String("x".into()), "héllo", Some("★>7")),
+            "★★héllo"
+        );
+        // `日本` is 2 chars / 6 bytes; centered to width 4 must add one fill on each side
+        // (a byte-counted width would already exceed 4 and leave the text untouched).
+        assert_eq!(
+            apply_spec(&Value::String("x".into()), "日本", Some("★^4")),
+            "★日本★"
+        );
+        // Width equal to the char count leaves the text untouched, even though bytes exceed it.
+        assert_eq!(
+            apply_spec(&Value::String("x".into()), "日本", Some("★<2")),
+            "日本"
+        );
+    }
 }

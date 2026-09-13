@@ -767,10 +767,15 @@ pub(crate) fn apply_spec(v: &Value, text: &str, spec: Option<&str>) -> String {
             _ => {}
         }
     }
-    if body.len() >= width {
+    // Width is the number of Unicode scalar values (display cells), not bytes, so multi-byte
+    // content and fill characters pad correctly (spec §18.1).
+    let body_width = body.chars().count();
+    if body_width >= width {
         return body;
     }
-    let pad = width - body.len();
+    let pad = width - body_width;
+    // `fill` is a single Unicode scalar (taken from the spec via `chars().next()`); repeating it
+    // `pad` times adds `pad` display cells.
     let fill = fill.to_string();
     // Python `format` default alignment: right for numbers (and zero-padding implies right),
     // left otherwise.
