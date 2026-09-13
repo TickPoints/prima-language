@@ -5,6 +5,89 @@ All notable changes to the Prima toolchain are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.4.1-alpha] - 2026-09-13
+
+### Performance
+
+This round adds whole-function native compilation (`opt_level >= O2`), and the cross-language
+benchmark now runs **7×–1700× faster than CPython on every kernel** (`benches/RESULTS.md`,
+default path). An earlier register channel plus lock-free arrays had already brought the VM to
+CPython parity (Python × 0.3–0.9); the JIT supersedes it on pure numeric bodies.
+
+- **Whole-function JIT for the pure numeric subset (spec §19.2).** A typed register IR
+  (`prima_jit::ir`) and a cranelift lowering (`prima_jit::func`) compile complete `fn` bodies:
+  `i64`/`f64`/`bool` locals, dense local arrays, arithmetic/comparisons, `to_f64`,
+  `if`/`while`/`for`/`return`, `local.push`/`len` and indexing. The interpreter lowers a body to
+  the IR (`prima-runtime::jit_fn`); only pure numeric bodies lower, everything else stays on the
+  VM/AST. Generated code is exact — integer arithmetic is checked and array accesses are
+  bounds-checked, and an overflow or out-of-range index sets an error flag so the call is re-run
+  on the interpreter (the JIT is pure). Loop back-edges poll host cancellation, so interruption
+  behaves like the interpreter. Dense arrays are arena-allocated and freed at the single
+  epilogue; compilations are cached per function definition.
+
+- **Pooled VM frame and operand-stack buffers (spec §19.5).** `run_vm` reuses frame/stack buffers
+  across calls (and nested calls), avoiding reallocation.
+
+- **VM subset: dict index assignment and slice assignment (spec §11.3/§11.6).** `d[k] = v` and
+  `arr[lo..hi] = rhs` now run natively in the VM (dict/set literals compile too), removing AST
+  fallbacks for them; dict/set *mutating method* calls still fall back to the AST.
+
+- **Register-form local instructions (spec §19.5).** A new instruction family operates directly
+  on local slots (`RegBin`/`RegBinImm`, `RegMulAdd`, `RegNeg`, `RegToF64`, `RegMove`, `RegIndex`,
+  `RegIndexPush`, `RegIndexStore`/`Imm`, `RegPush`/`Imm`), plus fused loop forms
+  (`BranchLocalCmpSum`, `RegIndexBranchFalse`) and a bulk `RegFill` for the
+  `for _ in lo..hi { a.push(const) }` idiom. The compiler emits them when operands are local
+  slots or inline immediates; every non-numeric/non-array shape falls back to the existing stack
+  path, so observable behavior is unchanged. `Op` is now `Copy`, and the dispatch loop matches
+  slot references directly on the `Small`/`F64` fast paths instead of cloning operands.
+
+- **Lock-free copy-on-write arrays (spec §11.3).** `ArrayVal` now wraps `Arc<Vec<Value>>` and
+  copies on write through `Arc::make_mut` instead of `Arc<RwLock<Vec<Value>>>`. Array reads are
+  plain dereferences (no lock), removing the per-element `RwLock` atomics from every index read
+  and array loop; `Send + Sync` (and therefore the `parfor`/`@parallel` paths) is preserved.
+
+- **Fast-hash environments.** `Env`'s value/function namespaces and the VM's function-dispatch
+  table use `rustc_hash::FxHashMap` instead of SipHash, cutting the cost of every non-local name
+  lookup and call resolution.
+
+### Fixed
+
+- **`to_f64` register fast path honors a user shadow.** The register `to_f64` lowering now
+  validates against the process-wide function-definition epoch and calls a user `fn to_f64` when
+  one is defined, matching the AST interpreter (regression-tested).
+
+- **`ExprPool::number` no longer panics on complex numbers.** A new `try_number` returns `None`
+  for values with no symbolic representation (complex); callers that can receive one report a
+  clear error instead of panicking (spec §6.1).
+
+- **CSV parsing is UTF-8-correct (spec §18.1).** `io::csv_parse` decoded fields byte-by-byte as
+  Latin-1, corrupting any non-ASCII data; it now parses by Unicode scalar values.
+
+- **VM operand truncation is rejected.** Constant-pool indices, parameter/argument counts, and
+  array/tuple element counts beyond the `u16` instruction-field range now reject compilation
+  (AST fallback) instead of silently wrapping (spec §19.5).
+
+- **Terminal escape injection.** Program output is filtered for C0 control characters and DEL at
+  the `print`/`println` sink, so untrusted strings cannot emit ANSI escapes; newline/tab are
+  preserved. The stdlib arbitrary-path I/O trust boundary is now documented.
+
+- **f-string `{:spec}` width counts characters, not bytes.** Multi-byte content and fill
+  characters now pad to the correct visual width (spec §18.1).
+
+- **Rounding collapse no longer saturates.** `Number::rounded_digits` and the collapse rounding
+  family use checked float→integer conversions and reject out-of-range digit counts instead of
+  saturating to `i64::MAX` (spec §9.6).
+
+- **REPL no longer replays the whole session.** Each entry is evaluated once against a persistent
+  environment (`Evaluator::eval_value_keep_env`), removing the O(n²) session replay that made
+  long sessions lag (spec §20).
+
+- **Dedicated nesting-depth error code.** "Expression nesting is too deep" now reports
+  `E0012 expression_nesting_too_deep` (new spec appendix C entry) instead of borrowing the
+  generic `E0010`.
+
 ## [0.4.0] - 2026-09-12
 
 ### Performance

@@ -1753,6 +1753,18 @@ error[E0011]: expected `;` to separate statements; newline statement separation 
    = help: terminate the statement with `;`
 ```
 
+**Resource-exhaustion error example** (§16.4, v2.3): the parser budgets expression depth and transparent nesting (e.g. `((((x))))`); exceeding it reports the compile-time error `E0012` instead of letting a recursive consumer overflow the stack. Legitimate source stays far below the budget.
+
+```text
+error[E0012]: expression nesting is too deep
+  --> src/main.pra:1:1
+   |
+ 1 | ((((((...)))))
+   | ^ expression nesting exceeds the parser's depth budget
+   |
+   = help: flatten the expression or bind intermediate results to variables
+```
+
 **Doc notes on method-call errors (v2.2)**: when a **method call** (`obj.method(...)`) fails — whether the cause is compile-time (unknown method, argument count/type mismatch) or runtime (an error thrown inside the method) — the diagnostic must attach **the relevant definition and doc comments of that method** (§4.1) in a note:
 
 - **Method definition**: the full signature (including parameter types and return type) and the definition location (`file:line:col`).
@@ -2967,6 +2979,7 @@ c_api::unit         // C void
  `E0001` | `lex_error` | Lexical error (illegal character/unclosed literal) |
  `E0010` | `syntax_error` | Syntax error (including hints about removed syntax, such as `try/catch` and the `\|>` pipeline, removed since v2.3) |
  `E0011` | `expected_separator` | Expected a `;` statement separator (active since v2.3: newline separation is removed, statements must end with `;`, §4.2) |
+ `E0012` | `expression_nesting_too_deep` | Expression/parenthesis nesting exceeds the parser's depth budget (§16.4) |
  `E0020` | `config_position` | `config {}` is not at the top of the file |
  `E0021` | `polluting_config` | Polluting policy declared in a non-entry file |
  `E0022` | `unknown_config` | Unknown policy key |

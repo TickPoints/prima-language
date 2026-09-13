@@ -101,6 +101,15 @@ pub(crate) fn vm_index_store(
             a.with_mut(|items| items[i] = value);
             Ok(())
         }
+        // `Dict` is a boxed owned map (cloned on assignment), so inserting into the slot mutates
+        // only this binding — value semantics hold without a copy-on-write handle (spec §11.6).
+        Value::Dict(d) => {
+            let key = prima_core::ValueKey::from_value(&idx).ok_or_else(|| {
+                crate::error::RuntimeError::Message("dict key must be a hashable value".into())
+            })?;
+            d.insert(key, value);
+            Ok(())
+        }
         other => Err(crate::error::RuntimeError::Message(format!(
             "cannot index-assign {}",
             crate::eval::value_type_name(other)

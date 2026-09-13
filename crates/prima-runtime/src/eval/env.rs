@@ -8,6 +8,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
 
@@ -31,6 +33,12 @@ pub const JIT_CALL_THRESHOLD: u64 = 100;
 /// whole single-entry [`crate::vm::op::Program`] (chunk + dispatch table), so a recursive call
 /// re-enters the VM without rebuilding either.
 pub type VmChunkCache = Rc<OnceLock<Option<Rc<crate::vm::op::Program>>>>;
+
+/// Per-`fn` whole-function JIT cache (spec §19.2): the body is lowered and compiled at most once
+/// per function definition; a failure (outside the numeric subset, or cranelift unavailable) is
+/// cached as `None` so it is never retried. `Rc` because compilation is single-threaded per
+/// environment and shared across every clone of the function.
+pub type JitFnCache = Rc<OnceLock<Option<Arc<prima_jit::CompiledFunction>>>>;
 
 /// Per-MFn hot-path state (spec §19.2): a monotonic call counter and the compiled artifact, guarded by a
 /// `OnceLock` so the body is compiled at most once per `Function::User` instance. Compilation failure is
@@ -75,6 +83,8 @@ pub enum Function {
         env: EnvRef,
         /// Bytecode VM chunk cache (spec §19.5), shared by every clone of the function.
         vm: VmChunkCache,
+        /// Whole-function JIT cache (spec §19.2), shared by every clone of the function.
+        jit: JitFnCache,
     },
     /// `get(array, index) -> Option<Number>`: safe array access returning `None` out of range (spec §11.3).
     NativeGet,
@@ -134,8 +144,10 @@ pub type EnvRef = Rc<RefCell<Env>>;
 /// Evaluation environment: dual value/function namespaces plus a module namespace plus a shared parent-environment chain.
 #[derive(Clone, Default)]
 pub struct Env {
-    pub(crate) values: HashMap<String, Value>,
-    pub(crate) funcs: HashMap<String, Rc<Function>>,
+    // The value/function namespaces are the interpreter's hottest lookups (every non-local name
+    // read and every call). `FxHashMap` (short-string hash) avoids SipHash's cost for these keys.
+    pub(crate) values: FxHashMap<String, Value>,
+    pub(crate) funcs: FxHashMap<String, Rc<Function>>,
     pub(crate) modules: HashMap<String, HashMap<String, NamespaceItem>>,
     pub(crate) parent: Option<EnvRef>,
 }
@@ -171,8 +183,8 @@ impl Env {
     /// Create a child scope: empty local tables plus a shared parent handle.
     pub(crate) fn child(parent: &EnvRef) -> EnvRef {
         Rc::new(RefCell::new(Env {
-            values: HashMap::new(),
-            funcs: HashMap::new(),
+            values: FxHashMap::default(),
+            funcs: FxHashMap::default(),
             modules: HashMap::new(),
             parent: Some(Rc::clone(parent)),
         }))

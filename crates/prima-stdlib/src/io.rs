@@ -4,6 +4,13 @@
 //! carries an error message string — the `?` operator / `match` unwraps them (§15.5).
 //! JSON uses `serde_json` for both directions; CSV is hand-rolled RFC 4180-ish (comma delimiter,
 //! double-quoted fields with `""` escapes and embedded commas/newlines).
+//!
+//! # Trust boundary
+//!
+//! These functions read and write arbitrary filesystem paths with the privileges of the host
+//! process. Running untrusted `.pra` code (for example via `prima test` or `prima doc --test`)
+//! therefore grants it read/write access to any file the process can reach; only run code you
+//! trust.
 
 use std::collections::HashMap;
 use std::fs;
@@ -259,18 +266,19 @@ fn csv_parse_text(s: &str) -> Result<Vec<Vec<String>>, String> {
     if s.is_empty() {
         return Ok(Vec::new());
     }
-    let bytes = s.as_bytes();
+    // Iterate by Unicode scalar values, not bytes: non-ASCII text must round-trip intact.
+    let chars: Vec<char> = s.chars().collect();
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut row: Vec<String> = Vec::new();
     let mut field = String::new();
     let mut in_quotes = false;
     let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
+    while i < chars.len() {
+        let c = chars[i];
         if in_quotes {
             match c {
-                b'"' => {
-                    if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                '"' => {
+                    if i + 1 < chars.len() && chars[i + 1] == '"' {
                         field.push('"');
                         i += 2;
                     } else {
@@ -278,12 +286,12 @@ fn csv_parse_text(s: &str) -> Result<Vec<Vec<String>>, String> {
                         i += 1;
                     }
                 }
-                b'\n' => {
+                '\n' => {
                     field.push('\n');
                     i += 1;
                 }
-                b'\r' => {
-                    if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+                '\r' => {
+                    if i + 1 < chars.len() && chars[i + 1] == '\n' {
                         field.push('\n');
                         i += 2;
                     } else {
@@ -292,27 +300,27 @@ fn csv_parse_text(s: &str) -> Result<Vec<Vec<String>>, String> {
                     }
                 }
                 _ => {
-                    field.push(c as char);
+                    field.push(c);
                     i += 1;
                 }
             }
         } else {
             match c {
-                b'"' => {
+                '"' => {
                     in_quotes = true;
                     i += 1;
                 }
-                b',' => {
+                ',' => {
                     row.push(std::mem::take(&mut field));
                     i += 1;
                 }
-                b'\n' => {
+                '\n' => {
                     row.push(std::mem::take(&mut field));
                     rows.push(std::mem::take(&mut row));
                     i += 1;
                 }
-                b'\r' => {
-                    if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+                '\r' => {
+                    if i + 1 < chars.len() && chars[i + 1] == '\n' {
                         i += 1; // the following '\n' terminates the record
                     } else {
                         field.push('\r');
@@ -320,7 +328,7 @@ fn csv_parse_text(s: &str) -> Result<Vec<Vec<String>>, String> {
                     }
                 }
                 _ => {
-                    field.push(c as char);
+                    field.push(c);
                     i += 1;
                 }
             }

@@ -192,14 +192,19 @@ impl Evaluator {
                 body,
                 env: f_env,
                 vm,
+                jit,
             } => {
-                // Bytecode VM fast path (spec §19.5, gated): when `vm` is enabled and the body is
-                // inside the compiled subset, run the chunk; otherwise fall back to the AST path.
-                // Tail-recursive bodies stay on the AST path: the trampoline (`apply_host_tco`,
-                // spec §10.2 item 6) runs them in constant stack space, which the compiled subset
-                // does not model — recursion depth must not regress.
+                // Whole-function JIT (spec §19.2, gated at `O2`): a pure numeric body is compiled
+                // to native code once and called directly. Tail-recursive bodies stay on the AST
+                // trampoline (constant stack space), and a JIT deopt (exact-arithmetic overflow or
+                // out-of-range index) re-runs the call on the interpreter.
                 let tco = self.current_config().opt_level >= OptLevel::O2
                     && crate::opt::tail_call_of(body).is_some();
+                if !tco && let Some(v) = self.try_jit_call(params, body, jit, &args) {
+                    return Ok(v);
+                }
+                // Bytecode VM fast path (spec §19.5, gated): when `vm` is enabled and the body is
+                // inside the compiled subset, run the chunk; otherwise fall back to the AST path.
                 if self.current_config().vm
                     && !tco
                     && let Some(v) = self.try_vm_single(params, body, f_env, vm, args.clone())?

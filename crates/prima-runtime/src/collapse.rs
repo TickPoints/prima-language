@@ -376,13 +376,9 @@ fn numeric_property(name: &str, n: &Number) -> Result<Value, RuntimeError> {
         }
         "round" => {
             ensure_real(name, n)?;
-            let out = match n {
-                N::Integer(_) => n.clone(),
-                N::Real(Real::F64(f)) => N::Real(Real::F64(f.round())),
-                N::Real(Real::F32(f)) => N::Real(Real::F32(f.round())),
-                other => N::Integer(Box::new(BigInt::from(other.to_f64_lossy().round() as i64))),
-            };
-            Ok(Value::Number(out))
+            // Delegate to the core method: it normalizes the fixed-width collapsed layer first, so
+            // wide integers (e.g. `u128`) round exactly instead of saturating through an `as i64` cast.
+            Ok(Value::Number(n.round()))
         }
         "numerator" | "denominator" => {
             let r = n.as_rational().ok_or_else(|| {
@@ -847,26 +843,41 @@ fn clamped_f64(name: &str, x: &Number, min: &Number, max: &Number) -> Result<Val
 
 // ---- Rounding collapse (spec §9.6) ----
 
-fn rounded_f64(name: &str, x: &Number, digits: &Number) -> Result<Value, RuntimeError> {
-    ensure_real(name, x)?;
+/// Validate the digit count of the `rounded_*` family (spec §9.6): it must be an integer that fits
+/// `i32`, the exponent domain of `10f64.powi`. An out-of-range count is rejected with a clear
+/// `Overflow` error instead of silently wrapping through an `as i32` cast to a bogus exponent.
+fn rounded_digit_count(name: &str, digits: &Number) -> Result<i32, RuntimeError> {
     let d = digits.as_i64().ok_or_else(|| {
         RuntimeError::Type(format!(
             "`{name}` expects an integer digit count, got {digits}"
         ))
     })?;
-    Ok(Value::Number(x.rounded_digits(d)))
+    i32::try_from(d).map_err(|_| {
+        RuntimeError::Overflow(format!(
+            "`{name}`: digit count {d} is out of the supported range"
+        ))
+    })
+}
+
+fn rounded_f64(name: &str, x: &Number, digits: &Number) -> Result<Value, RuntimeError> {
+    ensure_real(name, x)?;
+    let d = rounded_digit_count(name, digits)?;
+    x.rounded_digits(i64::from(d))
+        .map(Value::Number)
+        .ok_or_else(|| {
+            RuntimeError::Overflow(format!("`{name}`: cannot round {x} to {d} decimal places"))
+        })
 }
 
 fn rounded_f32(name: &str, x: &Number, digits: &Number) -> Result<Value, RuntimeError> {
     ensure_real(name, x)?;
-    let d = digits.as_i64().ok_or_else(|| {
-        RuntimeError::Type(format!(
-            "`{name}` expects an integer digit count, got {digits}"
-        ))
+    let d = rounded_digit_count(name, digits)?;
+    let n = x.rounded_digits(i64::from(d)).ok_or_else(|| {
+        RuntimeError::Overflow(format!("`{name}`: cannot round {x} to {d} decimal places"))
     })?;
-    let mult = 10f64.powi(d as i32);
-    let v = (x.to_f64_lossy() * mult).round() / mult;
-    Ok(Value::Number(Number::Real(Real::F32(v as f32))))
+    Ok(Value::Number(Number::Real(Real::F32(
+        n.to_f64_lossy() as f32
+    ))))
 }
 
 fn rounded_i32(name: &str, n: &Number) -> Result<Value, RuntimeError> {
@@ -1423,6 +1434,78 @@ mod tests {
             }
             other => panic!("expected F32, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rounded_family_large_float_and_digit_range() {
+        let (pool, builtins) = setup();
+        // A very large float rounded to 0 digits is unchanged — the result must not saturate.
+        let huge = Number::Real(Real::F64(1e300));
+        let v = call(
+            "rounded_f64",
+            &[Value::Number(huge.clone()), Value::Number(Number::from(0))],
+            &pool,
+            builtins,
+        )
+        .unwrap();
+        assert_eq!(v, Value::Number(huge));
+
+        // A digit count beyond `i32` is rejected instead of wrapping to a bogus exponent.
+        let err = call(
+            "rounded_f64",
+            &[
+                Value::Number(Number::Real(Real::F64(1.5))),
+                Value::Number(Number::from(i64::from(i32::MAX) + 1)),
+            ],
+            &pool,
+            builtins,
+        )
+        .unwrap_err();
+        assert!(matches!(err, RuntimeError::Overflow(_)));
+
+        // `10^digits` overflowing to infinity must not silently produce `NaN`.
+        let err = call(
+            "rounded_f64",
+            &[
+                Value::Number(Number::Real(Real::F64(1.5))),
+                Value::Number(Number::from(1000)),
+            ],
+            &pool,
+            builtins,
+        )
+        .unwrap_err();
+        assert!(matches!(err, RuntimeError::Overflow(_)));
+
+        // The f32 entry point shares the same guard.
+        let err = call(
+            "rounded_f32",
+            &[
+                Value::Number(Number::Real(Real::F64(1.5))),
+                Value::Number(Number::from(i64::from(i32::MAX) + 1)),
+            ],
+            &pool,
+            builtins,
+        )
+        .unwrap_err();
+        assert!(matches!(err, RuntimeError::Overflow(_)));
+    }
+
+    #[test]
+    fn round_method_does_not_saturate_wide_integers() {
+        let (pool, builtins) = setup();
+        // The old path cast through `as i64`, saturating `u128::MAX` to `i64::MAX`; `Number::round`
+        // normalizes the collapsed layer first and keeps the exact value.
+        let v = call(
+            "round",
+            &[Value::Number(Number::U128(Box::new(u128::MAX)))],
+            &pool,
+            builtins,
+        )
+        .unwrap();
+        assert_eq!(
+            v,
+            Value::Number(Number::Integer(Box::new(BigInt::from(u128::MAX))))
+        );
     }
 
     #[test]

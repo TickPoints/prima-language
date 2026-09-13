@@ -26,13 +26,13 @@ pub(crate) const MAX_PARSE_RECURSION: u32 = 512;
 /// the parser on its own generously-sized thread (see [`MAX_PARSE_RECURSION`]).
 const PARSE_STACK_SIZE: usize = 32 * 1024 * 1024;
 
-/// The `SyntaxError` raised when the nesting budget is exceeded. The spec's appendix C has no
-/// dedicated "nesting too deep" entry, so the generic syntax error code `E0010` is used.
+/// The `SyntaxError` raised when the nesting budget is exceeded (spec appendix C
+/// `E0012 expression_nesting_too_deep`, §16.4).
 pub(crate) fn nesting_error(span: Span) -> SyntaxError {
     SyntaxError {
         span,
         message: format!(
-            "expression nesting is too deep (E0010); the parser accepts at most {MAX_EXPR_DEPTH} levels"
+            "expression nesting is too deep (E0012); the parser accepts at most {MAX_EXPR_DEPTH} levels"
         ),
     }
 }

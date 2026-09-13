@@ -15,11 +15,49 @@ use std::rc::Rc;
 /// A constant reference into the chunk's constant pool.
 pub type Reg = u16;
 
+/// Arithmetic operator for the register-form instructions (spec §6.1/§6.5). Mirrors the stack
+/// arithmetic ops; `Div` keeps the `fraction` policy and the exact zero-divisor diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArithOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+}
+
+/// A small inline operand for the register-form instructions. `Float` stores the `f64` bit pattern
+/// so the type stays `Copy`/`Eq` (the value is recovered with `f64::from_bits`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Imm {
+    Int(i64),
+    Float(u64),
+    Bool(bool),
+}
+
+impl Imm {
+    /// A float immediate.
+    pub fn float(x: f64) -> Imm {
+        Imm::Float(x.to_bits())
+    }
+
+    /// The immediate as a `Value` (used by the generic fallback path).
+    pub fn to_value(self) -> prima_core::Value {
+        match self {
+            Imm::Int(v) => prima_core::Value::Number(prima_core::Number::Small(v)),
+            Imm::Float(bits) => prima_core::Value::Number(prima_core::Number::Real(
+                prima_core::Real::F64(f64::from_bits(bits)),
+            )),
+            Imm::Bool(b) => prima_core::Value::Bool(b),
+        }
+    }
+}
+
 /// A single bytecode instruction with an inline operand where present.
 ///
 /// Every instruction consumes its inputs from the operand stack and pushes its result back, except
 /// for the control-flow and access instructions that read/write locals/upvalues/offset fields.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     // —— constants / loads ——
     /// Push the constant at pool index `k`.
@@ -145,6 +183,72 @@ pub enum Op {
     // —— pattern / match ——
     /// Duplicate the stack top.
     Dup,
+    // —— register-form local ops (locals as registers; no operand-stack traffic) ——
+    /// `slots[dst] = slots[a] <op> slots[b]`. Numeric operands use the inline `Small`/`F64` fast
+    /// paths; anything else keeps the full `eval_binary` semantics (spec §6.1/§12.2).
+    RegBin {
+        op: ArithOp,
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    /// `slots[dst] = slots[a] <op> imm` (inline immediate; `Div` keeps the `fraction` policy).
+    RegBinImm {
+        op: ArithOp,
+        dst: Reg,
+        a: Reg,
+        imm: Imm,
+    },
+    /// Fused multiply-accumulate: `slots[dst] = slots[dst] + slots[a] * slots[b]` (numeric fast
+    /// path; the accumulation pattern `s = s + i*i`, spec §10).
+    RegMulAdd { dst: Reg, a: Reg, b: Reg },
+    /// `slots[dst] = slots[arr][slots[idx]]` — array index read without materializing the receiver
+    /// handle on the operand stack (spec §11.3).
+    RegIndex { dst: Reg, arr: Reg, idx: Reg },
+    /// Push `slots[arr][slots[idx]]` (condition reads like `if prime[i]`, spec §11.3).
+    RegIndexPush { arr: Reg, idx: Reg },
+    /// `slots[dst] = -slots[a]` (numeric fast path; spec §6.1).
+    RegNeg { dst: Reg, a: Reg },
+    /// `slots[dst] = to_f64(slots[a])` — the collapse fast path (spec §9.2).
+    RegToF64 { dst: Reg, a: Reg },
+    /// `slots[dst] = slots[a]` (register move).
+    RegMove { dst: Reg, a: Reg },
+    /// Register-form array push: `slots[arr].push(clone slots[src])` (spec §11.3).
+    RegPush { arr: Reg, src: Reg },
+    /// Register-form array push of an inline immediate.
+    RegPushImm { arr: Reg, imm: Imm },
+    /// Register-form index store: `slots[arr][slots[idx]] = clone slots[src]` (in place, CoW when
+    /// the handle is aliased; spec §11.3).
+    RegIndexStore { arr: Reg, idx: Reg, src: Reg },
+    /// Register-form index store of an inline immediate.
+    RegIndexStoreImm { arr: Reg, idx: Reg, imm: Imm },
+    /// Fused loop test `slots[a] <op> slots[b] + imm` (`le` selects `<=`): jump out when false.
+    /// Covers `for i in lo..(hi ± k)` without re-materializing the constant (spec §14).
+    BranchLocalCmpSum {
+        le: bool,
+        a: Reg,
+        b: Reg,
+        imm: i64,
+        off: i32,
+    },
+    /// Fill idiom (spec §14): `for _ in slots[lo]..slots[hi] { slots[arr].push(imm) }` lowered to a
+    /// single bulk extend. Emitted only when the body is exactly one constant push, so the loop
+    /// bound cannot change and the loop variable is unused.
+    RegFill {
+        arr: Reg,
+        lo: Reg,
+        hi: Reg,
+        imm: Imm,
+    },
+    /// Fused `if slots[arr][slots[idx]] { … }` test (spec §11.3/§12.1): read the element and jump
+    /// when it is `false`; a non-boolean element is the usual condition error.
+    RegIndexBranchFalse { arr: Reg, idx: Reg, off: i32 },
+    /// Slice assignment into a local slot's array (spec §11.3): stack `[lo, hi, rhs]`, where a
+    /// `Nil` bound means "omitted" (defaults 0 / length). The array is spliced in place (CoW when
+    /// the handle is aliased).
+    SliceStoreLocal { slot: Reg },
+    /// Slice assignment into an environment binding's array.
+    SliceStoreName { name: Reg },
 }
 
 /// A constant pool entry: an already-`Value`-shaped literal or a symbolic reference that resolves
@@ -224,26 +328,37 @@ impl Chunk {
         self.lines.push(line);
     }
 
+    /// Reserve the next constant-pool index, or fail when the pool would exceed the `Reg` (`u16`)
+    /// index range. The compiler turns this into an AST fallback rather than a silently wrapped
+    /// index (spec §19.5).
+    fn next_const_index(&self) -> Result<Reg, String> {
+        u16::try_from(self.constants.len())
+            .map_err(|_| "VM compiler: constant pool exceeds the u16 index range".to_string())
+    }
+
     /// Intern a string constant, returning a pool index.
-    pub fn add_string(&mut self, s: String) -> Reg {
+    pub fn add_string(&mut self, s: String) -> Result<Reg, String> {
+        let idx = self.next_const_index()?;
         self.constants.push(Const::Str(s));
-        (self.constants.len() - 1) as Reg
+        Ok(idx)
     }
 
     /// Intern a name constant (for `Method`/`CallName`).
-    pub fn add_name(&mut self, s: String) -> Reg {
+    pub fn add_name(&mut self, s: String) -> Result<Reg, String> {
+        let idx = self.next_const_index()?;
         self.constants.push(Const::Name(s));
-        (self.constants.len() - 1) as Reg
+        Ok(idx)
     }
 
     /// Intern a `Value` constant.
-    pub fn add_value(&mut self, v: prima_core::Value) -> Reg {
+    pub fn add_value(&mut self, v: prima_core::Value) -> Result<Reg, String> {
+        let idx = self.next_const_index()?;
         self.constants.push(Const::Value(v));
-        (self.constants.len() - 1) as Reg
+        Ok(idx)
     }
 
     /// Intern a `Value` constant, returning its index (re-exposed for clarity).
-    pub fn add_const(&mut self, v: prima_core::Value) -> Reg {
+    pub fn add_const(&mut self, v: prima_core::Value) -> Result<Reg, String> {
         self.add_value(v)
     }
 
@@ -303,6 +418,50 @@ impl Chunk {
             *off = target as i32 - at as i32;
         }
     }
+
+    /// Emit a fused `BranchLocalCmpSum` (`slots[a] <[=] slots[b] + imm`) with a placeholder offset.
+    pub fn emit_branch_local_cmp_sum(
+        &mut self,
+        le: bool,
+        a: Reg,
+        b: Reg,
+        imm: i64,
+        line: u32,
+    ) -> usize {
+        let i = self.code.len();
+        self.emit(
+            Op::BranchLocalCmpSum {
+                le,
+                a,
+                b,
+                imm,
+                off: 0,
+            },
+            line,
+        );
+        i
+    }
+
+    /// Patch a prior `BranchLocalCmpSum` placeholder to the given absolute code offset.
+    pub fn patch_branch_local_cmp_sum(&mut self, at: usize, target: usize) {
+        if let Some(Op::BranchLocalCmpSum { off, .. }) = self.code.get_mut(at) {
+            *off = target as i32 - at as i32;
+        }
+    }
+
+    /// Emit a fused `RegIndexBranchFalse` with a placeholder offset, returning the instruction index.
+    pub fn emit_branch_index_false(&mut self, arr: Reg, idx: Reg, line: u32) -> usize {
+        let i = self.code.len();
+        self.emit(Op::RegIndexBranchFalse { arr, idx, off: 0 }, line);
+        i
+    }
+
+    /// Patch a prior `RegIndexBranchFalse` placeholder to the given absolute code offset.
+    pub fn patch_branch_index_false(&mut self, at: usize, target: usize) {
+        if let Some(Op::RegIndexBranchFalse { off, .. }) = self.code.get_mut(at) {
+            *off = target as i32 - at as i32;
+        }
+    }
 }
 
 impl Default for Chunk {
@@ -319,6 +478,7 @@ pub struct Program {
     pub root: Rc<Chunk>,
     /// All non-root function/method/closure chunks, keyed by function id (`u32`).
     pub functions: Vec<Rc<Chunk>>,
-    /// Name → index into `functions` for the VM's call dispatch.
-    pub names: std::collections::HashMap<String, u32>,
+    /// Name → index into `functions` for the VM's call dispatch (`FxHashMap`: short-string keys
+    /// are looked up on every `CallName`/entry resolution).
+    pub names: rustc_hash::FxHashMap<String, u32>,
 }

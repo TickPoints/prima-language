@@ -35,11 +35,12 @@ mod helpers;
 mod pattern;
 mod stmt;
 pub use helpers::value_type_name;
-pub(crate) use helpers::{expr_is_side_effect_free, number_mod};
+pub(crate) use helpers::{MAX_RANGE_ELEMS, expr_is_side_effect_free, number_mod};
 pub(crate) use helpers::{is_mutating_array_method, stmt_span, syntax_err};
 
 use env::BuiltinBackend;
 pub(crate) use env::BuiltinBackend as EvalBackend;
+pub(crate) use env::JitFnCache;
 pub(crate) use env::VmChunkCache;
 pub(crate) use env::func_epoch;
 pub use env::{Env, EnvRef, Function, HotState, JIT_CALL_THRESHOLD, NamespaceItem, NativeCall};
@@ -195,6 +196,11 @@ pub struct Evaluator {
     pub(crate) self_values: Vec<Value>,
     /// Module path currently being evaluated (`""` for the root module), for `pub(mod)` visibility (spec §15.2).
     pub(crate) current_module: String,
+    /// Pool of reusable bytecode-VM frame buffers (spec §19.5): each `run_vm` call takes a buffer
+    /// and returns it, so repeated and nested calls avoid reallocating the frame stack.
+    pub(crate) vm_frames_pool: Vec<Vec<crate::vm::exec::Frame>>,
+    /// Pool of reusable bytecode-VM operand-stack buffers (companion to `vm_frames_pool`).
+    pub(crate) vm_stack_pool: Vec<Vec<Value>>,
 }
 
 impl Default for Evaluator {
@@ -543,6 +549,28 @@ g.greet(1)";
         assert_eq!(
             eval("import testns_eval;\ntestns_eval::answer()"),
             Value::Number(Number::from(42))
+        );
+    }
+
+    #[test]
+    fn fstring_spec_pads_by_chars_not_bytes() {
+        use super::helpers::apply_spec;
+        // `héllo` is 5 chars / 6 bytes; right-aligned to width 7 with a multi-byte fill `★`
+        // must add 2 fill chars (a byte-counted width would add only 1).
+        assert_eq!(
+            apply_spec(&Value::String("x".into()), "héllo", Some("★>7")),
+            "★★héllo"
+        );
+        // `日本` is 2 chars / 6 bytes; centered to width 4 must add one fill on each side
+        // (a byte-counted width would already exceed 4 and leave the text untouched).
+        assert_eq!(
+            apply_spec(&Value::String("x".into()), "日本", Some("★^4")),
+            "★日本★"
+        );
+        // Width equal to the char count leaves the text untouched, even though bytes exceed it.
+        assert_eq!(
+            apply_spec(&Value::String("x".into()), "日本", Some("★<2")),
+            "日本"
         );
     }
 }

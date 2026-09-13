@@ -646,9 +646,13 @@ impl Evaluator {
                 _ => {}
             }
         }
-        // Preserve the symbolic form (spec §8.3 levels 0/2).
-        let a = self.pool.number(&x);
-        let b = self.pool.number(&y);
+        // Preserve the symbolic form (spec §8.3 levels 0/2). Complex operands have no symbolic
+        // node (`ExprPool::try_number`), so report a clear error instead of panicking.
+        let (Some(a), Some(b)) = (self.pool.try_number(&x), self.pool.try_number(&y)) else {
+            return crate::error::err(
+                "this power has no symbolic representation (complex operands are not supported here)",
+            );
+        };
         let node = self.pool.pow2(a, b);
         let simp = self.simplify_current(node);
         Ok(self.value_from_expr(simp))

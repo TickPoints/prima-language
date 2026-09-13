@@ -844,13 +844,27 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 其余所有设计（三世界架构、Number 塔、ExprPool、策略三级、模块系统、错误模型、并行哲学、类所有权）与规范完全一致。
 
-## 8. 遗留优化与后续修复清单（v0.4.0 性能评估后）
+## 8. 遗留优化与后续修复清单（v0.4.0 性能评估后，已完成）
 
 > v0.4.0 完成了执行引擎整体重构（字节码 VM 默认开启、`Small(i64)` 小整数内联、`Value` 装箱
 > 瘦身 64B→32B、数组 CoW、融合指令、per-call-site callee 缓存等），跨语言基准从「比 CPython
 > 慢 11.8×–4159×」收敛到「1.07×–7.1×」（`benches/RESULTS.md`）。`perf` 剖析显示剩余差距的
 > 结构性根因是装箱 `Value`（32B）在栈机中的搬运（约 40% 运行时）。以下清单按预期收益排序，
 > 作为下一轮工作的直接依据；验收基线见 §8.3。
+>
+> **落地结果（本轮完成）**：P1 以「局部槽即寄存器 + 融合指令」实现（`RegBin`/`RegBinImm`/
+> `RegMulAdd`/`RegNeg`/`RegToF64`/`RegIndex*`/`RegPush*`/`RegFill`/`BranchLocalCmpSum`/
+> `RegIndexBranchFalse`；`Op: Copy`，分派对 `Small`/`F64` 直接按槽引用运算、不再克隆），
+> P4 将 `ArrayVal` 改为无锁 `Arc<Vec<Value>>` + `Arc::make_mut`，P7 以 `rustc-hash` 替换
+> SipHash；P2/P3/P5/P6 未实施——P1 已使全部 6 内核达到 Python 平价，无需进一步改造。
+> `perf` 显示剩余成本为 `Arc::make_mut` 唯一性检查、`Value` 的 clone/drop 与分派本身。
+>
+> **第二轮落地结果（JIT）**：P6 实现了纯数值子集的整函数 cranelift JIT（`prima-jit` 的 `ir`/`func`/
+> `rt` + `prima-runtime::jit_fn`；`opt_level >= O2` 时对 `fn` 体编译一次并缓存，精确整数运算与数组
+> 越界检查失败即去优化回解释器，循环回边轮询取消标志），使 6 个内核达到 Python 的 **7×–1700×**；
+> P3 池化 VM 帧/操作数栈缓冲；P5 补充字典索引赋值、切片赋值与字典/集合字面量的 VM 编译（字典/集合
+> 变异方法仍回退 AST）。**P2（`Value` 瘦身至 24B）未实施**：JIT 已覆盖热点数值循环，跨 ~250 处
+> `Number::Real`/`Real` 的机械改造收益有限而风险高，保留为后续可选项。
 
 ### 8.1 性能优化（下一轮）
 
@@ -875,13 +889,13 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 | F5 | f-string `{:spec}` fill 按字节长度对齐（多字节 fill/正文时偏差，纯外观） | prima-runtime/src/eval/helpers.rs |
 | F6 | REPL 每条入口重放完整会话（会话级 O(n²)，长会话卡顿） | src/repl.rs |
 | F7 | `collapse::round` 对大浮点仍有 `as i64` 饱和（与 `as_bigint` 的 M6 修复同类，漏网） | prima-runtime/src/collapse.rs |
-| F8 | 「表达式嵌套过深」目前借用通用码 `E0010`——应在规范附录 C 增设专用错误码（规范确认后同步双语文档） | prima-syntax/src/parser.rs |
+| F8 | 「表达式嵌套过深」现使用规范附录 C 新增的专用错误码 `E0012 expression_nesting_too_deep`（规范已同步双语文档） | prima-syntax/src/parser.rs |
 | F9 | 非局部名接收者的变异方法（全局数组 `g.push(x)`）在 VM 下仍编译拒绝→回退 AST（结果正确，仅性能）；可加 `MethodName` 变异指令覆盖 | prima-runtime/src/vm |
 | F10 | `parse_checked` 在专用 32MB 线程上运行属行为可见变化（panic 经 `resume_unwind` 保留语义）；若不可接受，退回低递归上限方案 | prima-syntax/src/parser.rs |
 
-### 8.3 下一轮验收基线
+### 8.3 验收基线（已达成）
 
-- 6 个基准内核全部 Python × ≤ 1.0（`cargo bench --bench bench_suite` 重生成 `benches/RESULTS.md`）。
+- 6 个基准内核全部 Python × ≤ 1.0（本轮 0.3–0.9；`cargo bench --bench bench_suite` 重生成 `benches/RESULTS.md`）。
 - 全 workspace `cargo test` / `cargo clippy` 绿；VM/AST parity、数组值语义（CoW）、溢出报错、深度上限回归保持。
 
 ---

@@ -139,8 +139,11 @@ impl ExprPool {
         self.intern(ExprData::Real(Real::F64(x)))
     }
 
-    pub fn number(&self, n: &Number) -> ExprId {
-        match n {
+    /// Intern a `Number` as a symbolic expression node, or `None` when it has no symbolic
+    /// representation. The symbolic layer carries only `Integer`/`Rational`/`Real` (spec §6.1), so
+    /// complex numbers return `None` (callers that can receive one must handle it — never panic).
+    pub fn try_number(&self, n: &Number) -> Option<ExprId> {
+        Some(match n {
             // `Small` interns to the same integer node as `Integer` (spec §6.1 exact layer).
             Number::Small(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
             Number::Integer(i) => self.intern(ExprData::Integer(i.clone())),
@@ -152,9 +155,7 @@ impl ExprPool {
                 }
             }
             Number::Real(r) => self.intern(ExprData::Real(*r)),
-            Number::Complex { .. } => {
-                panic!("complex numbers cannot be interned as expression nodes yet")
-            }
+            Number::Complex { .. } => return None,
             // Fixed-width collapsed layer interns to the exact/`Real` node (spec §6.1).
             Number::I8(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
             Number::I16(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
@@ -169,7 +170,14 @@ impl ExprPool {
             Number::Isize(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
             Number::Usize(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
             Number::BigFloat(f) => self.intern(ExprData::Real(Real::F64(*f))),
-        }
+        })
+    }
+
+    /// Intern a `Number`, panicking when it has no symbolic representation (a complex number).
+    /// Prefer [`Self::try_number`] at call sites that can receive a complex value.
+    pub fn number(&self, n: &Number) -> ExprId {
+        self.try_number(n)
+            .expect("complex numbers cannot be interned as expression nodes")
     }
 
     pub fn const_number(&self, id: ExprId) -> Option<Number> {

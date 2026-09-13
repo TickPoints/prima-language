@@ -3,11 +3,9 @@
 //! Uses `rustyline` for line editing and history. Input is accumulated across
 //! continuation lines until the delimiters balance, then evaluated.
 //!
-//! The crate's `Evaluator::eval_value` creates a fresh `Env` on every call, so
-//! variable bindings would not survive across entries. The REPL therefore keeps
-//! one persistent evaluator and replays the whole session on each complete entry;
-//! `println`/`print` output is captured and only the tail generated since the
-//! previous entry is shown, so side effects appear exactly once.
+//! The session keeps one persistent evaluator and one persistent `Env`, evaluating only the
+//! new entry against it (`Evaluator::eval_value_keep_env`). Bindings survive across entries
+//! without replaying the whole session, so long sessions stay O(1) per entry.
 
 use std::cell::RefCell;
 use std::io::{self, Write};
@@ -15,7 +13,7 @@ use std::process::ExitCode;
 use std::rc::Rc;
 
 use prima_core::Value;
-use prima_runtime::Evaluator;
+use prima_runtime::{Env, EnvRef, Evaluator};
 use prima_syntax::ast::Stmt;
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
@@ -35,9 +33,10 @@ pub fn run() -> anyhow::Result<ExitCode> {
     let sink = printed.clone();
     let mut ev = Evaluator::with_sink(move |s| sink.borrow_mut().push_str(&s));
 
-    // The committed session (bindings) and the currently accumulated line.
-    let mut session = String::new();
-    let mut prev_output = String::new();
+    // Persistent session environment: bindings survive across entries (no session replay).
+    let env = Env::new().into_ref();
+
+    // The currently accumulated (possibly multi-line) entry.
     let mut buffer = String::new();
     loop {
         let prompt = if buffer.is_empty() {
@@ -58,16 +57,7 @@ pub fn run() -> anyhow::Result<ExitCode> {
                     continue;
                 }
                 if balanced_delimiters(&buffer) {
-                    let mut candidate = session.clone();
-                    candidate.push_str(&buffer);
-                    eval_candidate(
-                        &mut ev,
-                        &printed,
-                        &candidate,
-                        &buffer,
-                        &mut session,
-                        &mut prev_output,
-                    );
+                    eval_entry(&mut ev, &env, &printed, &buffer);
                     buffer.clear();
                 }
             }
@@ -87,35 +77,22 @@ fn is_quit(line: &str) -> bool {
     matches!(line.trim(), ":q" | ":quit" | "quit" | "exit")
 }
 
-/// Evaluate the full session (previous entries + the new buffer) on the persistent
-/// evaluator. On success the newly-emitted output tail and the resulting value are
-/// printed and the candidate becomes the committed session; on failure the buffer is
-/// discarded so it can be corrected and re-entered.
-fn eval_candidate(
-    ev: &mut Evaluator,
-    printed: &Rc<RefCell<String>>,
-    candidate: &str,
-    buffer: &str,
-    session: &mut String,
-    prev_output: &mut String,
-) {
-    // Clear the capture sink so it holds only this run's output (it otherwise accumulates).
+/// Evaluate one complete entry against the persistent session environment. The entry is
+/// `;`-terminated (spec §4.2) and evaluated exactly once — no session replay — so long sessions
+/// stay O(1) per entry. Its captured output is printed, and the trailing expression's value is
+/// shown when the entry yields one. On error, the entry's earlier statements may already have
+/// taken effect (standard REPL behavior); the buffer is discarded so it can be re-entered.
+fn eval_entry(ev: &mut Evaluator, env: &EnvRef, printed: &Rc<RefCell<String>>, buffer: &str) {
+    // Clear the capture sink so it holds only this entry's output.
     *printed.borrow_mut() = String::new();
-    match ev.eval_value(candidate) {
+    let src = terminate_with_semicolon(buffer);
+    match ev.eval_value_keep_env(env, &src) {
         Ok(result) => {
             let captured = printed.borrow().clone();
-            // Re-evaluation replays earlier output deterministically; show only what the new
-            // entry produced. If the prefix drifted (e.g. `input()`), fall back to full output.
-            let tail = match captured.strip_prefix(prev_output.as_str()) {
-                Some(rest) => rest.to_string(),
-                None => captured.clone(),
-            };
-            print!("{tail}");
+            print!("{captured}");
             let _ = io::stdout().flush();
-            *prev_output = captured;
-            *session = terminate_with_semicolon(candidate);
-            // `eval_value` reports the last expression's value over the whole session; print it
-            // only when the new entry itself ends in a value-yielding statement.
+            // Print the trailing value only when the entry itself ends in a value-yielding
+            // statement (an expression or a `match`, spec §4.4).
             if yields_value(buffer) && !matches!(result, Value::Nil) {
                 let text = ev.format_value(&result);
                 let mut stdout = io::stdout().lock();
@@ -139,9 +116,9 @@ fn yields_value(buffer: &str) -> bool {
     )
 }
 
-/// The committed session replays as a single program (session + next entry), so each entry
-/// must be `;`-terminated: newline is no longer a statement separator (spec §4.2). Block-level
-/// statements accept the trailing `;`; an entry that already ends in `;` is left unchanged.
+/// Each entry is evaluated as a standalone program, so it must be `;`-terminated: newline is no
+/// longer a statement separator (spec §4.2). Block-level statements accept the trailing `;`; an
+/// entry that already ends in `;` is left unchanged.
 fn terminate_with_semicolon(src: &str) -> String {
     let trimmed = src.trim_end();
     if trimmed.ends_with(';') {

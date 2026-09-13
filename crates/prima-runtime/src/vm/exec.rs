@@ -19,7 +19,7 @@ use std::rc::Rc;
 use prima_core::{Number, Real, Value};
 use prima_syntax::ast::BinOp as AstBinOp;
 
-use super::op::{Callee, Chunk, Const, Op, Program as VmProgram};
+use super::op::{ArithOp, Callee, Chunk, Const, Imm, Op, Program as VmProgram};
 use crate::builtins::Builtin;
 use crate::error::RuntimeError;
 use crate::eval::{EnvRef, Evaluator, Function};
@@ -55,8 +55,11 @@ pub struct Vm<'a> {
     frames: Vec<Frame>,
     stack: Vec<Value>,
     /// Function-name → chunk index dispatch table.
-    table: &'a std::collections::HashMap<String, u32>,
+    table: &'a rustc_hash::FxHashMap<String, u32>,
     functions: &'a [Rc<Chunk>],
+    /// `(epoch, is_builtin)` cache for the `to_f64` register fast path: re-resolved whenever the
+    /// function-definition epoch changes, so a user `to_f64` shadow is honored (spec §19.5).
+    to_f64_builtin: Option<(u64, bool)>,
 }
 
 fn pop(stack: &mut Vec<Value>) -> Value {
@@ -79,12 +82,17 @@ impl Evaluator {
         program: &VmProgram,
         entry: Option<(&str, Vec<Value>)>,
     ) -> Result<Value, crate::error::RuntimeError> {
+        // Reuse a pooled frame/stack buffer (spec §19.5): repeated and nested calls avoid
+        // reallocating; an early error return simply drops the buffers.
         let mut vm = Vm {
-            frames: Vec::new(),
-            stack: Vec::new(),
+            frames: self.vm_frames_pool.pop().unwrap_or_default(),
+            stack: self.vm_stack_pool.pop().unwrap_or_default(),
             table: &program.names,
             functions: &program.functions,
+            to_f64_builtin: None,
         };
+        vm.frames.clear();
+        vm.stack.clear();
         match entry {
             Some((name, args)) => {
                 let idx = *vm.table.get(name).ok_or_else(|| {
@@ -116,7 +124,7 @@ impl Evaluator {
                     // Running off the end without a `ReturnValue` (the root chunk): the frame's
                     // result is the last value left on the stack.
                     None => break 'dispatch,
-                    Some(op) => op.clone(),
+                    Some(op) => *op,
                 };
                 frame.ip += 1;
                 match op {
@@ -258,26 +266,34 @@ impl Evaluator {
                     }
                     Op::BranchLocalLt { a, b, off } => {
                         // Fused `LoadLocal a; LoadLocal b; Lt; JumpIfFalse` (spec §14): jump out
-                        // of the loop when NOT `a < b`. `Small`/`Small` compares inline; other
-                        // operand shapes keep the general comparison semantics.
-                        let va = frame.slots.get(a as usize).cloned().unwrap_or(Value::Nil);
-                        let vb = frame.slots.get(b as usize).cloned().unwrap_or(Value::Nil);
-                        let cont = match (&va, &vb) {
-                            (Value::Number(Number::Small(x)), Value::Number(Number::Small(y))) => {
-                                x < y
-                            }
-                            _ => match self.eval_compare(AstBinOp::Lt, va, vb)? {
-                                Value::Bool(b) => b,
-                                _ => {
-                                    let span = frame_span(frame);
-                                    return Err(crate::error::attach_span(
-                                        crate::error::RuntimeError::Message(
-                                            "condition must be a boolean".into(),
-                                        ),
-                                        span,
-                                    ));
+                        // of the loop when NOT `a < b`. `Small`/`F64` compare by reference (no
+                        // operand clones); other shapes keep the general comparison semantics.
+                        let cont = match (frame.slots.get(a as usize), frame.slots.get(b as usize))
+                        {
+                            (
+                                Some(Value::Number(Number::Small(x))),
+                                Some(Value::Number(Number::Small(y))),
+                            ) => *x < *y,
+                            (
+                                Some(Value::Number(Number::Real(Real::F64(x)))),
+                                Some(Value::Number(Number::Real(Real::F64(y)))),
+                            ) => *x < *y,
+                            _ => {
+                                let va = frame.slots.get(a as usize).cloned().unwrap_or(Value::Nil);
+                                let vb = frame.slots.get(b as usize).cloned().unwrap_or(Value::Nil);
+                                match self.eval_compare(AstBinOp::Lt, va, vb)? {
+                                    Value::Bool(b) => b,
+                                    _ => {
+                                        let span = frame_span(frame);
+                                        return Err(crate::error::attach_span(
+                                            crate::error::RuntimeError::Message(
+                                                "condition must be a boolean".into(),
+                                            ),
+                                            span,
+                                        ));
+                                    }
                                 }
-                            },
+                            }
                         };
                         if !cont {
                             frame.ip = jump_target(frame.ip, off);
@@ -286,24 +302,32 @@ impl Evaluator {
                     Op::BranchLocalLe { a, b, off } => {
                         // Fused `LoadLocal a; LoadLocal b; Le; JumpIfFalse` (spec §14); see
                         // `BranchLocalLt` for the fast/fallback split.
-                        let va = frame.slots.get(a as usize).cloned().unwrap_or(Value::Nil);
-                        let vb = frame.slots.get(b as usize).cloned().unwrap_or(Value::Nil);
-                        let cont = match (&va, &vb) {
-                            (Value::Number(Number::Small(x)), Value::Number(Number::Small(y))) => {
-                                x <= y
-                            }
-                            _ => match self.eval_compare(AstBinOp::Le, va, vb)? {
-                                Value::Bool(b) => b,
-                                _ => {
-                                    let span = frame_span(frame);
-                                    return Err(crate::error::attach_span(
-                                        crate::error::RuntimeError::Message(
-                                            "condition must be a boolean".into(),
-                                        ),
-                                        span,
-                                    ));
+                        let cont = match (frame.slots.get(a as usize), frame.slots.get(b as usize))
+                        {
+                            (
+                                Some(Value::Number(Number::Small(x))),
+                                Some(Value::Number(Number::Small(y))),
+                            ) => *x <= *y,
+                            (
+                                Some(Value::Number(Number::Real(Real::F64(x)))),
+                                Some(Value::Number(Number::Real(Real::F64(y)))),
+                            ) => *x <= *y,
+                            _ => {
+                                let va = frame.slots.get(a as usize).cloned().unwrap_or(Value::Nil);
+                                let vb = frame.slots.get(b as usize).cloned().unwrap_or(Value::Nil);
+                                match self.eval_compare(AstBinOp::Le, va, vb)? {
+                                    Value::Bool(b) => b,
+                                    _ => {
+                                        let span = frame_span(frame);
+                                        return Err(crate::error::attach_span(
+                                            crate::error::RuntimeError::Message(
+                                                "condition must be a boolean".into(),
+                                            ),
+                                            span,
+                                        ));
+                                    }
                                 }
-                            },
+                            }
                         };
                         if !cont {
                             frame.ip = jump_target(frame.ip, off);
@@ -686,6 +710,406 @@ impl Evaluator {
                             }
                         }
                     }
+                    // ————— register-form local ops (locals as registers) —————
+                    // Each op matches slot references directly on the `Small`/`F64` fast paths, so
+                    // no operand `Value` is cloned; only the uncommon shapes clone/fall back.
+                    Op::RegMove { dst, a } => {
+                        let v = frame.slots.get(a as usize).cloned().unwrap_or(Value::Nil);
+                        if let Some(s) = frame.slots.get_mut(dst as usize) {
+                            *s = v;
+                        }
+                    }
+                    Op::RegNeg { dst, a } => {
+                        let r = match frame.slots.get(a as usize) {
+                            Some(Value::Number(Number::Small(x))) => {
+                                Value::Number(Number::Small(-x))
+                            }
+                            Some(Value::Number(Number::Real(Real::F64(x)))) => {
+                                Value::Number(Number::Real(Real::F64(-x)))
+                            }
+                            Some(Value::Number(n)) => Value::Number(-n.clone()),
+                            _ => {
+                                let span = frame_span(frame);
+                                let v = frame.slots.get(a as usize).cloned().unwrap_or(Value::Nil);
+                                super::helpers::vm_neg(self, v)
+                                    .map_err(|e| crate::error::attach_span(e, span))?
+                            }
+                        };
+                        if let Some(s) = frame.slots.get_mut(dst as usize) {
+                            *s = r;
+                        }
+                    }
+                    Op::RegToF64 { dst, a } => {
+                        // The fast path is only valid while `to_f64` still resolves to the core
+                        // builtin (a user shadow re-resolves, matching the AST interpreter).
+                        let is_builtin = to_f64_builtin(&mut vm.to_f64_builtin, env);
+                        let r = if is_builtin {
+                            match frame.slots.get(a as usize) {
+                                // Collapse fast path (spec §9.2): a numeric local converts directly.
+                                Some(Value::Number(Number::Small(x))) => {
+                                    Value::Number(Number::Real(Real::F64(*x as f64)))
+                                }
+                                Some(Value::Number(Number::Real(Real::F64(x)))) => {
+                                    Value::Number(Number::Real(Real::F64(*x)))
+                                }
+                                Some(Value::Number(Number::Real(Real::F32(x)))) => {
+                                    Value::Number(Number::Real(Real::F64(*x as f64)))
+                                }
+                                Some(Value::Number(n)) if !n.is_complex() => {
+                                    Value::Number(Number::Real(Real::F64(n.to_f64_lossy())))
+                                }
+                                // Arrays broadcast, strings parse, … keep the authoritative path.
+                                _ => {
+                                    let span = frame_span(frame);
+                                    let v =
+                                        frame.slots.get(a as usize).cloned().unwrap_or(Value::Nil);
+                                    self.dispatch_builtin(Builtin::Collapse("to_f64"), vec![v])
+                                        .map_err(|e| crate::error::attach_span(e, span))?
+                                }
+                            }
+                        } else {
+                            let span = frame_span(frame);
+                            let arg = frame.slots.get(a as usize).cloned().unwrap_or(Value::Nil);
+                            match env.borrow().get_func("to_f64") {
+                                Some(f) => self
+                                    .apply_function(&f, vec![arg])
+                                    .map_err(|e| crate::error::attach_span(e, span))?,
+                                None => {
+                                    return Err(crate::error::attach_span(
+                                        RuntimeError::Message("unknown function `to_f64`".into()),
+                                        span,
+                                    ));
+                                }
+                            }
+                        };
+                        if let Some(s) = frame.slots.get_mut(dst as usize) {
+                            *s = r;
+                        }
+                    }
+                    Op::RegBin { op, dst, a, b } => {
+                        let r = match (frame.slots.get(a as usize), frame.slots.get(b as usize)) {
+                            (
+                                Some(Value::Number(Number::Small(x))),
+                                Some(Value::Number(Number::Small(y))),
+                            ) => {
+                                let (x, y) = (*x, *y);
+                                let narrowed = match op {
+                                    ArithOp::Add => x.checked_add(y).map(Number::Small),
+                                    ArithOp::Sub => x.checked_sub(y).map(Number::Small),
+                                    ArithOp::Mul => x.checked_mul(y).map(Number::Small),
+                                    ArithOp::Rem => {
+                                        if y != 0 {
+                                            x.checked_rem(y).map(Number::Small)
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    ArithOp::Div => None,
+                                };
+                                match narrowed {
+                                    Some(n) => Value::Number(n),
+                                    None => {
+                                        let span = frame_span(frame);
+                                        self.reg_arith(
+                                            op,
+                                            Value::Number(Number::Small(x)),
+                                            Value::Number(Number::Small(y)),
+                                            span,
+                                        )?
+                                    }
+                                }
+                            }
+                            (
+                                Some(Value::Number(Number::Real(Real::F64(x)))),
+                                Some(Value::Number(Number::Real(Real::F64(y)))),
+                            ) => {
+                                let (x, y) = (*x, *y);
+                                let z = match op {
+                                    ArithOp::Add => x + y,
+                                    ArithOp::Sub => x - y,
+                                    ArithOp::Mul => x * y,
+                                    ArithOp::Div => x / y,
+                                    ArithOp::Rem => x % y,
+                                };
+                                Value::Number(Number::Real(Real::F64(z)))
+                            }
+                            _ => {
+                                let span = frame_span(frame);
+                                let va = frame.slots.get(a as usize).cloned().unwrap_or(Value::Nil);
+                                let vb = frame.slots.get(b as usize).cloned().unwrap_or(Value::Nil);
+                                self.reg_arith(op, va, vb, span)?
+                            }
+                        };
+                        if let Some(s) = frame.slots.get_mut(dst as usize) {
+                            *s = r;
+                        }
+                    }
+                    Op::RegBinImm { op, dst, a, imm } => {
+                        let r = match (frame.slots.get(a as usize), imm) {
+                            (Some(Value::Number(Number::Small(x))), Imm::Int(y)) => {
+                                let (x, y) = (*x, y);
+                                let narrowed = match op {
+                                    ArithOp::Add => x.checked_add(y).map(Number::Small),
+                                    ArithOp::Sub => x.checked_sub(y).map(Number::Small),
+                                    ArithOp::Mul => x.checked_mul(y).map(Number::Small),
+                                    ArithOp::Rem => {
+                                        if y != 0 {
+                                            x.checked_rem(y).map(Number::Small)
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    ArithOp::Div => None,
+                                };
+                                match narrowed {
+                                    Some(n) => Value::Number(n),
+                                    None => {
+                                        let span = frame_span(frame);
+                                        self.reg_arith(
+                                            op,
+                                            Value::Number(Number::Small(x)),
+                                            imm.to_value(),
+                                            span,
+                                        )?
+                                    }
+                                }
+                            }
+                            (Some(Value::Number(Number::Real(Real::F64(x)))), Imm::Float(bits)) => {
+                                let (x, y) = (*x, f64::from_bits(bits));
+                                let z = match op {
+                                    ArithOp::Add => x + y,
+                                    ArithOp::Sub => x - y,
+                                    ArithOp::Mul => x * y,
+                                    ArithOp::Div => x / y,
+                                    ArithOp::Rem => x % y,
+                                };
+                                Value::Number(Number::Real(Real::F64(z)))
+                            }
+                            _ => {
+                                let span = frame_span(frame);
+                                let va = frame.slots.get(a as usize).cloned().unwrap_or(Value::Nil);
+                                self.reg_arith(op, va, imm.to_value(), span)?
+                            }
+                        };
+                        if let Some(s) = frame.slots.get_mut(dst as usize) {
+                            *s = r;
+                        }
+                    }
+                    Op::RegMulAdd { dst, a, b } => {
+                        let r = match (
+                            frame.slots.get(dst as usize),
+                            frame.slots.get(a as usize),
+                            frame.slots.get(b as usize),
+                        ) {
+                            (
+                                Some(Value::Number(Number::Small(s))),
+                                Some(Value::Number(Number::Small(x))),
+                                Some(Value::Number(Number::Small(y))),
+                            ) => {
+                                let (s, x, y) = (*s, *x, *y);
+                                match x.checked_mul(y).and_then(|p| s.checked_add(p)) {
+                                    Some(v) => Value::Number(Number::Small(v)),
+                                    None => {
+                                        let span = frame_span(frame);
+                                        self.reg_mul_add(
+                                            Value::Number(Number::Small(s)),
+                                            Value::Number(Number::Small(x)),
+                                            Value::Number(Number::Small(y)),
+                                            span,
+                                        )?
+                                    }
+                                }
+                            }
+                            (
+                                Some(Value::Number(Number::Real(Real::F64(s)))),
+                                Some(Value::Number(Number::Real(Real::F64(x)))),
+                                Some(Value::Number(Number::Real(Real::F64(y)))),
+                            ) => Value::Number(Number::Real(Real::F64(*s + *x * *y))),
+                            _ => {
+                                let span = frame_span(frame);
+                                let acc =
+                                    frame.slots.get(dst as usize).cloned().unwrap_or(Value::Nil);
+                                let va = frame.slots.get(a as usize).cloned().unwrap_or(Value::Nil);
+                                let vb = frame.slots.get(b as usize).cloned().unwrap_or(Value::Nil);
+                                self.reg_mul_add(acc, va, vb, span)?
+                            }
+                        };
+                        if let Some(s) = frame.slots.get_mut(dst as usize) {
+                            *s = r;
+                        }
+                    }
+                    Op::RegIndex { dst, arr, idx } => {
+                        let v = reg_index_read(self, frame, arr, idx)?;
+                        if let Some(s) = frame.slots.get_mut(dst as usize) {
+                            *s = v;
+                        }
+                    }
+                    Op::RegIndexPush { arr, idx } => {
+                        let v = reg_index_read(self, frame, arr, idx)?;
+                        vm.stack.push(v);
+                    }
+                    // Void register pushes: emitted only for the statement form `local.push(arg)`,
+                    // so no result is left on the operand stack (an expression-position `push`
+                    // stays on the stack `MethodLocal` path, which yields `Nil`).
+                    Op::RegPush { arr, src } => {
+                        let v = frame.slots.get(src as usize).cloned().unwrap_or(Value::Nil);
+                        match frame.slots.get_mut(arr as usize) {
+                            Some(Value::Array(a)) => a.with_mut(|items| items.push(v)),
+                            _ => return Err(vm_limit("`push` receiver must be an array binding")),
+                        }
+                    }
+                    Op::RegPushImm { arr, imm } => {
+                        let v = imm.to_value();
+                        match frame.slots.get_mut(arr as usize) {
+                            Some(Value::Array(a)) => a.with_mut(|items| items.push(v)),
+                            _ => return Err(vm_limit("`push` receiver must be an array binding")),
+                        }
+                    }
+                    Op::RegFill { arr, lo, hi, imm } => {
+                        // Bulk extend for the fill idiom (spec §14). Bounds are integers (checked
+                        // below); a non-integer bound falls back to the AST interpreter.
+                        let span = frame_span(frame);
+                        let lo_i = match frame.slots.get(lo as usize) {
+                            Some(Value::Number(n)) => n.as_i64(),
+                            _ => None,
+                        };
+                        let hi_i = match frame.slots.get(hi as usize) {
+                            Some(Value::Number(n)) => n.as_i64(),
+                            _ => None,
+                        };
+                        let (Some(lo_i), Some(hi_i)) = (lo_i, hi_i) else {
+                            return Err(crate::error::attach_span(
+                                vm_limit("fill loop bounds must be integers"),
+                                span,
+                            ));
+                        };
+                        let count = if hi_i > lo_i {
+                            hi_i as i128 - lo_i as i128
+                        } else {
+                            0
+                        };
+                        if count > crate::eval::MAX_RANGE_ELEMS {
+                            return Err(crate::error::attach_span(
+                                RuntimeError::Message(format!(
+                                    "fill materializes {count} elements, exceeding the {} element limit",
+                                    crate::eval::MAX_RANGE_ELEMS
+                                )),
+                                span,
+                            ));
+                        }
+                        let v = imm.to_value();
+                        match frame.slots.get_mut(arr as usize) {
+                            Some(Value::Array(a)) => a.with_mut(|items| {
+                                items.extend(std::iter::repeat_n(v, count as usize))
+                            }),
+                            _ => return Err(vm_limit("fill target must be an array binding")),
+                        }
+                    }
+                    Op::RegIndexStore { arr, idx, src } => {
+                        let v = frame.slots.get(src as usize).cloned().unwrap_or(Value::Nil);
+                        if let Some(Value::Number(Number::Small(i))) = frame.slots.get(idx as usize)
+                        {
+                            let i = *i;
+                            reg_index_store_small(self, frame, arr, i, v)?;
+                        } else {
+                            reg_index_store(self, frame, arr, idx, v)?;
+                        }
+                    }
+                    Op::RegIndexStoreImm { arr, idx, imm } => {
+                        if let Some(Value::Number(Number::Small(i))) = frame.slots.get(idx as usize)
+                        {
+                            let i = *i;
+                            reg_index_store_small(self, frame, arr, i, imm.to_value())?;
+                        } else {
+                            reg_index_store(self, frame, arr, idx, imm.to_value())?;
+                        }
+                    }
+                    Op::BranchLocalCmpSum { le, a, b, imm, off } => {
+                        // Fused `slots[a] <[=] slots[b] + imm`: `Small`/`Small` computes inline;
+                        // any other shape falls back to the general add + compare.
+                        let fast = match (frame.slots.get(a as usize), frame.slots.get(b as usize))
+                        {
+                            (
+                                Some(Value::Number(Number::Small(x))),
+                                Some(Value::Number(Number::Small(y))),
+                            ) => y
+                                .checked_add(imm)
+                                .map(|rhs| if le { *x <= rhs } else { *x < rhs }),
+                            _ => None,
+                        };
+                        let cont = match fast {
+                            Some(c) => c,
+                            None => {
+                                let span = frame_span(frame);
+                                let va = frame.slots.get(a as usize).cloned().unwrap_or(Value::Nil);
+                                let vb = frame.slots.get(b as usize).cloned().unwrap_or(Value::Nil);
+                                let rhs = self.reg_arith(
+                                    ArithOp::Add,
+                                    vb,
+                                    Imm::Int(imm).to_value(),
+                                    span,
+                                )?;
+                                match self.eval_compare(
+                                    if le { AstBinOp::Le } else { AstBinOp::Lt },
+                                    va,
+                                    rhs,
+                                )? {
+                                    Value::Bool(b) => b,
+                                    _ => {
+                                        return Err(crate::error::attach_span(
+                                            crate::error::RuntimeError::Message(
+                                                "condition must be a boolean".into(),
+                                            ),
+                                            span,
+                                        ));
+                                    }
+                                }
+                            }
+                        };
+                        if !cont {
+                            frame.ip = jump_target(frame.ip, off);
+                        }
+                    }
+                    Op::RegIndexBranchFalse { arr, idx, off } => {
+                        // `if slots[arr][slots[idx]]`: read the element and jump when false; a
+                        // non-boolean element is the usual condition error (spec §12.1). The
+                        // array+`Small`-index case reads the bool without cloning the element.
+                        let fast =
+                            match (frame.slots.get(arr as usize), frame.slots.get(idx as usize)) {
+                                (Some(Value::Array(a)), Some(Value::Number(Number::Small(i)))) => {
+                                    let i = *i;
+                                    let len = a.len();
+                                    resolve_small_index(len, i).map(|r| {
+                                        a.with(|items| match items.get(r) {
+                                            Some(Value::Bool(b)) => Ok(*b),
+                                            _ => Err(()),
+                                        })
+                                    })
+                                }
+                                _ => None,
+                            };
+                        let cont = match fast {
+                            Some(Ok(b)) => b,
+                            Some(Err(())) => {
+                                return Err(crate::error::attach_span(
+                                    RuntimeError::Message("condition must be a boolean".into()),
+                                    frame_span(frame),
+                                ));
+                            }
+                            None => match reg_index_read(self, frame, arr, idx)? {
+                                Value::Bool(b) => b,
+                                _ => {
+                                    return Err(crate::error::attach_span(
+                                        RuntimeError::Message("condition must be a boolean".into()),
+                                        frame_span(frame),
+                                    ));
+                                }
+                            },
+                        };
+                        if !cont {
+                            frame.ip = jump_target(frame.ip, off);
+                        }
+                    }
                     other => {
                         self.step_vm(&mut vm, other, env)?;
                         if vm.frames.is_empty() {
@@ -696,9 +1120,194 @@ impl Evaluator {
                 }
             }
         }
-        Ok(vm.stack.pop().unwrap_or(Value::Nil))
+        let result = vm.stack.pop().unwrap_or(Value::Nil);
+        self.vm_frames_pool.push(vm.frames);
+        self.vm_stack_pool.push(vm.stack);
+        Ok(result)
     }
 }
+/// Array+`Small` index read for the register-form index ops (spec §11.3): negative-index
+/// normalization and the out-of-range diagnostic mirror the stack `Index` fast path, and the
+/// receiver handle is never cloned. Every other base/index shape delegates to `vm_index`.
+#[inline]
+fn reg_index_read(
+    ev: &mut Evaluator,
+    frame: &Frame,
+    arr: u16,
+    idx: u16,
+) -> Result<Value, RuntimeError> {
+    if let (Some(Value::Array(a)), Some(Value::Number(Number::Small(i)))) =
+        (frame.slots.get(arr as usize), frame.slots.get(idx as usize))
+    {
+        let i = *i;
+        let len = a.len();
+        return match resolve_small_index(len, i).and_then(|r| a.get(r)) {
+            Some(v) => Ok(v),
+            None => Err(crate::error::attach_span(
+                RuntimeError::IndexOutOfBounds(format!("index {i} (length {len})")),
+                frame_span(frame),
+            )),
+        };
+    }
+    let base = frame.slots.get(arr as usize).cloned().unwrap_or(Value::Nil);
+    let index = frame.slots.get(idx as usize).cloned().unwrap_or(Value::Nil);
+    super::helpers::vm_index(ev, base, index)
+        .map_err(|e| crate::error::attach_span(e, frame_span(frame)))
+}
+
+/// Fast array index store for the register-form ops (spec §11.3): the array+`Small`-index case
+/// normalizes and writes in place (copy-on-write when the handle is aliased); every other shape
+/// delegates to `vm_index_store`; a non-array receiver is a VM capability limit (AST fallback).
+#[inline]
+fn reg_index_store(
+    ev: &mut Evaluator,
+    frame: &mut Frame,
+    arr: u16,
+    idx: u16,
+    value: Value,
+) -> Result<(), RuntimeError> {
+    let span = frame_span(frame);
+    let index = frame.slots.get(idx as usize).cloned().unwrap_or(Value::Nil);
+    match (frame.slots.get_mut(arr as usize), index) {
+        (Some(Value::Array(a)), Value::Number(Number::Small(i))) => {
+            let len = a.len();
+            match resolve_small_index(len, i) {
+                Some(r) => {
+                    a.with_mut(|items| items[r] = value);
+                    Ok(())
+                }
+                None => Err(crate::error::attach_span(
+                    RuntimeError::IndexOutOfBounds(format!("index {i} (length {len})")),
+                    span,
+                )),
+            }
+        }
+        (Some(slot @ Value::Array(_)), index) => {
+            super::helpers::vm_index_store(ev, slot, index, value)
+                .map_err(|e| crate::error::attach_span(e, span))
+        }
+        _ => Err(vm_limit("index assignment requires an array binding")),
+    }
+}
+
+/// Array store with an already-extracted small integer index: avoids cloning the index `Value`
+/// (the common `A[j] = v` shape, spec §11.3).
+#[inline]
+fn reg_index_store_small(
+    ev: &mut Evaluator,
+    frame: &mut Frame,
+    arr: u16,
+    i: i64,
+    value: Value,
+) -> Result<(), RuntimeError> {
+    let span = frame_span(frame);
+    match frame.slots.get_mut(arr as usize) {
+        Some(Value::Array(a)) => {
+            let len = a.len();
+            match resolve_small_index(len, i) {
+                Some(r) => {
+                    a.with_mut(|items| items[r] = value);
+                    Ok(())
+                }
+                None => Err(crate::error::attach_span(
+                    RuntimeError::IndexOutOfBounds(format!("index {i} (length {len})")),
+                    span,
+                )),
+            }
+        }
+        // A `Dict` binding (or any other mutable indexed value) keeps the general path.
+        Some(other) => {
+            super::helpers::vm_index_store(ev, other, Value::Number(Number::Small(i)), value)
+                .map_err(|e| crate::error::attach_span(e, span))
+        }
+        None => Err(vm_limit("invalid local slot")),
+    }
+}
+
+/// Splice `rhs` into `target[lo..hi]` (spec §11.3): a `Nil` bound means omitted (0 / length); the
+/// array is mutated in place (copy-on-write when its handle is aliased). Mirrors the AST's
+/// `slice_bounds` clamping.
+fn slice_store_value(
+    target: &mut Value,
+    lo: Value,
+    hi: Value,
+    rhs: Value,
+) -> Result<(), RuntimeError> {
+    let Value::Array(a) = target else {
+        return Err(vm_limit("slice assignment requires an array binding"));
+    };
+    let len = a.len();
+    let len_i = len as i64;
+    let bound = |v: &Value, default: i64| -> Result<i64, RuntimeError> {
+        match v {
+            Value::Nil => Ok(default),
+            Value::Number(n) => n
+                .as_i64()
+                .ok_or_else(|| RuntimeError::Message("slice bound must be an integer".into())),
+            _ => Err(RuntimeError::Message(
+                "slice bound must be an integer".into(),
+            )),
+        }
+    };
+    let raw_lo = bound(&lo, 0)?;
+    let raw_hi = bound(&hi, len_i)?;
+    let lo = if raw_lo < 0 {
+        (len_i + raw_lo).max(0)
+    } else {
+        raw_lo.min(len_i)
+    };
+    let hi = if raw_hi < 0 {
+        (len_i + raw_hi).max(0)
+    } else {
+        raw_hi.min(len_i)
+    };
+    if lo > hi {
+        return Err(RuntimeError::Message(format!(
+            "invalid slice range {lo}..{hi} (length {len})"
+        )));
+    }
+    let Value::Array(rhs) = rhs else {
+        return Err(RuntimeError::Message(
+            "slice assignment right-hand side must be an array".into(),
+        ));
+    };
+    let items = rhs.to_vec();
+    a.with_mut(|buf| {
+        buf.splice(lo as usize..hi as usize, items);
+    });
+    Ok(())
+}
+
+/// Normalize a small integer index into `[0, len)`, or `None` when out of range (spec §11.3
+/// negative-index normalization).
+#[inline]
+fn resolve_small_index(len: usize, i: i64) -> Option<usize> {
+    let r = if i < 0 {
+        len.checked_sub(i.unsigned_abs() as usize)
+    } else {
+        usize::try_from(i).ok()
+    };
+    r.filter(|&r| r < len)
+}
+
+/// Whether `to_f64` currently resolves to the core builtin, cached against the process-wide
+/// function-definition epoch: a user `fn to_f64` shadows the builtin, so the register fast path
+/// must fall back to calling the user's function (spec §19.5).
+fn to_f64_builtin(cache: &mut Option<(u64, bool)>, env: &EnvRef) -> bool {
+    let epoch = crate::eval::func_epoch();
+    if let Some((e, v)) = *cache
+        && e == epoch
+    {
+        return v;
+    }
+    let is_builtin = matches!(
+        env.borrow().get_func("to_f64").as_deref(),
+        Some(Function::Builtin(Builtin::Collapse("to_f64")))
+    );
+    *cache = Some((epoch, is_builtin));
+    is_builtin
+}
+
 /// Current instruction's source span for diagnostics, read from the frame directly (usable while
 /// the frame is mutably borrowed by the dispatch loop).
 fn frame_span(f: &Frame) -> prima_syntax::Span {
@@ -980,7 +1589,7 @@ impl Evaluator {
                     // Small i64 fast paths and exact overflow handling live inside `Number`);
                     // division keeps the `fraction` policy semantics.
                     (Value::Number(x), Value::Number(y)) => self
-                        .vm_number_binary(op, x, y)
+                        .vm_number_binary(arith_of(&op), x, y)
                         .map_err(|e| crate::error::attach_span(e, span))?,
                     // Symbolic/class/array operands keep the full `eval_binary` path: operator
                     // overloads (spec §18.5), elementwise broadcast (spec §11.4), DAG lowering,
@@ -1226,6 +1835,49 @@ impl Evaluator {
                 }
                 Ok(())
             }
+            Op::SliceStoreLocal { slot } => {
+                let rhs = pop(&mut vm.stack);
+                let hi = pop(&mut vm.stack);
+                let lo = pop(&mut vm.stack);
+                let frame = vm.frames.last_mut().expect("unreachable");
+                let Some(target) = frame.slots.get_mut(slot as usize) else {
+                    return Err(vm_limit("invalid local slot"));
+                };
+                slice_store_value(target, lo, hi, rhs)
+            }
+            Op::SliceStoreName { name } => {
+                let rhs = pop(&mut vm.stack);
+                let hi = pop(&mut vm.stack);
+                let lo = pop(&mut vm.stack);
+                let name = resolve_name(vm.active_chunk(), name)?.to_string();
+                let mut res: Option<Result<(), RuntimeError>> = None;
+                env.borrow_mut().update_value(&name, |slot| {
+                    res = Some(slice_store_value(slot, lo.clone(), hi.clone(), rhs.clone()));
+                });
+                match res {
+                    Some(r) => r,
+                    None => Err(vm_limit("slice assignment requires an array binding")),
+                }
+            }
+            // Register-form ops are executed inline by the dispatch loop (`run_vm`); reaching
+            // `step_vm` means the executor structure changed, so treat them as unsupported.
+            Op::RegMove { .. }
+            | Op::RegNeg { .. }
+            | Op::RegToF64 { .. }
+            | Op::RegBin { .. }
+            | Op::RegBinImm { .. }
+            | Op::RegMulAdd { .. }
+            | Op::RegIndex { .. }
+            | Op::RegIndexPush { .. }
+            | Op::RegPush { .. }
+            | Op::RegPushImm { .. }
+            | Op::RegIndexStore { .. }
+            | Op::RegIndexStoreImm { .. }
+            | Op::BranchLocalCmpSum { .. }
+            | Op::RegFill { .. }
+            | Op::RegIndexBranchFalse { .. } => {
+                Err(vm_limit("register op outside the dispatch loop"))
+            }
         }
     }
 
@@ -1236,16 +1888,16 @@ impl Evaluator {
     /// result to F64 (spec §13.3).
     fn vm_number_binary(
         &mut self,
-        op: Op,
+        op: ArithOp,
         x: prima_core::Number,
         y: prima_core::Number,
     ) -> Result<Value, RuntimeError> {
         use prima_core::{Number, Real};
         Ok(match op {
-            Op::Add => Value::Number(x + y),
-            Op::Sub => Value::Number(x - y),
-            Op::Mul => Value::Number(x * y),
-            Op::Div => {
+            ArithOp::Add => Value::Number(x + y),
+            ArithOp::Sub => Value::Number(x - y),
+            ArithOp::Mul => Value::Number(x * y),
+            ArithOp::Div => {
                 // Exact-layer division by zero: `0/0` is evaluated by black magic under the custom
                 // policy (spec §13.4), otherwise the numeric layer errors (spec §6.2).
                 if y.is_zero() && !matches!(y, Number::Real(_)) {
@@ -1264,9 +1916,100 @@ impl Evaluator {
                     Value::Number(Number::Real(Real::F64(r.to_f64_lossy())))
                 }
             }
-            Op::Rem => Value::Number(crate::eval::number_mod(&x, &y)?),
-            _ => unreachable!("vm_number_binary only handles the local arithmetic ops"),
+            ArithOp::Rem => Value::Number(crate::eval::number_mod(&x, &y)?),
         })
+    }
+
+    /// Register-form arithmetic (spec §6.1/§12.2): `Small`/`F64` operands use the same inline fast
+    /// paths as the stack instructions (`F64` division/remainder are already collapsed, so they
+    /// are policy-independent); the exact tower handles everything else, and non-numbers keep the
+    /// full `eval_binary` semantics (operator overloads, array concatenation, `Undefined`
+    /// strictness), with the instruction's span attached.
+    #[inline]
+    fn reg_arith(
+        &mut self,
+        op: ArithOp,
+        x: Value,
+        y: Value,
+        span: prima_syntax::Span,
+    ) -> Result<Value, RuntimeError> {
+        match (x, y) {
+            (Value::Number(Number::Small(a)), Value::Number(Number::Small(b))) => {
+                let narrowed = match op {
+                    ArithOp::Add => a.checked_add(b).map(Number::Small),
+                    ArithOp::Sub => a.checked_sub(b).map(Number::Small),
+                    ArithOp::Mul => a.checked_mul(b).map(Number::Small),
+                    // Integer remainder is exact and allocation-free; a zero divisor keeps the
+                    // exact-tower diagnostic path below. Division keeps the policy path.
+                    ArithOp::Rem => {
+                        if b != 0 {
+                            a.checked_rem(b).map(Number::Small)
+                        } else {
+                            None
+                        }
+                    }
+                    ArithOp::Div => None,
+                };
+                match narrowed {
+                    Some(n) => Ok(Value::Number(n)),
+                    None => self
+                        .vm_number_binary(op, Number::Small(a), Number::Small(b))
+                        .map_err(|e| crate::error::attach_span(e, span)),
+                }
+            }
+            (
+                Value::Number(Number::Real(Real::F64(a))),
+                Value::Number(Number::Real(Real::F64(b))),
+            ) => {
+                let r = match op {
+                    ArithOp::Add => a + b,
+                    ArithOp::Sub => a - b,
+                    ArithOp::Mul => a * b,
+                    ArithOp::Div => a / b,
+                    ArithOp::Rem => a % b,
+                };
+                Ok(Value::Number(Number::Real(Real::F64(r))))
+            }
+            (Value::Number(a), Value::Number(b)) => self
+                .vm_number_binary(op, a, b)
+                .map_err(|e| crate::error::attach_span(e, span)),
+            (a, b) => self
+                .eval_binary(arith_binop(op), a, b)
+                .map_err(|e| crate::error::attach_span(e, span)),
+        }
+    }
+
+    /// Fused multiply-accumulate `acc + a*b` (spec §10): `Small`/`F64` inline fast paths with the
+    /// exact-tower widening fallback.
+    fn reg_mul_add(
+        &mut self,
+        acc: Value,
+        a: Value,
+        b: Value,
+        span: prima_syntax::Span,
+    ) -> Result<Value, RuntimeError> {
+        use prima_core::{Number, Real};
+        if let (
+            Value::Number(Number::Small(s)),
+            Value::Number(Number::Small(x)),
+            Value::Number(Number::Small(y)),
+        ) = (&acc, &a, &b)
+        {
+            if let Some(p) = x.checked_mul(*y)
+                && let Some(r) = s.checked_add(p)
+            {
+                return Ok(Value::Number(Number::Small(r)));
+            }
+        } else if let (
+            Value::Number(Number::Real(Real::F64(s))),
+            Value::Number(Number::Real(Real::F64(x))),
+            Value::Number(Number::Real(Real::F64(y))),
+        ) = (&acc, &a, &b)
+        {
+            return Ok(Value::Number(Number::Real(Real::F64(s + x * y))));
+        }
+        let prod = self.reg_arith(ArithOp::Mul, a, b, span)?;
+        self.reg_arith(ArithOp::Add, acc, prod, span)
     }
 
     /// Numeric comparison fast path: promote to a common type before comparing (spec §6.4, so
@@ -1443,6 +2186,15 @@ impl Evaluator {
         b: Builtin,
         args: Vec<Value>,
     ) -> Result<(), RuntimeError> {
+        let r = self.dispatch_builtin(b, args)?;
+        vm.stack.push(r);
+        Ok(())
+    }
+
+    /// Value-producing builtin dispatch shared by `CallName` and the register `to_f64` fast path:
+    /// mirrors `apply_function`'s builtin path — pure builtins broadcast over array arguments
+    /// (`R0009`), collection builtins take their array argument whole (spec appendix B.1).
+    fn dispatch_builtin(&mut self, b: Builtin, args: Vec<Value>) -> Result<Value, RuntimeError> {
         // `derivative`/`jit`/`map`/… receive *un-evaluated* argument expressions in `eval_call`
         // (spec §19.4, appendix B.1); the VM has already evaluated its arguments, so these fall
         // back to the AST interpreter.
@@ -1469,20 +2221,18 @@ impl Evaluator {
                 .map(|(i, _)| i)
                 .collect()
         };
-        let r = if !positions.is_empty() && b.is_pure() {
+        if !positions.is_empty() && b.is_pure() {
             if self.current_config().broadcast {
                 let f = Function::Builtin(b);
-                self.broadcast_call(&f, args, &positions)?
+                self.broadcast_call(&f, args, &positions)
             } else {
-                return Err(crate::error::RuntimeError::Message(
+                Err(crate::error::RuntimeError::Message(
                     "implicit broadcast is disabled (`broadcast := false`); use `@.`".into(),
-                ));
+                ))
             }
         } else {
-            self.call_builtin(b, args)?
-        };
-        vm.stack.push(r);
-        Ok(())
+            self.call_builtin(b, args)
+        }
     }
 
     /// Apply a function *value* directly (for compiled `Call` sites that put a closure/function on
@@ -1534,6 +2284,29 @@ fn binop(op: &Op) -> AstBinOp {
     }
 }
 
+/// The `ArithOp` for a stack arithmetic instruction (`Op::Add`…`Op::Rem`).
+fn arith_of(op: &Op) -> ArithOp {
+    match op {
+        Op::Add => ArithOp::Add,
+        Op::Sub => ArithOp::Sub,
+        Op::Mul => ArithOp::Mul,
+        Op::Div => ArithOp::Div,
+        Op::Rem => ArithOp::Rem,
+        _ => unreachable!("arith_of called on a non-arithmetic op"),
+    }
+}
+
+/// The AST binary operator for a register arithmetic op (the `eval_binary` fallback path).
+fn arith_binop(op: ArithOp) -> AstBinOp {
+    match op {
+        ArithOp::Add => AstBinOp::Add,
+        ArithOp::Sub => AstBinOp::Sub,
+        ArithOp::Mul => AstBinOp::Mul,
+        ArithOp::Div => AstBinOp::Div,
+        ArithOp::Rem => AstBinOp::Mod,
+    }
+}
+
 fn cmp_binop(op: &Op) -> AstBinOp {
     match op {
         Op::EqCmp => AstBinOp::Eq,
@@ -1574,7 +2347,7 @@ fn cache_callee(frame: &Frame, site: u16, epoch: u64, callee: Callee) {
 /// only function, dispatched under the reserved `__entry` name. Recursive self-calls inside the
 /// body resolve through the same table, so the whole program is shared across re-entrant calls.
 fn single_entry_program(chunk: Chunk) -> VmProgram {
-    let mut names = std::collections::HashMap::new();
+    let mut names = rustc_hash::FxHashMap::default();
     names.insert("__entry".to_string(), 0u32);
     VmProgram {
         root: Rc::new(Chunk::new()),

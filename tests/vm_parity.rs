@@ -115,7 +115,7 @@ fn call(kernel: &str, args: Vec<Value>, vm: bool) -> Value {
     let v = if vm {
         ev.vm_call_function(&env, "main", args)
     } else {
-        ev.call_function(&env, "main", args)
+        ev.ast_call_function(&env, "main", args)
     }
     .expect("main must run");
     drop(tmp);
@@ -214,6 +214,137 @@ fn vm_tail_recursive_accumulation_matches_ast() {
     let vm = call(kernel, vec![int(1000), int(0)], true);
     assert_eq!(ast, vm, "tail-recursive accumulation");
     assert_eq!(vm, Value::Number(Number::from(500500)));
+}
+
+/// A user `fn to_f64` shadows the core builtin: the register `to_f64` fast path must detect the
+/// shadow (via the function-definition epoch) and call the user's function, matching the AST.
+#[test]
+fn vm_shadowed_to_f64_matches_ast() {
+    let kernel = "fn to_f64(x: F64) -> F64 { x + 100.0 }\npub fn main(n: Integer) -> F64 { to_f64(to_f64(to_f64(n))) }\n";
+    let ast = call(kernel, vec![int(1)], false);
+    let vm = call(kernel, vec![int(1)], true);
+    assert_close(&ast, &vm, "shadowed to_f64");
+    assert_eq!(vm, Value::Number(Number::from(301.0)));
+}
+
+/// `x.push(v)` used as an expression yields `Nil` (the register push fast path is statement-only,
+/// so the expression form must stay on the stack path).
+#[test]
+fn vm_push_as_expression_matches_ast() {
+    let kernel =
+        "pub fn main(n: Integer) -> Integer { let mut x = []; let _r = x.push(n); x.len() }\n";
+    let ast = call(kernel, vec![int(5)], false);
+    let vm = call(kernel, vec![int(5)], true);
+    assert_eq!(ast, vm, "push as expression");
+    assert_eq!(vm, Value::Number(Number::from(1)));
+}
+
+/// Mutating a non-local (top-level) array from inside a function: the VM mutates the environment
+/// binding in place and reads agree with the AST (spec §11.3/§12.2).
+#[test]
+fn vm_global_array_mutation_matches_ast() {
+    let kernel = "let mut g = [];\npub fn main(n: Integer) -> Integer { for i in 0..n { g.push(i * 2); } let mut s = 0; for i in 0..n { s += g[i]; } s }\n";
+    let ast = call(kernel, vec![int(20)], false);
+    let vm = call(kernel, vec![int(20)], true);
+    assert_eq!(ast, vm, "global array mutation");
+    assert_eq!(vm, Value::Number(Number::from(380)));
+}
+
+/// The fill idiom (`for … { a.push(true) }`) and the fused `if a[k]` count loop agree with the AST.
+#[test]
+fn vm_fill_and_count_idioms_match_ast() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut a = []; for k in 0..(n + 1) { a.push(true); } let mut c = 0; for k in 0..(n + 1) { if a[k] { c += 1; } } c }\n";
+    let ast = call(kernel, vec![int(500)], false);
+    let vm = call(kernel, vec![int(500)], true);
+    assert_eq!(ast, vm, "fill + count idioms");
+    assert_eq!(vm, Value::Number(Number::from(501)));
+}
+
+/// Run `main` through the default execution path (whole-function JIT → bytecode VM → AST).
+fn call_default(kernel: &str, args: Vec<Value>) -> Result<Value, prima_runtime::RuntimeError> {
+    prima_stdlib::init();
+    let mut tmp = NamedTempFile::new().expect("cannot create temp kernel");
+    tmp.write_all(kernel.as_bytes())
+        .expect("cannot write temp kernel");
+    let path = tmp.path().to_path_buf();
+    let mut ev = Evaluator::new();
+    let env = ev
+        .eval_file_keep_env(&path)
+        .expect("kernel must parse + evaluate");
+    let v = ev.call_function(&env, "main", args);
+    drop(tmp);
+    v
+}
+
+/// The whole-function JIT (default path) must agree with the AST interpreter on every kernel.
+#[test]
+fn jit_matches_ast_on_kernels() {
+    for (kernel, n) in [
+        (KERNEL_SUMSQ, 5_000),
+        (KERNEL_PI, 10_000),
+        (KERNEL_FIB, 25),
+        (KERNEL_POLY, 5_000),
+        (KERNEL_DOT, 300),
+        (KERNEL_SIEVE, 500),
+    ] {
+        let ast = call(kernel, vec![int(n)], false);
+        let jit = call_default(kernel, vec![int(n)]).expect("jit/default path");
+        assert_eq!(ast, jit, "jit vs ast (n={n})");
+    }
+}
+
+/// Exact-integer overflow in the JIT deopts to the interpreter and still yields the exact result.
+#[test]
+fn jit_deopts_on_integer_overflow() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut s = 0; let mut i = 0; while i < n { s = s + 9223372036854775807; i += 1; } s }";
+    let ast = call(kernel, vec![int(5)], false);
+    let jit = call_default(kernel, vec![int(5)]).expect("jit/default path");
+    assert_eq!(ast, jit, "overflow deopt");
+}
+
+/// Negative indices are normalized identically by the JIT and the AST.
+#[test]
+fn jit_negative_index_matches_ast() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut a = []; for i in 0..n { a.push(i * 10); } a[-1] + a[-2] }";
+    let ast = call(kernel, vec![int(4)], false);
+    let jit = call_default(kernel, vec![int(4)]).expect("jit/default path");
+    assert_eq!(ast, jit, "negative index");
+}
+
+/// Bool arrays and the modulo convention match the AST.
+#[test]
+fn jit_bool_array_and_remainder_match_ast() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut a = []; for i in 0..n { a.push(i % 3 == 0); } let mut c = 0; for i in 0..n { if a[i] { c += 1; } } c }";
+    let ast = call(kernel, vec![int(20)], false);
+    let jit = call_default(kernel, vec![int(20)]).expect("jit/default path");
+    assert_eq!(ast, jit, "bool array + remainder");
+}
+
+/// Dict index assignment (`d[k] = v`) mutates the binding in place in the VM, matching the AST.
+#[test]
+fn vm_dict_index_store_matches_ast() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut d = {}; let mut i = 0; while i < n { d[i] = i * i; i += 1; } let mut s = 0; let mut j = 0; while j < n { s += d[j]; j += 1; } s }";
+    let ast = call(kernel, vec![int(10)], false);
+    let vm = call(kernel, vec![int(10)], true);
+    assert_eq!(ast, vm, "dict index store");
+}
+
+/// Slice assignment splices in place in the VM, matching the AST.
+#[test]
+fn vm_slice_assignment_matches_ast() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut a = []; let mut i = 0; while i < n { a.push(i); i += 1; } a[1..3] = [20, 30]; let mut s = 0; let mut j = 0; while j < n { s += a[j]; j += 1; } s }";
+    let ast = call(kernel, vec![int(5)], false);
+    let vm = call(kernel, vec![int(5)], true);
+    assert_eq!(ast, vm, "slice assignment");
+    assert_eq!(vm, Value::Number(Number::from(57)));
+}
+
+/// An out-of-range array read is an error in both paths (the JIT deopts, the interpreter reports).
+#[test]
+fn jit_out_of_bounds_errors_like_ast() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut a = []; a.push(1); let mut s = 0; for i in 0..n { s += a[i]; } s }";
+    // The JIT deopts and the interpreter reports the out-of-range index.
+    assert!(call_default(kernel, vec![int(5)]).is_err(), "must error");
 }
 
 fn assert_close(a: &Value, b: &Value, what: &str) {

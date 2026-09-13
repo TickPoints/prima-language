@@ -1753,6 +1753,18 @@ error[E0011]: expected `;` to separate statements; newline statement separation 
    = help: terminate the statement with `;`
 ```
 
+**资源耗尽错误示例**（§16.4，v2.3）：解析器对表达式深度与透明嵌套（如 `((((x))))`）设有预算，超限即报编译期错误 `E0012`，而不是让递归消费方栈溢出。合法源码远低于该预算。
+
+```text
+error[E0012]: expression nesting is too deep
+  --> src/main.pra:1:1
+   |
+ 1 | ((((((...)))))
+   | ^ expression nesting exceeds the parser's depth budget
+   |
+   = help: flatten the expression or bind intermediate results to variables
+```
+
 **方法调用错误的文档 note（v2.2）**：当**方法调用**（`obj.method(...)`）失败时——无论失败原因是编译期（未知方法、参数个数/类型不符）还是运行时（方法内抛错）——诊断必须在 note 中附带**该方法的相关定义与文档注释**（§4.1）：
 
 - **方法定义**：完整签名（含参数类型与返回类型）与定义位置（`file:line:col`）。
@@ -2995,6 +3007,7 @@ mem::Arc::new(x), mem::Arc::strong_count(x)
  `E0001` | `lex_error` | 词法错误（非法字符/未闭合字面量） |
  `E0010` | `syntax_error` | 语法错误（含已移除语法的提示，如 `try/catch`、v2.3 起已移除的 `\|>` 管道） |
  `E0011` | `expected_separator` | 期望 `;` 语句分隔符（自 v2.3 起生效：换行分隔已移除，语句必须以 `;` 结尾，§4.2） |
+ `E0012` | `expression_nesting_too_deep` | 表达式/括号嵌套超过解析器深度预算（§16.4） |
  `E0020` | `config_position` | `config {}` 未位于文件顶部 |
  `E0021` | `polluting_config` | 污染性策略声明在非入口文件 |
  `E0022` | `unknown_config` | 未知策略键 |

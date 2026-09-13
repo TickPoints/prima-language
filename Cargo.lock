@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "prima-core"
-version = "0.4.0"
+version = "0.4.1-alpha"
 dependencies = [
  "dashmap",
  "num-bigint",
@@ -1110,7 +1110,7 @@ dependencies = [
 
 [[package]]
 name = "prima-jit"
-version = "0.4.0"
+version = "0.4.1-alpha"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -1123,7 +1123,7 @@ dependencies = [
 
 [[package]]
 name = "prima-language"
-version = "0.4.0"
+version = "0.4.1-alpha"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1146,7 +1146,7 @@ dependencies = [
 
 [[package]]
 name = "prima-runtime"
-version = "0.4.0"
+version = "0.4.1-alpha"
 dependencies = [
  "num-bigint",
  "num-integer",
@@ -1155,13 +1155,14 @@ dependencies = [
  "prima-jit",
  "prima-syntax",
  "rayon",
+ "rustc-hash",
  "thiserror",
  "wide 1.7.0",
 ]
 
 [[package]]
 name = "prima-stdlib"
-version = "0.4.0"
+version = "0.4.1-alpha"
 dependencies = [
  "nalgebra",
  "num-bigint",
@@ -1173,7 +1174,7 @@ dependencies = [
 
 [[package]]
 name = "prima-syntax"
-version = "0.4.0"
+version = "0.4.1-alpha"
 dependencies = [
  "thiserror",
  "unicode-ident",

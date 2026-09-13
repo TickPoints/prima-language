@@ -25,7 +25,15 @@ use super::helpers::{DEFAULT_CONFIG, syntax_errors};
 use super::{Env, EnvRef, Evaluator, Flow, Function, HotState, NamespaceItem};
 
 impl Evaluator {
+    /// Register the process-wide JIT hooks (idempotent): JIT loop back-edges poll the same
+    /// cancellation flag as the interpreter (spec §16).
+    fn register_jit_hooks() {
+        static ONCE: OnceLock<()> = OnceLock::new();
+        ONCE.get_or_init(|| prima_jit::rt::set_cancel_check(Self::is_cancelled));
+    }
+
     pub fn new() -> Evaluator {
+        Self::register_jit_hooks();
         Evaluator {
             pool: ExprPool::global(),
             symbols: SymbolTable::global(),
@@ -41,10 +49,13 @@ impl Evaluator {
             self_stack: Vec::new(),
             self_values: Vec::new(),
             current_module: String::new(),
+            vm_frames_pool: Vec::new(),
+            vm_stack_pool: Vec::new(),
         }
     }
 
     pub fn with_sink(output: impl FnMut(String) + 'static) -> Evaluator {
+        Self::register_jit_hooks();
         Evaluator {
             pool: ExprPool::global(),
             symbols: SymbolTable::global(),
@@ -60,6 +71,8 @@ impl Evaluator {
             self_stack: Vec::new(),
             self_values: Vec::new(),
             current_module: String::new(),
+            vm_frames_pool: Vec::new(),
+            vm_stack_pool: Vec::new(),
         }
     }
 
@@ -258,6 +271,31 @@ impl Evaluator {
         self.apply_function(&func, args)
     }
 
+    /// Invoke a host `fn` by name through the AST interpreter only, bypassing the bytecode VM even
+    /// when the `vm` config gate is on. Symmetric with [`Self::vm_call_function`]: callers
+    /// (benchmarks, differential testing) use it to measure the authoritative AST path explicitly.
+    /// Non-host functions have no VM fast path, so they delegate to `apply_function`.
+    pub fn ast_call_function(
+        &mut self,
+        env: &EnvRef,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let func = env
+            .borrow()
+            .get_func(name)
+            .ok_or_else(|| RuntimeError::Message(format!("unknown function `{name}`")))?;
+        match func.as_ref() {
+            Function::Host {
+                params,
+                body,
+                env: f_env,
+                ..
+            } => self.apply_host(params, body, f_env, args),
+            _ => self.apply_function(&func, args),
+        }
+    }
+
     /// Invoke a `fn` by name through the bytecode VM (spec §19.5), bypassing the `vm` config gate so
     /// callers (benchmarks, C-ABI) can opt into the VM explicitly. Falls back to the AST interpreter
     /// when the body is outside the compiled subset.
@@ -391,6 +429,7 @@ impl Evaluator {
                         body: body.clone(),
                         env: Rc::clone(env),
                         vm: Rc::new(OnceLock::new()),
+                        jit: Rc::new(OnceLock::new()),
                     }
                 };
                 env.borrow_mut().set_func(&name.value, f.clone());
@@ -568,6 +607,25 @@ impl Evaluator {
             self.bind_host_imports(&env, &program.imports)?;
         }
         let r = self.eval_value_in(&env, &program);
+        self.reset_config();
+        r
+    }
+
+    /// Evaluate `src` against an existing environment and return the last expression's value
+    /// (spec §20, REPL support). Unlike [`Self::eval_value`] — which allocates a fresh `Env` and
+    /// therefore cannot carry bindings across calls — variables/functions bound here persist in
+    /// `env` for subsequent entries. Host imports are bound into `env` as needed.
+    pub fn eval_value_keep_env(&mut self, env: &EnvRef, src: &str) -> Result<Value, RuntimeError> {
+        let (program, errors, warnings) = prima_syntax::parse_checked(src);
+        if !errors.is_empty() {
+            return Err(syntax_errors(errors));
+        }
+        self.warnings = warnings;
+        self.reset_config();
+        if !program.imports.is_empty() {
+            self.bind_host_imports(env, &program.imports)?;
+        }
+        let r = self.eval_value_in(env, &program);
         self.reset_config();
         r
     }

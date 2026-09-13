@@ -9,7 +9,12 @@
 pub mod bytecode;
 pub mod compiler;
 pub mod engine;
+pub mod func;
+pub mod ir;
+pub mod rt;
 
 pub use bytecode::{Bytecode, Op};
 pub use compiler::{compile_scalar, dag_to_bytecode};
-pub use engine::{CompiledScalar, compile_bytecode};
+pub use engine::{CompiledFunction, CompiledScalar, JitContext, JitEntry, compile_bytecode};
+pub use func::compile_ir;
+pub use ir::{CmpOp, ElemType, FloatOp, IntOp, IrFunction, IrOp, ScalarType, SlotType};
