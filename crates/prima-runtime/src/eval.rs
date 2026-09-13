@@ -35,7 +35,7 @@ mod helpers;
 mod pattern;
 mod stmt;
 pub use helpers::value_type_name;
-pub(crate) use helpers::{expr_is_side_effect_free, number_mod};
+pub(crate) use helpers::{MAX_RANGE_ELEMS, expr_is_side_effect_free, number_mod};
 pub(crate) use helpers::{is_mutating_array_method, stmt_span, syntax_err};
 
 use env::BuiltinBackend;
