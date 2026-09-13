@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1-alpha] - 2026-09-13
+
 ### Performance
 
 This round adds whole-function native compilation (`opt_level >= O2`), and the cross-language
