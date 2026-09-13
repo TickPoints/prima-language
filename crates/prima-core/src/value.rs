@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use num_bigint::BigInt;
 use num_rational::BigRational;
@@ -14,58 +14,56 @@ use crate::number::{Number, Real};
 /// `Value::Array` holds this handle instead of an owned `Vec<Value>`, so cloning an array value is
 /// O(1) (an `Arc` bump) and the three hot mutation paths — `A[i] = v`, the mutating `Array` methods
 /// (`push`/`pop`/…), and bytecode `IndexStore` — mutate the buffer in place when it is uniquely
-/// owned. `with_mut` performs the copy-on-write: when the handle is shared the buffer is cloned
-/// first, so aliases (`let b = a; b.push(x)`) keep the old contents.
+/// owned. `with_mut` performs the copy-on-write via `Arc::make_mut`: when the handle is shared the
+/// buffer is cloned first, so aliases (`let b = a; b.push(x)`) keep the old contents.
 ///
-/// `Arc`/`RwLock` (not `Rc`/`RefCell`) keep `Value: Send + Sync`, which the parallel paths require
-/// (`parfor` snapshots and `@parallel` broadcast share array values across rayon threads, reading
-/// them through `with`).
+/// `Arc` (not `Rc`) keeps `Value: Send + Sync`, which the parallel paths require (`parfor`
+/// snapshots and `@parallel` broadcast share array values across rayon threads, reading them
+/// through `with`). Reads are lock-free — `with` just dereferences the `Arc` — which removes the
+/// per-element `RwLock` atomics from the interpreter's hot index/loop paths.
 #[derive(Clone, Default)]
-pub struct ArrayVal(Arc<RwLock<Vec<Value>>>);
+pub struct ArrayVal(Arc<Vec<Value>>);
 
 impl ArrayVal {
     /// An empty array.
     pub fn new() -> ArrayVal {
-        ArrayVal(Arc::new(RwLock::new(Vec::new())))
+        ArrayVal(Arc::new(Vec::new()))
     }
 
     /// Wrap an owned element buffer.
     pub fn from_vec(items: Vec<Value>) -> ArrayVal {
-        ArrayVal(Arc::new(RwLock::new(items)))
+        ArrayVal(Arc::new(items))
     }
 
-    /// Read-only access to the element buffer. The closure must not mutate the same array
-    /// (no `with_mut` re-entrancy) — keep the borrow window minimal.
+    /// Read-only access to the element buffer (lock-free).
+    #[inline]
     pub fn with<R>(&self, f: impl FnOnce(&[Value]) -> R) -> R {
-        let buf = self.0.read().expect("array buffer read");
-        f(&buf)
+        f(self.0.as_slice())
     }
 
     /// Mutating access with copy-on-write: a shared handle is cloned first (value semantics,
     /// spec §11.3), a unique handle mutates in place. Requires `&mut self`, so callers mutate
     /// an owned handle taken from a binding/slot (the env slot itself for in-place updates).
+    #[inline]
     pub fn with_mut<R>(&mut self, f: impl FnOnce(&mut Vec<Value>) -> R) -> R {
-        if Arc::strong_count(&self.0) > 1 {
-            let buf = self.0.read().expect("array buffer read").clone();
-            self.0 = Arc::new(RwLock::new(buf));
-        }
-        let mut buf = self.0.write().expect("array buffer write");
-        f(&mut buf)
+        f(Arc::make_mut(&mut self.0))
     }
 
     /// Number of elements.
+    #[inline]
     pub fn len(&self) -> usize {
-        self.0.read().expect("array buffer read").len()
+        self.0.len()
     }
 
     /// Whether the array is empty.
     pub fn is_empty(&self) -> bool {
-        self.0.read().expect("array buffer read").is_empty()
+        self.0.is_empty()
     }
 
     /// Clone the element at `i`, or `None` out of bounds.
+    #[inline]
     pub fn get(&self, i: usize) -> Option<Value> {
-        self.0.read().expect("array buffer read").get(i).cloned()
+        self.0.get(i).cloned()
     }
 
     /// Append an element (copy-on-write through `with_mut`).
@@ -80,7 +78,7 @@ impl ArrayVal {
 
     /// Copy the element buffer out (O(n)); prefer `with` for read-only access.
     pub fn to_vec(&self) -> Vec<Value> {
-        self.0.read().expect("array buffer read").clone()
+        (*self.0).clone()
     }
 
     /// Owned iteration (clones elements out; O(n)). Prefer `with` for read-only access.
