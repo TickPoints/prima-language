@@ -216,6 +216,50 @@ fn vm_tail_recursive_accumulation_matches_ast() {
     assert_eq!(vm, Value::Number(Number::from(500500)));
 }
 
+/// A user `fn to_f64` shadows the core builtin: the register `to_f64` fast path must detect the
+/// shadow (via the function-definition epoch) and call the user's function, matching the AST.
+#[test]
+fn vm_shadowed_to_f64_matches_ast() {
+    let kernel = "fn to_f64(x: F64) -> F64 { x + 100.0 }\npub fn main(n: Integer) -> F64 { to_f64(to_f64(to_f64(n))) }\n";
+    let ast = call(kernel, vec![int(1)], false);
+    let vm = call(kernel, vec![int(1)], true);
+    assert_close(&ast, &vm, "shadowed to_f64");
+    assert_eq!(vm, Value::Number(Number::from(301.0)));
+}
+
+/// `x.push(v)` used as an expression yields `Nil` (the register push fast path is statement-only,
+/// so the expression form must stay on the stack path).
+#[test]
+fn vm_push_as_expression_matches_ast() {
+    let kernel =
+        "pub fn main(n: Integer) -> Integer { let mut x = []; let _r = x.push(n); x.len() }\n";
+    let ast = call(kernel, vec![int(5)], false);
+    let vm = call(kernel, vec![int(5)], true);
+    assert_eq!(ast, vm, "push as expression");
+    assert_eq!(vm, Value::Number(Number::from(1)));
+}
+
+/// Mutating a non-local (top-level) array from inside a function: the VM mutates the environment
+/// binding in place and reads agree with the AST (spec §11.3/§12.2).
+#[test]
+fn vm_global_array_mutation_matches_ast() {
+    let kernel = "let mut g = [];\npub fn main(n: Integer) -> Integer { for i in 0..n { g.push(i * 2); } let mut s = 0; for i in 0..n { s += g[i]; } s }\n";
+    let ast = call(kernel, vec![int(20)], false);
+    let vm = call(kernel, vec![int(20)], true);
+    assert_eq!(ast, vm, "global array mutation");
+    assert_eq!(vm, Value::Number(Number::from(380)));
+}
+
+/// The fill idiom (`for … { a.push(true) }`) and the fused `if a[k]` count loop agree with the AST.
+#[test]
+fn vm_fill_and_count_idioms_match_ast() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut a = []; for k in 0..(n + 1) { a.push(true); } let mut c = 0; for k in 0..(n + 1) { if a[k] { c += 1; } } c }\n";
+    let ast = call(kernel, vec![int(500)], false);
+    let vm = call(kernel, vec![int(500)], true);
+    assert_eq!(ast, vm, "fill + count idioms");
+    assert_eq!(vm, Value::Number(Number::from(501)));
+}
+
 fn assert_close(a: &Value, b: &Value, what: &str) {
     let (a, b) = (to_f64(a), to_f64(b));
     let diff = (a - b).abs();
