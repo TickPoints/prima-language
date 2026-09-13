@@ -162,6 +162,35 @@ rows[1][1]"#,
 }
 
 #[test]
+fn csv_parse_stringify_roundtrip_non_ascii() {
+    // Non-ASCII scalar values must survive `csv_stringify` → `csv_parse` intact, including a field
+    // that itself needs quoting (comma, escaped quote, embedded newline).
+    let v = eval(
+        r#"import io;
+let rows = [["café", "日本語"], ["😀", "a,b\"c\nd"]];
+io::csv_parse(io::csv_stringify(rows)?)?"#,
+    );
+    assert_eq!(
+        v,
+        Value::Array(
+            vec![
+                Value::Array(
+                    vec![Value::String("café".into()), Value::String("日本語".into())].into()
+                ),
+                Value::Array(
+                    vec![
+                        Value::String("😀".into()),
+                        Value::String("a,b\"c\nd".into())
+                    ]
+                    .into()
+                ),
+            ]
+            .into()
+        )
+    );
+}
+
+#[test]
 fn csv_parse_unterminated_quote_is_err() {
     assert!(matches!(
         eval("import io;\nio::csv_parse(\"a,\\\"unterminated\\n\")"),
