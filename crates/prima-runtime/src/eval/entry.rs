@@ -572,6 +572,25 @@ impl Evaluator {
         r
     }
 
+    /// Evaluate `src` against an existing environment and return the last expression's value
+    /// (spec §20, REPL support). Unlike [`Self::eval_value`] — which allocates a fresh `Env` and
+    /// therefore cannot carry bindings across calls — variables/functions bound here persist in
+    /// `env` for subsequent entries. Host imports are bound into `env` as needed.
+    pub fn eval_value_keep_env(&mut self, env: &EnvRef, src: &str) -> Result<Value, RuntimeError> {
+        let (program, errors, warnings) = prima_syntax::parse_checked(src);
+        if !errors.is_empty() {
+            return Err(syntax_errors(errors));
+        }
+        self.warnings = warnings;
+        self.reset_config();
+        if !program.imports.is_empty() {
+            self.bind_host_imports(env, &program.imports)?;
+        }
+        let r = self.eval_value_in(env, &program);
+        self.reset_config();
+        r
+    }
+
     /// Bind in-memory imports that resolve to embedded stdlib modules (spec §18.4) or Rust-hosted
     /// stdlib namespaces (spec §18). Embedded modules are evaluated first (like `eval_module` for a
     /// dependency), populating `module_items` so `bind_imports` finds their `@builtin` items. Any
