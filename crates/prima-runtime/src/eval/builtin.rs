@@ -437,7 +437,11 @@ impl Evaluator {
 
     pub(crate) fn to_expr_id(&self, v: &Value) -> Result<ExprId, RuntimeError> {
         match v {
-            Value::Number(n) => Ok(self.pool.number(n)),
+            Value::Number(n) => self.pool.try_number(n).ok_or_else(|| {
+                RuntimeError::Message(
+                    "complex numbers cannot be used as symbolic expression nodes".into(),
+                )
+            }),
             Value::Expr(id) => Ok(*id),
             _ => crate::error::err("expected a numeric or symbolic expression"),
         }
