@@ -23,7 +23,7 @@ impl Evaluator {
                 if matches!(b, Builtin::Println) {
                     s.push('\n');
                 }
-                (self.output)(s);
+                (self.output)(sanitize_output(&s));
                 Ok(Value::Nil)
             }
             Builtin::Input | Builtin::ReadLine => self.call_input(b, args),
@@ -472,7 +472,7 @@ impl Evaluator {
         }
         if let Some(prompt) = args.first() {
             let s = self.format_value(prompt);
-            (self.output)(s);
+            (self.output)(sanitize_output(&s));
         }
         use std::io::BufRead;
         let mut line = String::new();
@@ -486,4 +486,14 @@ impl Evaluator {
             Err(_) => Ok(Value::String(String::new())),
         }
     }
+}
+
+/// Strip C0 control characters (U+0000–U+001F) and DEL (U+007F) from program-controlled output
+/// before it reaches the terminal, preventing ANSI/terminal escape injection from untrusted `.pra`
+/// strings (e.g. `"\u{1b}[2J"`). Newline and tab are preserved (ordinary formatting); every other
+/// control character is dropped (spec §18.1 I/O hardening).
+fn sanitize_output(s: &str) -> String {
+    s.chars()
+        .filter(|&c| !matches!(c, '\u{0}'..='\u{8}' | '\u{b}'..='\u{1f}' | '\u{7f}'))
+        .collect()
 }
