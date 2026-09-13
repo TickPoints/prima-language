@@ -5,6 +5,69 @@ All notable changes to the Prima toolchain are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Performance
+
+This round closes the remaining gap to CPython: **all six cross-language kernels now run at or
+below CPython parity** (`benches/RESULTS.md`, Python × 0.3–0.9 on the default VM path). The
+structural fix is a register channel in the bytecode VM that keeps hot numeric and collection
+values in local slots instead of shuffling boxed `Value`s through the operand stack.
+
+- **Register-form local instructions (spec §19.5).** A new instruction family operates directly
+  on local slots (`RegBin`/`RegBinImm`, `RegMulAdd`, `RegNeg`, `RegToF64`, `RegMove`, `RegIndex`,
+  `RegIndexPush`, `RegIndexStore`/`Imm`, `RegPush`/`Imm`), plus fused loop forms
+  (`BranchLocalCmpSum`, `RegIndexBranchFalse`) and a bulk `RegFill` for the
+  `for _ in lo..hi { a.push(const) }` idiom. The compiler emits them when operands are local
+  slots or inline immediates; every non-numeric/non-array shape falls back to the existing stack
+  path, so observable behavior is unchanged. `Op` is now `Copy`, and the dispatch loop matches
+  slot references directly on the `Small`/`F64` fast paths instead of cloning operands.
+
+- **Lock-free copy-on-write arrays (spec §11.3).** `ArrayVal` now wraps `Arc<Vec<Value>>` and
+  copies on write through `Arc::make_mut` instead of `Arc<RwLock<Vec<Value>>>`. Array reads are
+  plain dereferences (no lock), removing the per-element `RwLock` atomics from every index read
+  and array loop; `Send + Sync` (and therefore the `parfor`/`@parallel` paths) is preserved.
+
+- **Fast-hash environments.** `Env`'s value/function namespaces and the VM's function-dispatch
+  table use `rustc_hash::FxHashMap` instead of SipHash, cutting the cost of every non-local name
+  lookup and call resolution.
+
+### Fixed
+
+- **`to_f64` register fast path honors a user shadow.** The register `to_f64` lowering now
+  validates against the process-wide function-definition epoch and calls a user `fn to_f64` when
+  one is defined, matching the AST interpreter (regression-tested).
+
+- **`ExprPool::number` no longer panics on complex numbers.** A new `try_number` returns `None`
+  for values with no symbolic representation (complex); callers that can receive one report a
+  clear error instead of panicking (spec §6.1).
+
+- **CSV parsing is UTF-8-correct (spec §18.1).** `io::csv_parse` decoded fields byte-by-byte as
+  Latin-1, corrupting any non-ASCII data; it now parses by Unicode scalar values.
+
+- **VM operand truncation is rejected.** Constant-pool indices, parameter/argument counts, and
+  array/tuple element counts beyond the `u16` instruction-field range now reject compilation
+  (AST fallback) instead of silently wrapping (spec §19.5).
+
+- **Terminal escape injection.** Program output is filtered for C0 control characters and DEL at
+  the `print`/`println` sink, so untrusted strings cannot emit ANSI escapes; newline/tab are
+  preserved. The stdlib arbitrary-path I/O trust boundary is now documented.
+
+- **f-string `{:spec}` width counts characters, not bytes.** Multi-byte content and fill
+  characters now pad to the correct visual width (spec §18.1).
+
+- **Rounding collapse no longer saturates.** `Number::rounded_digits` and the collapse rounding
+  family use checked float→integer conversions and reject out-of-range digit counts instead of
+  saturating to `i64::MAX` (spec §9.6).
+
+- **REPL no longer replays the whole session.** Each entry is evaluated once against a persistent
+  environment (`Evaluator::eval_value_keep_env`), removing the O(n²) session replay that made
+  long sessions lag (spec §20).
+
+- **Dedicated nesting-depth error code.** "Expression nesting is too deep" now reports
+  `E0012 expression_nesting_too_deep` (new spec appendix C entry) instead of borrowing the
+  generic `E0010`.
+
 ## [0.4.0] - 2026-09-12
 
 ### Performance

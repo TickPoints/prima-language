@@ -845,7 +845,7 @@ Each Phase ends with runnable acceptance commands. Phases 0–10 are all deliver
 
 All remaining design (three-world architecture, Number tower, ExprPool, the three-level Config policy, module system, error model, parallelism philosophy, class ownership) is fully consistent with the spec.
 
-## 8. Deferred Optimizations and Follow-up Fixes (after the v0.4.0 performance evaluation)
+## 8. Deferred Optimizations and Follow-up Fixes (after the v0.4.0 performance evaluation; completed)
 
 > v0.4.0 overhauled the execution engine (bytecode VM on by default, `Small(i64)` inline small
 > integers, `Value` slimmed 64B→32B via boxing, copy-on-write arrays, fused instructions,
@@ -854,6 +854,14 @@ All remaining design (three-world architecture, Number tower, ExprPool, the thre
 > root cause of the remaining gap is shuffling boxed `Value`s (32B) through the stack machine
 > (~40% of runtime). The list below is ordered by expected payoff and is the direct input for the
 > next round; the acceptance baseline is §8.3.
+>
+> **Outcome (this round)**: P1 landed as "local slots as registers + fused instructions"
+> (`RegBin`/`RegBinImm`/`RegMulAdd`/`RegNeg`/`RegToF64`/`RegIndex*`/`RegPush*`/`RegFill`/
+> `BranchLocalCmpSum`/`RegIndexBranchFalse`; `Op: Copy`, and the dispatch matches slot references
+> for `Small`/`F64` without cloning). P4 changed `ArrayVal` to lock-free `Arc<Vec<Value>>` +
+> `Arc::make_mut`, and P7 replaced SipHash with `rustc-hash`. P2/P3/P5/P6 were not needed — P1
+> already brought all six kernels to CPython parity. `perf` shows the remaining cost is the
+> `Arc::make_mut` uniqueness check, `Value` clone/drop, and dispatch itself.
 
 ### 8.1 Performance (next round)
 
@@ -878,14 +886,14 @@ All remaining design (three-world architecture, Number tower, ExprPool, the thre
 | F5 | f-string `{:spec}` fill aligns by byte length (off with multi-byte fill/content; cosmetic only) | prima-runtime/src/eval/helpers.rs |
 | F6 | REPL replays the whole session per entry (session-level O(n²); long sessions lag) | src/repl.rs |
 | F7 | `collapse::round` still saturates large floats via `as i64` (same family as the `as_bigint` M6 fix, missed there) | prima-runtime/src/collapse.rs |
-| F8 | "Expression nested too deeply" currently borrows the generic `E0010` code — add a dedicated code to spec appendix C (after spec confirmation, sync both docs) | prima-syntax/src/parser.rs |
+| F8 | "Expression nested too deeply" now uses the dedicated `E0012 expression_nesting_too_deep` code added to spec appendix C (both language docs synced) | prima-syntax/src/parser.rs |
 | F9 | Mutating methods on non-local name receivers (a global array `g.push(x)`) still compile-reject → AST fallback in the VM (correct, just slower); a `MethodName` mutation instruction would cover them | prima-runtime/src/vm |
 | F10 | `parse_checked` running on a dedicated 32 MB thread is an observable behavior change (panics keep semantics via `resume_unwind`); fall back to a lower recursion limit if unacceptable | prima-syntax/src/parser.rs |
 
-### 8.3 Acceptance baseline for the next round
+### 8.3 Acceptance baseline (met)
 
-- All 6 benchmark kernels at Python × ≤ 1.0 (regenerate `benches/RESULTS.md` with
-  `cargo bench --bench bench_suite`).
+- All 6 benchmark kernels at Python × ≤ 1.0 (this round: 0.3–0.9; regenerate `benches/RESULTS.md`
+  with `cargo bench --bench bench_suite`).
 - Whole-workspace `cargo test` / `cargo clippy` green; VM/AST parity, array value semantics
   (CoW), overflow errors, and depth-limit regressions stay in place.
 
