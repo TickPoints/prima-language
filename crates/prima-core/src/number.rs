@@ -510,10 +510,19 @@ impl Number {
     }
 
     /// Round to a fixed number of decimal digits (spec §9.6 `rounded_f64(x, digits)`).
-    pub fn rounded_digits(&self, digits: i64) -> Number {
-        let mult = 10f64.powi(digits as i32);
+    ///
+    /// Returns `None` when the digit count cannot be applied in `f64`: it does not fit `i32`
+    /// (the exponent domain of `10f64.powi`, so an unchecked `digits as i32` would wrap to a bogus
+    /// exponent), or `10^digits` overflows to infinity / underflows to zero (which would turn the
+    /// computation into `NaN`/`Inf`). Callers surface a proper error instead of a silently wrong value.
+    pub fn rounded_digits(&self, digits: i64) -> Option<Number> {
+        let exp = i32::try_from(digits).ok()?;
+        let mult = 10f64.powi(exp);
+        if !mult.is_finite() || mult == 0.0 {
+            return None;
+        }
         let v = (self.to_f64_lossy() * mult).round() / mult;
-        Number::Real(Real::F64(v))
+        Some(Number::Real(Real::F64(v)))
     }
 
     /// Clamp to `[min, max]` (spec §9.5 `clamped_f64`).
@@ -1326,6 +1335,30 @@ mod tests {
         );
         // Fractional floats are rejected as before (spec §9.2).
         assert_eq!(Number::Real(Real::F64(1.5)).as_bigint(), None);
+    }
+
+    #[test]
+    fn rounded_digits_large_float_and_out_of_range_count() {
+        // F7 regression: the digit count used to be cast unchecked (`digits as i32`), so an
+        // out-of-range count wrapped to a bogus exponent, and an extreme count produced `NaN`/`Inf`
+        // through `10f64.powi`. Both must now be rejected instead of returning a silently wrong value.
+        let x = Number::Real(Real::F64(1.2345));
+        assert_eq!(x.rounded_digits(i64::from(i32::MAX) + 1), None);
+        assert_eq!(x.rounded_digits(i64::MIN), None);
+        assert_eq!(x.rounded_digits(1000), None);
+        assert_eq!(x.rounded_digits(-1000), None);
+
+        // A very large float rounded to 0 digits is unchanged — no saturation to `i64::MAX`.
+        let huge = Number::Real(Real::F64(1e300));
+        assert_eq!(huge.rounded_digits(0), Some(Number::Real(Real::F64(1e300))));
+
+        // In-range counts keep the existing rounding semantics exactly.
+        assert_eq!(
+            Number::Real(Real::F64(2.5)).rounded_digits(0),
+            Some(Number::Real(Real::F64(3.0)))
+        );
+        let expected = (1.2345f64 * 100.0).round() / 100.0;
+        assert_eq!(x.rounded_digits(2), Some(Number::Real(Real::F64(expected))));
     }
 
     #[test]
