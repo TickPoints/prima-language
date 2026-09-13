@@ -8,6 +8,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
 
@@ -134,8 +136,10 @@ pub type EnvRef = Rc<RefCell<Env>>;
 /// Evaluation environment: dual value/function namespaces plus a module namespace plus a shared parent-environment chain.
 #[derive(Clone, Default)]
 pub struct Env {
-    pub(crate) values: HashMap<String, Value>,
-    pub(crate) funcs: HashMap<String, Rc<Function>>,
+    // The value/function namespaces are the interpreter's hottest lookups (every non-local name
+    // read and every call). `FxHashMap` (short-string hash) avoids SipHash's cost for these keys.
+    pub(crate) values: FxHashMap<String, Value>,
+    pub(crate) funcs: FxHashMap<String, Rc<Function>>,
     pub(crate) modules: HashMap<String, HashMap<String, NamespaceItem>>,
     pub(crate) parent: Option<EnvRef>,
 }
@@ -171,8 +175,8 @@ impl Env {
     /// Create a child scope: empty local tables plus a shared parent handle.
     pub(crate) fn child(parent: &EnvRef) -> EnvRef {
         Rc::new(RefCell::new(Env {
-            values: HashMap::new(),
-            funcs: HashMap::new(),
+            values: FxHashMap::default(),
+            funcs: FxHashMap::default(),
             modules: HashMap::new(),
             parent: Some(Rc::clone(parent)),
         }))

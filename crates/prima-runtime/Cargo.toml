@@ -16,4 +16,5 @@ num-traits = { workspace = true }
 num-integer = { workspace = true }
 thiserror = { workspace = true }
 rayon = { workspace = true }
+rustc-hash = { workspace = true }
 wide = "1.7"

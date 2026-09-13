@@ -1155,6 +1155,7 @@ dependencies = [
  "prima-jit",
  "prima-syntax",
  "rayon",
+ "rustc-hash",
  "thiserror",
  "wide 1.7.0",
 ]
