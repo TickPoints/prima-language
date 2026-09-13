@@ -1194,7 +1194,7 @@ fn reg_index_store(
 /// (the common `A[j] = v` shape, spec §11.3).
 #[inline]
 fn reg_index_store_small(
-    _ev: &mut Evaluator,
+    ev: &mut Evaluator,
     frame: &mut Frame,
     arr: u16,
     i: i64,
@@ -1215,8 +1215,67 @@ fn reg_index_store_small(
                 )),
             }
         }
-        _ => Err(vm_limit("index assignment requires an array binding")),
+        // A `Dict` binding (or any other mutable indexed value) keeps the general path.
+        Some(other) => {
+            super::helpers::vm_index_store(ev, other, Value::Number(Number::Small(i)), value)
+                .map_err(|e| crate::error::attach_span(e, span))
+        }
+        None => Err(vm_limit("invalid local slot")),
     }
+}
+
+/// Splice `rhs` into `target[lo..hi]` (spec §11.3): a `Nil` bound means omitted (0 / length); the
+/// array is mutated in place (copy-on-write when its handle is aliased). Mirrors the AST's
+/// `slice_bounds` clamping.
+fn slice_store_value(
+    target: &mut Value,
+    lo: Value,
+    hi: Value,
+    rhs: Value,
+) -> Result<(), RuntimeError> {
+    let Value::Array(a) = target else {
+        return Err(vm_limit("slice assignment requires an array binding"));
+    };
+    let len = a.len();
+    let len_i = len as i64;
+    let bound = |v: &Value, default: i64| -> Result<i64, RuntimeError> {
+        match v {
+            Value::Nil => Ok(default),
+            Value::Number(n) => n
+                .as_i64()
+                .ok_or_else(|| RuntimeError::Message("slice bound must be an integer".into())),
+            _ => Err(RuntimeError::Message(
+                "slice bound must be an integer".into(),
+            )),
+        }
+    };
+    let raw_lo = bound(&lo, 0)?;
+    let raw_hi = bound(&hi, len_i)?;
+    let lo = if raw_lo < 0 {
+        (len_i + raw_lo).max(0)
+    } else {
+        raw_lo.min(len_i)
+    };
+    let hi = if raw_hi < 0 {
+        (len_i + raw_hi).max(0)
+    } else {
+        raw_hi.min(len_i)
+    };
+    if lo > hi {
+        return Err(RuntimeError::Message(format!(
+            "invalid slice range {lo}..{hi} (length {len})"
+        )));
+    }
+    let Value::Array(rhs) = rhs else {
+        return Err(RuntimeError::Message(
+            "slice assignment right-hand side must be an array".into(),
+        ));
+    };
+    let items = rhs.to_vec();
+    a.with_mut(|buf| {
+        buf.splice(lo as usize..hi as usize, items);
+    });
+    Ok(())
 }
 
 /// Normalize a small integer index into `[0, len)`, or `None` when out of range (spec §11.3
@@ -1775,6 +1834,30 @@ impl Evaluator {
                     f.ip = jump_target(f.ip, off);
                 }
                 Ok(())
+            }
+            Op::SliceStoreLocal { slot } => {
+                let rhs = pop(&mut vm.stack);
+                let hi = pop(&mut vm.stack);
+                let lo = pop(&mut vm.stack);
+                let frame = vm.frames.last_mut().expect("unreachable");
+                let Some(target) = frame.slots.get_mut(slot as usize) else {
+                    return Err(vm_limit("invalid local slot"));
+                };
+                slice_store_value(target, lo, hi, rhs)
+            }
+            Op::SliceStoreName { name } => {
+                let rhs = pop(&mut vm.stack);
+                let hi = pop(&mut vm.stack);
+                let lo = pop(&mut vm.stack);
+                let name = resolve_name(vm.active_chunk(), name)?.to_string();
+                let mut res: Option<Result<(), RuntimeError>> = None;
+                env.borrow_mut().update_value(&name, |slot| {
+                    res = Some(slice_store_value(slot, lo.clone(), hi.clone(), rhs.clone()));
+                });
+                match res {
+                    Some(r) => r,
+                    None => Err(vm_limit("slice assignment requires an array binding")),
+                }
             }
             // Register-form ops are executed inline by the dispatch loop (`run_vm`); reaching
             // `step_vm` means the executor structure changed, so treat them as unsupported.

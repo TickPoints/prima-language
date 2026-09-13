@@ -243,6 +243,12 @@ pub enum Op {
     /// Fused `if slots[arr][slots[idx]] { … }` test (spec §11.3/§12.1): read the element and jump
     /// when it is `false`; a non-boolean element is the usual condition error.
     RegIndexBranchFalse { arr: Reg, idx: Reg, off: i32 },
+    /// Slice assignment into a local slot's array (spec §11.3): stack `[lo, hi, rhs]`, where a
+    /// `Nil` bound means "omitted" (defaults 0 / length). The array is spliced in place (CoW when
+    /// the handle is aliased).
+    SliceStoreLocal { slot: Reg },
+    /// Slice assignment into an environment binding's array.
+    SliceStoreName { name: Reg },
 }
 
 /// A constant pool entry: an already-`Value`-shaped literal or a symbolic reference that resolves

@@ -258,14 +258,40 @@ impl Compiler {
                 if index.items.len() != 1 {
                     return Err("VM compiler: multi-dimensional index-assign unsupported".into());
                 }
-                let IndexItem::Elem(idx) = &index.items[0] else {
-                    return Err("VM compiler: slice index-assign unsupported".into());
-                };
                 // The base must be a single-segment path: the executor mutates that binding's
                 // array in place, so a lost write on a stack copy is impossible (spec §11.3).
                 let name = match &base.kind {
                     ExprKind::Path { segments } if segments.len() == 1 => &segments[0].value,
                     _ => return Err("VM compiler: index-assign target must be a variable".into()),
+                };
+                let idx = match &index.items[0] {
+                    IndexItem::Elem(idx) => idx,
+                    IndexItem::Slice { start, end } => {
+                        // `arr[lo..hi] = rhs` (spec §11.3): push `lo`/`hi` (a `Nil` sentinel when
+                        // omitted) then the right-hand array; the executor splices in place.
+                        match start {
+                            Some(e) => self.compile_expr(chunk, scope, e)?,
+                            None => {
+                                let n = chunk.add_value(prima_core::Value::Nil)?;
+                                chunk.emit(Op::Const(n), 0);
+                            }
+                        }
+                        match end {
+                            Some(e) => self.compile_expr(chunk, scope, e)?,
+                            None => {
+                                let n = chunk.add_value(prima_core::Value::Nil)?;
+                                chunk.emit(Op::Const(n), 0);
+                            }
+                        }
+                        self.compile_expr(chunk, scope, value)?;
+                        if let Some(slot) = scope.slot_of(name) {
+                            chunk.emit(Op::SliceStoreLocal { slot }, 0);
+                        } else {
+                            let k = chunk.add_name(name.clone())?;
+                            chunk.emit(Op::SliceStoreName { name: k }, 0);
+                        }
+                        return Ok(());
+                    }
                 };
                 // For an environment binding (non-local target) the executor mutates the binding
                 // in place along the chain; this is only faithful when neither the index nor the
@@ -954,6 +980,23 @@ impl Compiler {
                 }
                 let n = checked_u16(items.len(), "tuple elements")?;
                 chunk.emit(Op::MakeTuple(n), expr.span.start);
+                Ok(())
+            }
+            ExprKind::Dict(pairs) => {
+                for (k, v) in pairs {
+                    self.compile_expr(chunk, scope, k)?;
+                    self.compile_expr(chunk, scope, v)?;
+                }
+                let n = checked_u16(pairs.len(), "dict entries")?;
+                chunk.emit(Op::MakeDict(n), expr.span.start);
+                Ok(())
+            }
+            ExprKind::Set(items) => {
+                for it in items {
+                    self.compile_expr(chunk, scope, it)?;
+                }
+                let n = checked_u16(items.len(), "set elements")?;
+                chunk.emit(Op::MakeSet(n), expr.span.start);
                 Ok(())
             }
             ExprKind::Index { base, index } => {

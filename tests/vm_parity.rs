@@ -320,6 +320,25 @@ fn jit_bool_array_and_remainder_match_ast() {
     assert_eq!(ast, jit, "bool array + remainder");
 }
 
+/// Dict index assignment (`d[k] = v`) mutates the binding in place in the VM, matching the AST.
+#[test]
+fn vm_dict_index_store_matches_ast() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut d = {}; let mut i = 0; while i < n { d[i] = i * i; i += 1; } let mut s = 0; let mut j = 0; while j < n { s += d[j]; j += 1; } s }";
+    let ast = call(kernel, vec![int(10)], false);
+    let vm = call(kernel, vec![int(10)], true);
+    assert_eq!(ast, vm, "dict index store");
+}
+
+/// Slice assignment splices in place in the VM, matching the AST.
+#[test]
+fn vm_slice_assignment_matches_ast() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut a = []; let mut i = 0; while i < n { a.push(i); i += 1; } a[1..3] = [20, 30]; let mut s = 0; let mut j = 0; while j < n { s += a[j]; j += 1; } s }";
+    let ast = call(kernel, vec![int(5)], false);
+    let vm = call(kernel, vec![int(5)], true);
+    assert_eq!(ast, vm, "slice assignment");
+    assert_eq!(vm, Value::Number(Number::from(57)));
+}
+
 /// An out-of-range array read is an error in both paths (the JIT deopts, the interpreter reports).
 #[test]
 fn jit_out_of_bounds_errors_like_ast() {
