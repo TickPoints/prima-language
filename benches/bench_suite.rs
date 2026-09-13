@@ -67,7 +67,7 @@ fn time_prima(pra: &str, n: i64, samples: u32, warmup: u32, vm: bool) -> (Durati
             let v = if vm {
                 ev.vm_call_function(&env, "main", vec![arg.clone()])
             } else {
-                ev.call_function(&env, "main", vec![arg.clone()])
+                ev.ast_call_function(&env, "main", vec![arg.clone()])
             }
             .expect("kernel must run");
             result = value_to_f64(&v);
@@ -297,11 +297,16 @@ fn main() {
     table.push_str(
         "implementation is *faster* than Prima (1.0× = equal, higher = reference wins).\n\n",
     );
-    table.push_str("NOTE: this is the AST-interpreter baseline. `vm := true` (bytecode VM, spec §19.5) and the\n");
-    table.push_str("JIT hot path (spec §19.2) are the mechanisms targeted at closing the gap to Python/Rust;\n");
     table.push_str(
-        "see the milestone notes and docs/IMPLEMENTATION-zh_CN.md §5 for the tracked deltas.\n\n",
+        "NOTE: the `Prima VM` column is the default execution path (`vm := true`, bytecode VM,\n",
     );
+    table.push_str(
+        "spec §19.5); the `Prima AST` column is the authoritative AST interpreter, forced with\n",
+    );
+    table.push_str(
+        "`Evaluator::ast_call_function` so the two paths are measured independently. `Python ×`\n",
+    );
+    table.push_str("is the default-path (VM) multiplier — the acceptance metric.\n\n");
     table.push_str(
         "Regenerate with `cargo bench --bench bench_suite` (see benches/bench_suite.rs).\n\n",
     );
@@ -347,7 +352,8 @@ fn main() {
         );
 
         let vm_ast = p.as_secs_f64() / pv_t.as_secs_f64();
-        let py_mult = p.as_secs_f64() / py.as_secs_f64();
+        // Acceptance is measured on the default execution path (the VM), not the AST reference.
+        let py_mult = pv_t.as_secs_f64() / py.as_secs_f64();
         let rust_mult = p.as_secs_f64() / r.as_secs_f64();
         println!(
             "{:<8} ast={:<14} vm={:<14} python={:<14} rust={:<14} vm/ast={:.1}×",

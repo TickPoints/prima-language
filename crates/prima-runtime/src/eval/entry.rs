@@ -258,6 +258,31 @@ impl Evaluator {
         self.apply_function(&func, args)
     }
 
+    /// Invoke a host `fn` by name through the AST interpreter only, bypassing the bytecode VM even
+    /// when the `vm` config gate is on. Symmetric with [`Self::vm_call_function`]: callers
+    /// (benchmarks, differential testing) use it to measure the authoritative AST path explicitly.
+    /// Non-host functions have no VM fast path, so they delegate to `apply_function`.
+    pub fn ast_call_function(
+        &mut self,
+        env: &EnvRef,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let func = env
+            .borrow()
+            .get_func(name)
+            .ok_or_else(|| RuntimeError::Message(format!("unknown function `{name}`")))?;
+        match func.as_ref() {
+            Function::Host {
+                params,
+                body,
+                env: f_env,
+                ..
+            } => self.apply_host(params, body, f_env, args),
+            _ => self.apply_function(&func, args),
+        }
+    }
+
     /// Invoke a `fn` by name through the bytecode VM (spec §19.5), bypassing the `vm` config gate so
     /// callers (benchmarks, C-ABI) can opt into the VM explicitly. Falls back to the AST interpreter
     /// when the body is outside the compiled subset.
