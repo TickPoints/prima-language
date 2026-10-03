@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `new`/`add`/`sub`/`scale`/`dot`/`cross`/`length`/`normalize`. All formulas take and return
   `F64` and report wrong arity or non-real arguments as errors.
 
+- **`plot` heatmaps and contours (spec §18.6).** `plot::heatmap` renders a scalar grid as a
+  color-mapped image (viridis-like ramp with a colorbar in the figure margin), `plot::contour`
+  draws evenly spaced iso-lines with marching squares, and `plot::hist` renders a histogram.
+  Ragged/empty grids and invalid level/bin counts report a `RuntimeError`; `NaN`/`Inf` cells are
+  skipped rather than panicking.
+
 ### Changed
 
 - **`Number` slimmed to 16 bytes and `Value` to 24 bytes (spec §5/§6.1).** The interpreter/VM
