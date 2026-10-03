@@ -1,0 +1,17 @@
+// sys expansion (spec §18.6): process / filesystem / terminal interaction.
+import sys::process;
+import sys::fs;
+import sys::term;
+
+// —— process: run commands through the platform shell ——
+println(sys::process::run("echo hello"));   // → Ok("hello")
+println(sys::process::exit_code("exit 0")); // → Ok(0)
+
+// —— fs: metadata and directory traversal ——
+println(sys::fs::exists("."));               // → true
+println(sys::fs::is_dir("."));               // → true
+println(sys::fs::read_dir("."));             // → Ok([...entries...])
+
+// —— term: terminal detection (piped output is not a TTY) ——
+println(sys::term::is_tty());                // → false when piped
+println(sys::term::size());                  // → {rows, cols}

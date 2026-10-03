@@ -172,8 +172,9 @@ fn from_base(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError>
     }
 }
 
-/// Euclidean algorithm for arbitrary-precision integers (spec §18.3 note).
-fn bigint_gcd(a: &BigInt, b: &BigInt) -> BigInt {
+/// Euclidean algorithm for arbitrary-precision integers (spec §18.3 note). Shared with the `math`
+/// module's `gcd`/`lcm`/`crt` so both keep identical semantics.
+pub(crate) fn bigint_gcd(a: &BigInt, b: &BigInt) -> BigInt {
     let mut a = if *a < BigInt::from(0) { -a } else { a.clone() };
     let mut b = if *b < BigInt::from(0) { -b } else { b.clone() };
     while b != BigInt::from(0) {
@@ -184,8 +185,9 @@ fn bigint_gcd(a: &BigInt, b: &BigInt) -> BigInt {
     a
 }
 
-/// Absolute value of a `BigInt` (kept local so the module needs no `num-traits`).
-fn bigint_abs(n: BigInt) -> BigInt {
+/// Absolute value of a `BigInt` (kept local so the module needs no `num-traits`). Shared with the
+/// `math` module's `lcm`/`crt`.
+pub(crate) fn bigint_abs(n: BigInt) -> BigInt {
     if n < BigInt::from(0) { -n } else { n }
 }
 

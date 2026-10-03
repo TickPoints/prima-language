@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and CI runs `--all-features`, with a tier job compiling each level on its own. This isolates the
   heavy optional dependencies (e.g. the LaTeX→SVG backend) from the default build.
 
+- **`math` standard-library module (spec §18.6).** Integer number theory — `gcd`/`lcm`,
+  `factor` (prime factorization), `primes` (sieve), `mod_pow`, and `crt` (Chinese remainder) —
+  plus polynomial tools over lowest-degree-first `Array<F64>` coefficients (`poly_eval`,
+  `poly_add`, `poly_mul`, `poly_derivative`, `poly_roots` via Durand–Kerner returning
+  `Array<Complex>`) and `continued_fraction`. `primes` is a layered `@builtin(O1)` with a `.pra`
+  fallback; allocation is bounded by explicit limits. `taylor` is not yet implemented (it needs a
+  call-site interceptor) and `factor` uses deterministic trial division.
+
+- **`sys::process` / `sys::fs` / `sys::term` (spec §18.6).** Run external commands through the
+  platform shell and capture output (`process::run`, `process::exit_code`), filesystem queries
+  (`fs::exists`/`is_file`/`is_dir`/`size`/`read_dir`/`metadata`), and terminal detection
+  (`term::size`/`is_tty`). All fallible operations return `Result` and never panic; the
+  arbitrary-command and arbitrary-path trust boundaries are documented in the module docs.
+
 ### Changed
 
 - **`Number` slimmed to 16 bytes and `Value` to 24 bytes (spec §5/§6.1).** The interpreter/VM

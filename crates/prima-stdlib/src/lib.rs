@@ -11,6 +11,8 @@ pub mod collections;
 pub mod io;
 #[cfg(feature = "advanced")]
 pub mod linalg;
+#[cfg(feature = "advanced")]
+pub mod math;
 #[cfg(feature = "core")]
 mod native_docs;
 #[cfg(feature = "core")]
@@ -98,20 +100,34 @@ pub fn init() {
             "sys::os",
             include_str!("modules/sys_os.pra"),
         );
+        prima_runtime::stdlib::register_module_source(
+            "sys::process",
+            include_str!("modules/sys_process.pra"),
+        );
+        prima_runtime::stdlib::register_module_source(
+            "sys::fs",
+            include_str!("modules/sys_fs.pra"),
+        );
+        prima_runtime::stdlib::register_module_source(
+            "sys::term",
+            include_str!("modules/sys_term.pra"),
+        );
         io::register();
         sys::register();
         time::register();
     }
 
-    // —— advanced: linalg / stats / physics / plot ——
+    // —— advanced: linalg / stats / physics / plot / math ——
     #[cfg(feature = "advanced")]
     {
         prima_runtime::stdlib::register_module_source("linalg", include_str!("modules/linalg.pra"));
         prima_runtime::stdlib::register_module_source("stats", include_str!("modules/stats.pra"));
         prima_runtime::stdlib::register_module_source("plot", include_str!("modules/plot.pra"));
+        prima_runtime::stdlib::register_module_source("math", include_str!("modules/math.pra"));
         linalg::register();
         stats::register();
         plot::register();
+        math::register();
         // pure-data namespaces
         physics::register();
     }

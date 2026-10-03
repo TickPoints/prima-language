@@ -740,6 +740,13 @@ Each Phase ends with runnable acceptance commands. Phases 0–10 are all deliver
   cargo build --features term-render # feature compiles
   ```
 
+> **Phase 11 incremental landing (in progress)**:
+>
+> - **stdlib four-tier features (prerequisite)**: `core`/`system`/`advanced`/`render` + `full`, isolating the heavy dependencies; the release binary uses `--features full`, and CI runs `--all-features` plus a per-tier `check`. See §7 "v2.3+ toolchain ADR".
+> - **`math` landed** (`advanced`): `gcd`/`lcm`/`factor`/`primes`/`crt`/`mod_pow` plus polynomials (`poly_eval`/`poly_add`/`poly_mul`/`poly_derivative`/`poly_roots` via Durand–Kerner) and `continued_fraction`. **Deviations**: `factor` uses deterministic trial division (Pollard rho is listed only as an optional large-input optimization and is not implemented); `taylor(f,x,x0,n)` is not implemented (it needs call-site interception, beyond the builtin argument-evaluation model); `primes` is the only layered `@builtin(O1)` (`factor` stays O0 because its `n <= 0` error cannot be expressed in a `.pra` fallback). `num::gcd/lcm` and `math::gcd/lcm` share one implementation.
+> - **`sys` expansion landed** (`system`): `sys::process` (`run`/`exit_code`, platform shell), `sys::fs` (`exists`/`is_file`/`is_dir`/`size`/`read_dir`/`metadata`), `sys::term` (`size`/`is_tty`); raw mode is not implemented. **Deviations**: `sys::fs::metadata` returns `Result<Dict, String>` (appendix B.7 sketches `Option<Dict>`) and `sys::term::size` returns `Dict{rows,cols}` (the sketch uses a tuple) — the embedded `.pra` docs are the sole method-list source (§eighteen management principle).
+> - **Remaining**: `physics` formulas + `Vector3` class, `plot` contour/heatmap, `render` (`to_svg` via LaTeX→SVG; `to_terminal` needs a Unicode/ASCII renderer), `mem::Arc` (Phase 12).
+
 ### Phase 12: `mem::Arc` explicit reference counting (spec §12.3/12.4, priority low)
 
 **Work item 7** (the standard library provides explicit reference counting; the host layer does not introduce a tracing GC).
