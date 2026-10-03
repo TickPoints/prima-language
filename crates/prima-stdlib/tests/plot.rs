@@ -1,12 +1,26 @@
 #![cfg(feature = "advanced")]
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 
 use prima_runtime::Evaluator;
 
+/// The `plot` module keeps its accumulated figure in process-global state (spec §18.6), so tests
+/// must not run concurrently: otherwise one test's `savefig` observes another test's series and
+/// overlay label. Each test binary is a single process, so a local lock is sufficient.
+static PLOT_STATE_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_plot() -> MutexGuard<'static, ()> {
+    PLOT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Evaluate an in-memory program that imports the `plot` stdlib namespace (spec §18 / appendix B.4).
 /// `eval_value` (not `eval_src`) so that Rust-hosted `import` resolves without a file.
+///
+/// The lock is held for the whole evaluation, i.e. including the `savefig` render, so no other
+/// plot test can interleave its own calls.
 fn run(src: &str) -> bool {
+    let _guard = lock_plot();
     prima_stdlib::init();
     Evaluator::new().eval_value(src).is_ok()
 }
