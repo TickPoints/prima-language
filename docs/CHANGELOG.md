@@ -31,6 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`term::size`/`is_tty`). All fallible operations return `Result` and never panic; the
   arbitrary-command and arbitrary-path trust boundaries are documented in the module docs.
 
+- **`physics` formulas and `Vector3` (spec §18.6).** The `physics` module is now an embedded
+  `.pra` module rather than a Rust-hosted constants namespace: the CODATA 2022 constants are
+  declared as typed `pub const`s (SI-exact `Integer`/`Rational` forms preserved), and the module
+  gains elementary formulas implemented as Rust `@builtin`s — kinematics (`velocity`,
+  `displacement`, `projectile_*`), mechanics (`force`, `momentum`, `kinetic_energy`,
+  `potential_energy`, `work`, `power`), simple harmonic motion (`shm_*`, `simple_pendulum`),
+  thermodynamics (`celsius_to_kelvin`, `kelvin_to_celsius`, `heat`, `ideal_gas_pressure`), and
+  electromagnetism (`coulomb_force`, `ohm_*`, `electrical_power`) — plus a `Vector3` class with
+  `new`/`add`/`sub`/`scale`/`dot`/`cross`/`length`/`normalize`. All formulas take and return
+  `F64` and report wrong arity or non-real arguments as errors.
+
 ### Changed
 
 - **`Number` slimmed to 16 bytes and `Value` to 24 bytes (spec §5/§6.1).** The interpreter/VM

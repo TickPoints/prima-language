@@ -124,11 +124,14 @@ pub fn init() {
         prima_runtime::stdlib::register_module_source("stats", include_str!("modules/stats.pra"));
         prima_runtime::stdlib::register_module_source("plot", include_str!("modules/plot.pra"));
         prima_runtime::stdlib::register_module_source("math", include_str!("modules/math.pra"));
+        prima_runtime::stdlib::register_module_source(
+            "physics",
+            include_str!("modules/physics.pra"),
+        );
         linalg::register();
         stats::register();
         plot::register();
         math::register();
-        // pure-data namespaces
         physics::register();
     }
 }

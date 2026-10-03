@@ -744,7 +744,8 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 > - **stdlib 四层 feature（前置）**：`core`/`system`/`advanced`/`render` + `full`，隔离重依赖；发布二进制 `--features full`，CI `--all-features` 且逐层 `check`。详见 §7「v2.3+ 工具链 ADR」。
 > - **`math` 已落地**（`advanced`）：`gcd`/`lcm`/`factor`/`primes`/`crt`/`mod_pow` + 多项式（`poly_eval`/`poly_add`/`poly_mul`/`poly_derivative`/`poly_roots`，Durand–Kerner）+ `continued_fraction`。**偏差**：`factor` 用确定性试除（Pollard rho 仅列为大数可选优化，未实现）；`taylor(f,x,x0,n)` 未实现（需调用点拦截，超出 builtin 参数求值模型）；`primes` 为唯一 `@builtin(O1)` 分层（`factor` 因 `n<=0` 报错无法在 `.pra` 回退中表达而保持 O0）。`num::gcd/lcm` 与 `math::gcd/lcm` 共用实现。
 > - **`sys` 扩展已落地**（`system`）：`sys::process`（`run`/`exit_code`，平台 shell）、`sys::fs`（`exists`/`is_file`/`is_dir`/`size`/`read_dir`/`metadata`）、`sys::term`（`size`/`is_tty`）；raw 模式未实现。**偏差**：`sys::fs::metadata` 返回 `Result<Dict,String>`（附录 B.7 草图为 `Option<Dict>`）、`sys::term::size` 返回 `Dict{rows,cols}`（草图为元组）——以 `.pra` 文档为方法清单唯一来源（§十八 管理原则）。
-> - **待落地**：`physics` 公式与 `Vector3` Class、`plot` 等高线/热图、`render`（`to_svg` 走 LaTeX→SVG，`to_terminal` 需补 Unicode/ASCII 渲染器）、`mem::Arc`（Phase 12）。
+> - **`physics` 已落地**（`advanced`）：由宿主命名空间改为内嵌 `.pra` 模块，CODATA 2022 常数改为带类型的 `pub const`（SI 精确值保留 `Integer`/`Rational`），新增 Rust `@builtin` 初等公式（运动学/力学/简谐/热学/电磁基础）与 `Vector3` Class。**偏差**：`ideal_gas_pressure(n, T, V)` 用玻尔兹曼常数（`n·k_B·T/V`）；另补规范附录 B.7 示例 `simple_pendulum(L, g)`（小角度周期）。
+> - **待落地**：`plot` 等高线/热图、`render`（`to_svg` 走 LaTeX→SVG，`to_terminal` 需补 Unicode/ASCII 渲染器）、`mem::Arc`（Phase 12）。
 
 ### Phase 12：`mem::Arc` 显式引用计数（规范 §12.3/12.4，优先级 low）
 

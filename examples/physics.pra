@@ -1,10 +1,33 @@
-// Physics constants (spec §7.3, CODATA 2022): high-precision values, qualified access.
+// Physics constants, elementary formulas, and Vector3 (spec §7.3 / §18.6): CODATA 2022 values,
+// Rust-hosted formulas, and vector algebra.
 import physics;
 from physics import elementary_charge as e;
 
+// —— constants (§7.3): high precision, qualified access ——
 println(physics::speed_of_light);            // → 299792458 (exact)
 println(physics::standard_gravity);          // → 9.80665
 let E = physics::planck_const * physics::speed_of_light;
 println(E);                                  // → h·c as an exact rational
 println(physics::avogadro_const);            // → 6.02214076×10^23
 println(e);                                  // → 1.602176634×10^-19
+
+// —— formulas (§18.6): Rust `@builtin` implementations, F64 in and out ——
+println(physics::velocity(0.0, 9.80665, 2.0));          // → 19.6133
+println(physics::displacement(0.0, 9.80665, 2.0));      // → 19.6133
+println(physics::projectile_range(10.0, 0.7853981633974483, 9.80665));
+println(physics::kinetic_energy(2.0, 3.0));             // → 9
+println(physics::potential_energy(2.0, 9.80665, 3.0));  // → 58.8399
+println(physics::shm_energy(1.0, 2.0, 3.0));            // → 18
+println(physics::celsius_to_kelvin(0.0));               // → 273.15
+println(physics::ideal_gas_pressure(1.0, 300.0, 1.0));
+println(physics::ohm_voltage(2.0, 3.0));                // → 6
+println(physics::electrical_power(2.0, 3.0));           // → 6
+
+// —— Vector3 (§18.6): public fields + vector algebra methods ——
+let a = physics::Vector3::new(1.0, 0.0, 0.0);
+let b = physics::Vector3::new(0.0, 1.0, 0.0);
+let c = a.cross(b);
+println(c.z);                                // → 1
+println(a.dot(b));                           // → 0
+println(a.add(b).length());                  // → √2
+println(c.scale(2.0).normalize().length());  // → 1
