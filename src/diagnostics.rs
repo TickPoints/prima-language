@@ -120,15 +120,13 @@ fn emit_text(file: &Path, source: &str, diag: Diag) {
         diagnostic = diagnostic.with_code(code);
     }
     if let Some((start, end)) = diag.span {
-        diagnostic =
-            diagnostic.with_labels(vec![Label::primary((), start as usize..end as usize)]);
+        diagnostic = diagnostic.with_labels(vec![Label::primary((), start as usize..end as usize)]);
     }
     if !diag.notes.is_empty() {
         diagnostic = diagnostic.with_notes(diag.notes.clone());
     }
-    let buffer_writer = codespan_reporting::term::termcolor::BufferWriter::stderr(
-        options().color.choice(),
-    );
+    let buffer_writer =
+        codespan_reporting::term::termcolor::BufferWriter::stderr(options().color.choice());
     let mut buffer = buffer_writer.buffer();
     let _ = emit_to_write_style(&mut buffer, &term_config(), &files, &diagnostic);
     if let Some(help) = &diag.help {
@@ -168,7 +166,10 @@ fn emit_json(file: &Path, source: &str, diag: Diag) {
 fn line_col(source: &str, byte: u32) -> (usize, usize) {
     let upto = &source[..(byte as usize).min(source.len())];
     let line = upto.bytes().filter(|&b| b == b'\n').count() + 1;
-    let column = upto.rsplit('\n').next().map_or(1, |l| l.chars().count() + 1);
+    let column = upto
+        .rsplit('\n')
+        .next()
+        .map_or(1, |l| l.chars().count() + 1);
     (line, column)
 }
 
@@ -321,10 +322,12 @@ pub fn report_runtime_error(file: &Path, source: &str, e: &RuntimeError) {
     // specific suggestion (a `did you mean`), which wins.
     let kind_hint = match e.kind() {
         "Domain" => Some("allow the operation with `with config { domain := complex }`"),
-        "Undefined" => {
-            Some("`Undefined` is a numeric-layer error state and cannot take part in operations (spec §6.2)")
+        "Undefined" => Some(
+            "`Undefined` is a numeric-layer error state and cannot take part in operations (spec §6.2)",
+        ),
+        "Collapse" => {
+            Some("collapse the value with `to_<type>` before using it numerically (spec §9)")
         }
-        "Collapse" => Some("collapse the value with `to_<type>` before using it numerically (spec §9)"),
         _ => None,
     };
     let notes: Vec<String> = e.notes();

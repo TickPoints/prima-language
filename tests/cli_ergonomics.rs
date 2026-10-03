@@ -40,7 +40,10 @@ fn color_never_emits_no_ansi_escapes() {
         .output()
         .expect("spawn prima");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains('\u{1b}'), "unexpected ANSI escape: {stderr:?}");
+    assert!(
+        !stderr.contains('\u{1b}'),
+        "unexpected ANSI escape: {stderr:?}"
+    );
     assert!(stderr.contains("E"), "expected a coded header: {stderr:?}");
 }
 

@@ -143,7 +143,10 @@ mod tests {
         assert!(errs[0].message.contains("F64"));
         assert!(errs[0].message.contains("Expr"));
         let help = errs[0].help.as_deref().unwrap_or_default();
-        assert!(help.contains("to_f64"), "collapse hint expected, got: {help:?}");
+        assert!(
+            help.contains("to_f64"),
+            "collapse hint expected, got: {help:?}"
+        );
     }
 
     #[test]
@@ -198,7 +201,11 @@ mod tests {
         assert_eq!(errs.len(), 1);
         assert!(!errs[0].message.is_empty());
         // The syntax code is preserved structured rather than embedded in the message.
-        assert!(errs[0].code.starts_with('E'), "got code: {:?}", errs[0].code);
+        assert!(
+            errs[0].code.starts_with('E'),
+            "got code: {:?}",
+            errs[0].code
+        );
     }
 
     #[test]
@@ -425,8 +432,9 @@ mod tests {
 
     #[test]
     fn e0052_declared_class_type_is_known() {
-        let (errors, _) =
-            check_src_checked("class Foo { pub x: Integer }\nfn f(v: Foo) -> Integer { return 0; }");
+        let (errors, _) = check_src_checked(
+            "class Foo { pub x: Integer }\nfn f(v: Foo) -> Integer { return 0; }",
+        );
         assert!(errors.is_empty(), "got: {errors:?}");
     }
 

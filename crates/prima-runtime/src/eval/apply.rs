@@ -355,7 +355,10 @@ impl Evaluator {
                     len = a.len();
                     first = false;
                 } else if a.len() != len {
-                    return Err(crate::error::coded("R0004", "dimension mismatch in broadcast"));
+                    return Err(crate::error::coded(
+                        "R0004",
+                        "dimension mismatch in broadcast",
+                    ));
                 }
             }
         }
@@ -407,7 +410,12 @@ impl Evaluator {
             }
             match self.apply_function(func, cargs)? {
                 Value::Number(n) => results.push(Value::Number(n)),
-                _ => return Err(crate::error::coded("R0009", "broadcast result must be numeric")),
+                _ => {
+                    return Err(crate::error::coded(
+                        "R0009",
+                        "broadcast result must be numeric",
+                    ));
+                }
             }
         }
         Ok(Value::Array(results.into()))
@@ -469,7 +477,10 @@ impl Evaluator {
                 }
                 match ev.eval_expr(&call_env, &body_owned)? {
                     Value::Number(n) => Ok(n),
-                    _ => Err(crate::error::coded("R0009", "broadcast result must be numeric")),
+                    _ => Err(crate::error::coded(
+                        "R0009",
+                        "broadcast result must be numeric",
+                    )),
                 }
             })
             .collect();
@@ -503,10 +514,16 @@ impl Evaluator {
         let out: Vec<Value> = match (a, b) {
             (Value::Array(av), Value::Array(bv)) => {
                 if av.len() != bv.len() {
-                    return Err(crate::error::coded("R0004", "dimension mismatch in array operation"));
+                    return Err(crate::error::coded(
+                        "R0004",
+                        "dimension mismatch in array operation",
+                    ));
                 }
                 if av.is_empty() {
-                    return Err(crate::error::coded("R0014", "cannot operate on an empty array"));
+                    return Err(crate::error::coded(
+                        "R0014",
+                        "cannot operate on an empty array",
+                    ));
                 }
                 let av = av.with(require_numeric_array)?;
                 let bv = bv.with(require_numeric_array)?;
@@ -517,7 +534,12 @@ impl Evaluator {
                 for (x, y) in av.into_iter().zip(bv) {
                     match self.eval_number_binary(op, x, y)? {
                         Value::Number(n) => out.push(Value::Number(n)),
-                        _ => return Err(crate::error::coded("R0009", "array operation result must be numeric")),
+                        _ => {
+                            return Err(crate::error::coded(
+                                "R0009",
+                                "array operation result must be numeric",
+                            ));
+                        }
                     }
                 }
                 out
@@ -525,7 +547,10 @@ impl Evaluator {
             (Value::Array(av), other) => {
                 let scalar = self.scalar_for_broadcast(other)?;
                 if av.is_empty() {
-                    return Err(crate::error::coded("R0014", "cannot operate on an empty array"));
+                    return Err(crate::error::coded(
+                        "R0014",
+                        "cannot operate on an empty array",
+                    ));
                 }
                 let av = av.with(require_numeric_array)?;
                 if let Some(v) = self.try_simd_scalar(op, &av, &scalar) {
@@ -535,7 +560,12 @@ impl Evaluator {
                 for x in av {
                     match self.eval_number_binary(op, x, scalar.clone())? {
                         Value::Number(n) => out.push(Value::Number(n)),
-                        _ => return Err(crate::error::coded("R0009", "array operation result must be numeric")),
+                        _ => {
+                            return Err(crate::error::coded(
+                                "R0009",
+                                "array operation result must be numeric",
+                            ));
+                        }
                     }
                 }
                 out
@@ -543,7 +573,10 @@ impl Evaluator {
             (other, Value::Array(bv)) => {
                 let scalar = self.scalar_for_broadcast(other)?;
                 if bv.is_empty() {
-                    return Err(crate::error::coded("R0014", "cannot operate on an empty array"));
+                    return Err(crate::error::coded(
+                        "R0014",
+                        "cannot operate on an empty array",
+                    ));
                 }
                 let bv = bv.with(require_numeric_array)?;
                 if let Some(v) = self.try_simd_scalar_left(op, &scalar, &bv) {
@@ -553,7 +586,12 @@ impl Evaluator {
                 for y in bv {
                     match self.eval_number_binary(op, scalar.clone(), y)? {
                         Value::Number(n) => out.push(Value::Number(n)),
-                        _ => return Err(crate::error::coded("R0009", "array operation result must be numeric")),
+                        _ => {
+                            return Err(crate::error::coded(
+                                "R0009",
+                                "array operation result must be numeric",
+                            ));
+                        }
                     }
                 }
                 out
