@@ -21,6 +21,8 @@ pub mod num;
 pub mod physics;
 #[cfg(feature = "advanced")]
 pub mod plot;
+#[cfg(feature = "render")]
+pub mod render;
 #[cfg(feature = "advanced")]
 pub mod stats;
 #[cfg(feature = "core")]
@@ -133,5 +135,12 @@ pub fn init() {
         plot::register();
         math::register();
         physics::register();
+    }
+
+    // —— render: formula rendering (LaTeX -> SVG / Unicode) ——
+    #[cfg(feature = "render")]
+    {
+        prima_runtime::stdlib::register_module_source("render", include_str!("modules/render.pra"));
+        render::register();
     }
 }

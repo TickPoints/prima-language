@@ -1,3 +1,4 @@
+#![cfg(feature = "advanced")]
 use prima_core::Value;
 use prima_runtime::{Evaluator, RuntimeError};
 

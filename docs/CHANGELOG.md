@@ -48,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Ragged/empty grids and invalid level/bin counts report a `RuntimeError`; `NaN`/`Inf` cells are
   skipped rather than panicking.
 
+- **`render` formula rendering (spec §18.6).** `render::to_svg` renders a symbolic expression or
+  LaTeX string to a self-contained SVG (core LaTeX view → RaTeX `parse`/`layout`/`to_display_list`
+  → `render_to_svg` with embedded glyph outlines), and `render::to_terminal` transliterates the
+  same view into Unicode terminal math text. Available behind the `render` tier, which keeps the
+  RaTeX dependencies out of the default build. PNG output and the `print` terminal-formula
+  `term-render` integration remain deferred.
+
 ### Changed
 
 - **`Number` slimmed to 16 bytes and `Value` to 24 bytes (spec §5/§6.1).** The interpreter/VM

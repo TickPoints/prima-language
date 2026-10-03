@@ -14,6 +14,9 @@ prima-syntax = { path = "../prima-syntax", version = "0.4.2" }
 num-bigint = { workspace = true }
 nalgebra = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+ratex-parser = { version = "0.1.14", optional = true }
+ratex-layout = { version = "0.1.14", optional = true }
+ratex-svg = { version = "0.1.14", optional = true, features = ["embed-fonts"] }
 
 [features]
 # Four opt-in tiers (default: `core` only). `full` is the aggregate used by the `prima` binary.
@@ -24,8 +27,13 @@ core = []
 system = ["core", "dep:serde_json"]
 # Scientific modules: `linalg`, `stats`, `math`, `physics`, `plot` (pulls `nalgebra`).
 advanced = ["core", "dep:nalgebra"]
-# Formula rendering (LaTeX -> SVG); the heaviest dependency.
-render = ["advanced"]
+# Formula rendering (LaTeX -> SVG via RaTeX); the heaviest dependency.
+render = [
+    "advanced",
+    "dep:ratex-parser",
+    "dep:ratex-layout",
+    "dep:ratex-svg",
+]
 # The aggregate shipped in the release binary.
 full = ["system", "advanced", "render"]
 

@@ -1,3 +1,4 @@
+#![cfg(feature = "advanced")]
 use prima_core::{Number, Real, Value};
 use prima_runtime::Evaluator;
 

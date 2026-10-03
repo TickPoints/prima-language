@@ -1,0 +1,13 @@
+// render (spec §18.6): symbolic expressions → formula images and terminal text.
+import render;
+
+// Unicode terminal rendering of a symbolic expression.
+println(render::to_terminal(x^2 + 1));        // → x² + 1
+println(render::to_terminal(r"\frac{1}{2}")); // → (1)/(2)
+println(render::to_terminal(r"\sqrt{2}"));    // → √2
+
+// SVG rendering: `to_svg` returns Result<String, String>; the SVG is self-contained.
+match render::to_svg(x^2 + 1) {
+    Ok(svg) => println(len(svg) > 0),         // → true
+    Err(e) => println(e),
+}

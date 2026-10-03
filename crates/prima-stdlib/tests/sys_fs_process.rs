@@ -1,3 +1,4 @@
+#![cfg(feature = "system")]
 //! `sys::process`, `sys::fs`, and `sys::term` integration tests (spec §18.6).
 //!
 //! Filesystem tests use a self-cleaning temporary directory. `tempfile` is not a dev-dependency of
