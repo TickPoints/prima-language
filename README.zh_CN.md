@@ -57,17 +57,18 @@ irm https://raw.githubusercontent.com/TickPoints/prima-language/main/install.ps1
 也可以从源码构建：
 
 ```bash
-# `--features full` 启用全部 stdlib 层；crate 默认仅 `core`（内置类 + `num`）。
+# `prima` 二进制默认启用 `full`（全部 stdlib 层）；`prima-stdlib` 库的基线仍为精简的 `core`
+# （内置类 + `num`）。精简二进制用 `cargo build --no-default-features --features core`。
 # 分层：`core` / `system`（`io`/`time`/`sys`）/ `advanced`（`linalg`/`stats`/`math`/`physics`/`plot`）/ `render`（公式渲染）
-cargo install --git https://github.com/TickPoints/prima-language prima-language --features full
+cargo install --git https://github.com/TickPoints/prima-language prima-language
 ```
 
 ## 快速开始
 
 ```bash
-cargo build --release --features full
-cargo run --release --features full -- run examples/simple.pra     # → 9
-cargo run --release --features full -- run examples/linear_algebra.pra   # 通过 import 使用标准库
+cargo build --release
+cargo run --release -- run examples/simple.pra     # → 9
+cargo run --release -- run examples/linear_algebra.pra   # 通过 import 使用标准库
 ```
 
 语言初体验（`examples/comprehension.pra`）：

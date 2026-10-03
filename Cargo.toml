@@ -65,8 +65,9 @@ anyhow = { workspace = true }
 
 [features]
 # The `prima` binary mirrors the stdlib tiers (see `crates/prima-stdlib/Cargo.toml`).
-# Default is the lean `core` baseline; release/install builds use `--features full`.
-default = ["core"]
+# Default is `full` (all stdlib tiers, including `render`); leaner builds use
+# `--no-default-features --features core` (or `system`/`advanced`/`render`).
+default = ["full"]
 core = ["prima-stdlib/core"]
 system = ["prima-stdlib/system"]
 advanced = ["prima-stdlib/advanced"]

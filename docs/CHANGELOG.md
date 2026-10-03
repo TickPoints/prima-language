@@ -12,10 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Four-tier standard library (Cargo features).** `prima-stdlib` now splits its modules into
   opt-in tiers — `core` (default: built-in classes + `num`), `system` (`io`/`time`/`sys`),
   `advanced` (`linalg`/`stats`/`physics`/`plot`; pulls `nalgebra`), and `render` (formula
-  rendering; the heaviest dependency) — with a `full` aggregate. The `prima` binary mirrors the
-  tiers and defaults to the lean `core` baseline; **release/install builds use `--features full`**
-  and CI runs `--all-features`, with a tier job compiling each level on its own. This isolates the
-  heavy optional dependencies (e.g. the LaTeX→SVG backend) from the default build.
+  rendering; the heaviest dependency) — with a `full` aggregate. The `prima` binary now defaults to
+  `full` (all tiers, including `render`); the `prima-stdlib` library baseline remains `core`, and
+  leaner binaries use `--no-default-features --features <tier>`. CI runs `--all-features`, with a
+  tier job compiling each level on its own. This isolates the heavy optional dependencies (e.g. the
+  LaTeX→SVG backend) from the default library build.
 
 - **`math` standard-library module (spec §18.6).** Integer number theory — `gcd`/`lcm`,
   `factor` (prime factorization), `primes` (sieve), `mod_pow`, and `crt` (Chinese remainder) —
@@ -56,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `term-render` integration remain deferred.
 
 ### Changed
+
+- **The `prima` binary now defaults to the `full` stdlib tier (all modules, including `render`).**
+  The root package's default Cargo feature is `full`, so `cargo build`/`cargo install`/`cargo run`
+  produce a complete binary without `--features`; the `prima-stdlib` library baseline remains the
+  lean `core` (built-in classes + `num`), and lean binaries use
+  `--no-default-features --features <tier>`.
 
 - **`Number` slimmed to 16 bytes and `Value` to 24 bytes (spec §5/§6.1).** The interpreter/VM
   hot-path value types lost their oversized payloads with semantics unchanged. `Number::Complex`

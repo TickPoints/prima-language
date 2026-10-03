@@ -741,7 +741,7 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 > **Phase 11 分块落地记录（进行中）**：
 >
-> - **stdlib 四层 feature（前置）**：`core`/`system`/`advanced`/`render` + `full`，隔离重依赖；发布二进制 `--features full`，CI `--all-features` 且逐层 `check`。详见 §7「v2.3+ 工具链 ADR」。
+> - **stdlib 四层 feature（前置）**：`core`/`system`/`advanced`/`render` + `full`，隔离重依赖；`prima` 二进制默认 `full`，`prima-stdlib` 库基线 `core`（精简二进制用 `--no-default-features --features <tier>`），CI `--all-features` 且逐层 `check`。详见 §7「v2.3+ 工具链 ADR」。
 > - **`math` 已落地**（`advanced`）：`gcd`/`lcm`/`factor`/`primes`/`crt`/`mod_pow` + 多项式（`poly_eval`/`poly_add`/`poly_mul`/`poly_derivative`/`poly_roots`，Durand–Kerner）+ `continued_fraction`。**偏差**：`factor` 用确定性试除（Pollard rho 仅列为大数可选优化，未实现）；`taylor(f,x,x0,n)` 未实现（需调用点拦截，超出 builtin 参数求值模型）；`primes` 为唯一 `@builtin(O1)` 分层（`factor` 因 `n<=0` 报错无法在 `.pra` 回退中表达而保持 O0）。`num::gcd/lcm` 与 `math::gcd/lcm` 共用实现。
 > - **`sys` 扩展已落地**（`system`）：`sys::process`（`run`/`exit_code`，平台 shell）、`sys::fs`（`exists`/`is_file`/`is_dir`/`size`/`read_dir`/`metadata`）、`sys::term`（`size`/`is_tty`）；raw 模式未实现。**偏差**：`sys::fs::metadata` 返回 `Result<Dict,String>`（附录 B.7 草图为 `Option<Dict>`）、`sys::term::size` 返回 `Dict{rows,cols}`（草图为元组）——以 `.pra` 文档为方法清单唯一来源（§十八 管理原则）。
 > - **`physics` 已落地**（`advanced`）：由宿主命名空间改为内嵌 `.pra` 模块，CODATA 2022 常数改为带类型的 `pub const`（SI 精确值保留 `Integer`/`Rational`），新增 Rust `@builtin` 初等公式（运动学/力学/简谐/热学/电磁基础）与 `Vector3` Class。**偏差**：`ideal_gas_pressure(n, T, V)` 用玻尔兹曼常数（`n·k_B·T/V`）；另补规范附录 B.7 示例 `simple_pendulum(L, g)`（小角度周期）。
@@ -860,7 +860,7 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 | 规范条款 | 规范建议 | 本方案 | 理由 |
 |---------|---------|--------|------|
-| §18（v2.2 ADR） | stdlib 模块集固定编译进二进制 | **四层 Cargo feature：`core`（默认）/ `system` / `advanced` / `render`，加 `full` 聚合；`prima` 二进制默认 `core`，发布/安装构建用 `--features full`** | 隔离重依赖（`nalgebra` 在 `advanced`、LaTeX→SVG 在 `render`）与默认构建；库基线保持精简，工具链发布物仍完整。CI 跑 `--all-features` 并逐层 `cargo check` 防退化 |
+| §18（v2.2 ADR） | stdlib 模块集固定编译进二进制 | **四层 Cargo feature：`core`（库默认）/ `system` / `advanced` / `render`，加 `full` 聚合；`prima` 二进制默认 `full`，精简构建用 `--no-default-features --features <tier>`** | 隔离重依赖（`nalgebra` 在 `advanced`、LaTeX→SVG 在 `render`）与库默认构建；库基线保持精简，工具链发布物默认完整。CI 跑 `--all-features` 并逐层 `cargo check` 防退化 |
 
 其余所有设计（三世界架构、Number 塔、ExprPool、策略三级、模块系统、错误模型、并行哲学、类所有权）与规范完全一致。
 

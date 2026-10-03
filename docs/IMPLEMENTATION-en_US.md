@@ -861,7 +861,7 @@ Each Phase ends with runnable acceptance commands. Phases 0–10 are all deliver
 
 | Spec clause | Spec suggestion | This plan | Rationale |
 |---------|---------|--------|------|
-| §18 (v2.2 ADR) | stdlib module set compiled into the binary unconditionally | **Four Cargo tiers: `core` (default) / `system` / `advanced` / `render`, plus the `full` aggregate; the `prima` binary defaults to `core`, release/install builds use `--features full`** | Isolates the heavy optional dependencies (`nalgebra` in `advanced`, the LaTeX→SVG backend in `render`) from the default build; the library baseline stays lean while the shipped toolchain remains complete. CI runs `--all-features` and checks each tier individually to prevent drift |
+| §18 (v2.2 ADR) | stdlib module set compiled into the binary unconditionally | **Four Cargo tiers: `core` (library default) / `system` / `advanced` / `render`, plus the `full` aggregate; the `prima` binary defaults to `full`, and lean builds use `--no-default-features --features <tier>`** | Isolates the heavy optional dependencies (`nalgebra` in `advanced`, the LaTeX→SVG backend in `render`) from the library default build; the library baseline stays lean while the shipped toolchain is complete by default. CI runs `--all-features` and checks each tier individually to prevent drift |
 
 All remaining design (three-world architecture, Number tower, ExprPool, the three-level Config policy, module system, error model, parallelism philosophy, class ownership) is fully consistent with the spec.
 
