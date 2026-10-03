@@ -846,6 +846,12 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 | §9.7（v2.0） | `\|>` 管道弃用（W0002），逐步移除 | **移除 `\|>`，改报解析错误 `E0010`（removed-syntax 提示，同 `try/catch`）；删除 `W0002`** | 规范 §9.7（v2.3）定稿：类方法链已完全取代管道，语法层不再接受该形式 |
 | §4.2（v2.0） | 换行分隔弃用（W0001），逐步移除 | **移除换行分隔，`;` 为唯一语句分隔符，报 `E0011`（`expected_separator`）；删除 `W0001` 与 `pending_newline` 机制** | 规范 §4.2（v2.3）定稿：`;` 统一分隔，消除跨行歧义；无过渡期警告 |
 
+**v2.3+ 工具链 ADR 新增**：
+
+| 规范条款 | 规范建议 | 本方案 | 理由 |
+|---------|---------|--------|------|
+| §18（v2.2 ADR） | stdlib 模块集固定编译进二进制 | **四层 Cargo feature：`core`（默认）/ `system` / `advanced` / `render`，加 `full` 聚合；`prima` 二进制默认 `core`，发布/安装构建用 `--features full`** | 隔离重依赖（`nalgebra` 在 `advanced`、LaTeX→SVG 在 `render`）与默认构建；库基线保持精简，工具链发布物仍完整。CI 跑 `--all-features` 并逐层 `cargo check` 防退化 |
+
 其余所有设计（三世界架构、Number 塔、ExprPool、策略三级、模块系统、错误模型、并行哲学、类所有权）与规范完全一致。
 
 ## 8. 遗留优化与后续修复清单（v0.4.0 性能评估后，已完成）

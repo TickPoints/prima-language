@@ -55,13 +55,23 @@ tempfile = "3"
 prima-syntax = { path = "crates/prima-syntax", version = "0.4.2" }
 prima-core = { path = "crates/prima-core", version = "0.4.2" }
 prima-runtime = { path = "crates/prima-runtime", version = "0.4.2" }
-prima-stdlib = { path = "crates/prima-stdlib", version = "0.4.2" }
+prima-stdlib = { path = "crates/prima-stdlib", version = "0.4.2", default-features = false }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 codespan-reporting = { workspace = true }
 rustyline = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+
+[features]
+# The `prima` binary mirrors the stdlib tiers (see `crates/prima-stdlib/Cargo.toml`).
+# Default is the lean `core` baseline; release/install builds use `--features full`.
+default = ["core"]
+core = ["prima-stdlib/core"]
+system = ["prima-stdlib/system"]
+advanced = ["prima-stdlib/advanced"]
+render = ["prima-stdlib/render"]
+full = ["prima-stdlib/full"]
 
 [dev-dependencies]
 insta = { workspace = true }

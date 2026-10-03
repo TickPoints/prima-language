@@ -847,6 +847,12 @@ Each Phase ends with runnable acceptance commands. Phases 0–10 are all deliver
 | §9.7 (v2.0) | `\|>` pipeline deprecated (W0002), to be gradually removed | **`\|>` removed, reporting the parse error `E0010` (removed-syntax hint, same as `try/catch`); `W0002` deleted** | Finalized in spec §9.7 (v2.3): class method chaining has fully replaced the pipeline; the syntax layer no longer accepts the form |
 | §4.2 (v2.0) | Newline separation deprecated (W0001), to be gradually removed | **Newline separation removed; `;` is the sole statement separator, reporting `E0011` (`expected_separator`); `W0001` and the `pending_newline` machinery deleted** | Finalized in spec §4.2 (v2.3): `;` separates uniformly, removing cross-line ambiguity; no transition-period warning |
 
+**v2.3+ toolchain ADR additions**:
+
+| Spec clause | Spec suggestion | This plan | Rationale |
+|---------|---------|--------|------|
+| §18 (v2.2 ADR) | stdlib module set compiled into the binary unconditionally | **Four Cargo tiers: `core` (default) / `system` / `advanced` / `render`, plus the `full` aggregate; the `prima` binary defaults to `core`, release/install builds use `--features full`** | Isolates the heavy optional dependencies (`nalgebra` in `advanced`, the LaTeX→SVG backend in `render`) from the default build; the library baseline stays lean while the shipped toolchain remains complete. CI runs `--all-features` and checks each tier individually to prevent drift |
+
 All remaining design (three-world architecture, Number tower, ExprPool, the three-level Config policy, module system, error model, parallelism philosophy, class ownership) is fully consistent with the spec.
 
 ## 8. Deferred Optimizations and Follow-up Fixes (after the v0.4.0 performance evaluation; completed)

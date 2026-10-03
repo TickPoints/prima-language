@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Four-tier standard library (Cargo features).** `prima-stdlib` now splits its modules into
+  opt-in tiers — `core` (default: built-in classes + `num`), `system` (`io`/`time`/`sys`),
+  `advanced` (`linalg`/`stats`/`physics`/`plot`; pulls `nalgebra`), and `render` (formula
+  rendering; the heaviest dependency) — with a `full` aggregate. The `prima` binary mirrors the
+  tiers and defaults to the lean `core` baseline; **release/install builds use `--features full`**
+  and CI runs `--all-features`, with a tier job compiling each level on its own. This isolates the
+  heavy optional dependencies (e.g. the LaTeX→SVG backend) from the default build.
+
 ### Changed
 
 - **`Number` slimmed to 16 bytes and `Value` to 24 bytes (spec §5/§6.1).** The interpreter/VM

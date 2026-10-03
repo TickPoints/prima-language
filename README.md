@@ -57,15 +57,18 @@ The scripts detect your OS/architecture, download the matching release binary, v
 Or build from source:
 
 ```bash
-cargo install --git https://github.com/TickPoints/prima-language prima-language
+# `--features full` enables every stdlib tier; the crate default is the lean `core` baseline
+# (built-in classes + `num`). Tiers: `core` / `system` (`io`,`time`,`sys`) / `advanced`
+# (`linalg`,`stats`,`math`,`physics`,`plot`) / `render` (formula rendering).
+cargo install --git https://github.com/TickPoints/prima-language prima-language --features full
 ```
 
 ## Quick start
 
 ```bash
-cargo build --release
-cargo run --release -- run examples/simple.pra     # → 9
-cargo run --release -- run examples/linear_algebra.pra   # stdlib via import
+cargo build --release --features full
+cargo run --release --features full -- run examples/simple.pra     # → 9
+cargo run --release --features full -- run examples/linear_algebra.pra   # stdlib via import
 ```
 
 A taste of the language (`examples/comprehension.pra`):
