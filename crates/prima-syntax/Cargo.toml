@@ -10,4 +10,4 @@ description = "Prima lexer, parser, AST and diagnostics"
 [dependencies]
 unicode-ident = { workspace = true }
 thiserror = { workspace = true }
-prima-core = { path = "../prima-core", version = "0.5.0" }
+prima-core = { path = "../prima-core", version = "0.5.1" }
