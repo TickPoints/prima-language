@@ -296,9 +296,9 @@ fn numeric_property(name: &str, n: &Number) -> Result<Value, RuntimeError> {
     use prima_core::Number as N;
     match name {
         "abs" => Ok(Value::Number(match n {
-            N::Complex { re, im } => {
-                let r = re.to_f64_lossy();
-                let i = im.to_f64_lossy();
+            N::Complex(c) => {
+                let r = c.re.to_f64_lossy();
+                let i = c.im.to_f64_lossy();
                 N::Real(Real::F64((r * r + i * i).sqrt()))
             }
             other => other.abs(),
@@ -393,11 +393,11 @@ fn numeric_property(name: &str, n: &Number) -> Result<Value, RuntimeError> {
         }
         "real" | "imag" => {
             let part = match n {
-                N::Complex { re, im } => {
+                N::Complex(c) => {
                     if name == "real" {
-                        (**re).clone()
+                        c.re.clone()
                     } else {
-                        (**im).clone()
+                        c.im.clone()
                     }
                 }
                 other if name == "real" => other.clone(),
@@ -445,7 +445,7 @@ fn number_is_finite(n: &Number) -> bool {
         Number::Real(Real::F64(f)) => f.is_finite(),
         Number::Real(Real::F32(f)) => f.is_finite(),
         Number::BigFloat(f) => f.is_finite(),
-        Number::Complex { re, im } => number_is_finite(re) && number_is_finite(im),
+        Number::Complex(c) => number_is_finite(&c.re) && number_is_finite(&c.im),
         _ => true,
     }
 }
@@ -456,7 +456,7 @@ fn number_is_nan(n: &Number) -> bool {
         Number::Real(Real::F64(f)) => f.is_nan(),
         Number::Real(Real::F32(f)) => f.is_nan(),
         Number::BigFloat(f) => f.is_nan(),
-        Number::Complex { re, im } => number_is_nan(re) || number_is_nan(im),
+        Number::Complex(c) => number_is_nan(&c.re) || number_is_nan(&c.im),
         _ => false,
     }
 }
@@ -690,10 +690,10 @@ fn to_complex(n: &Number) -> Result<Value, RuntimeError> {
     if n.is_complex() {
         return Ok(Value::Number(n.clone()));
     }
-    Ok(Value::Number(Number::Complex {
-        re: Box::new(n.clone()),
-        im: Box::new(Number::from(0)),
-    }))
+    Ok(Value::Number(Number::from_complex(
+        n.clone(),
+        Number::from(0),
+    )))
 }
 
 // ---- Try collapse (spec §9.3): result wrapped in a `Result`, no runtime error is raised ----
@@ -765,10 +765,10 @@ fn try_complex(name: &str, n: Option<Number>) -> Value {
     if n.is_complex() {
         return Value::Result(Ok(Box::new(Value::Number(n))));
     }
-    Value::Result(Ok(Box::new(Value::Number(Number::Complex {
-        re: Box::new(n),
-        im: Box::new(Number::from(0)),
-    }))))
+    Value::Result(Ok(Box::new(Value::Number(Number::from_complex(
+        n,
+        Number::from(0),
+    )))))
 }
 
 // ---- Checked collapse (spec §9.4): check for overflow, return a `Result` ----
@@ -1021,14 +1021,14 @@ fn err_builtin(args: &[Value]) -> Result<Value, RuntimeError> {
 
 fn to_string_call(args: &[Value], pool: &ExprPool) -> Result<Value, RuntimeError> {
     arity("to_string", args, 1)?;
-    Ok(Value::String(value_to_string(pool, &args[0])))
+    Ok(Value::String(value_to_string(pool, &args[0]).into()))
 }
 
 fn concat_call(args: &[Value], pool: &ExprPool) -> Result<Value, RuntimeError> {
     arity("concat", args, 2)?;
     let a = value_to_string(pool, &args[0]);
     let b = value_to_string(pool, &args[1]);
-    Ok(Value::String(a + &b))
+    Ok(Value::String((a + &b).into()))
 }
 
 /// Render any value to its display string (spec §16.1 `format_value`): mirrors the evaluator's rendering so
@@ -1039,7 +1039,7 @@ fn value_to_string(pool: &ExprPool, v: &Value) -> String {
         Value::Number(n) => render_number(n),
         Value::Bool(b) => b.to_string(),
         Value::Char(c) => c.to_string(),
-        Value::String(s) => s.clone(),
+        Value::String(s) => s.to_string(),
         Value::Array(elems) => {
             let inner: Vec<String> =
                 elems.with(|items| items.iter().map(|e| value_to_string(pool, e)).collect());
@@ -1086,7 +1086,7 @@ fn value_to_string(pool: &ExprPool, v: &Value) -> String {
 
 fn arg_to_string(v: &Value) -> String {
     match v {
-        Value::String(s) => s.clone(),
+        Value::String(s) => s.to_string(),
         other => format!("{other:?}"),
     }
 }
@@ -1222,7 +1222,13 @@ mod tests {
         assert!(err.to_string().starts_with("underflow:"), "got: {err}");
 
         // `to_u8(256)`: above the maximum → stays the `R0001` overflow category.
-        let err = call("to_u8", &[Value::Number(Number::from(256))], &pool, builtins).unwrap_err();
+        let err = call(
+            "to_u8",
+            &[Value::Number(Number::from(256))],
+            &pool,
+            builtins,
+        )
+        .unwrap_err();
         assert!(matches!(err, RuntimeError::Overflow(_)));
         assert_eq!(err.code(), "R0001");
 
@@ -1232,7 +1238,13 @@ mod tests {
         assert_eq!(err.code(), "R0002");
 
         // An `isize` target (no `checked_` form) uses the same classification.
-        let err = call("to_usize", &[Value::Number(Number::from(-1))], &pool, builtins).unwrap_err();
+        let err = call(
+            "to_usize",
+            &[Value::Number(Number::from(-1))],
+            &pool,
+            builtins,
+        )
+        .unwrap_err();
         assert_eq!(err.code(), "R0002");
     }
 
@@ -1240,20 +1252,38 @@ mod tests {
     fn checked_and_try_below_minimum_message_is_underflow() {
         let (pool, builtins) = setup();
 
-        let out = call("checked_u8", &[Value::Number(Number::from(-1))], &pool, builtins).unwrap();
+        let out = call(
+            "checked_u8",
+            &[Value::Number(Number::from(-1))],
+            &pool,
+            builtins,
+        )
+        .unwrap();
         match out {
             Value::Result(Err(msg)) => assert!(msg.starts_with("underflow:"), "got: {msg:?}"),
             other => panic!("expected an Err result, got {other:?}"),
         }
 
-        let out = call("try_u8", &[Value::Number(Number::from(-1))], &pool, builtins).unwrap();
+        let out = call(
+            "try_u8",
+            &[Value::Number(Number::from(-1))],
+            &pool,
+            builtins,
+        )
+        .unwrap();
         match out {
             Value::Result(Err(msg)) => assert!(msg.starts_with("underflow:"), "got: {msg:?}"),
             other => panic!("expected an Err result, got {other:?}"),
         }
 
         // Above the maximum stays an overflow message.
-        let out = call("checked_u8", &[Value::Number(Number::from(256))], &pool, builtins).unwrap();
+        let out = call(
+            "checked_u8",
+            &[Value::Number(Number::from(256))],
+            &pool,
+            builtins,
+        )
+        .unwrap();
         match out {
             Value::Result(Err(msg)) => assert!(msg.starts_with("overflow:"), "got: {msg:?}"),
             other => panic!("expected an Err result, got {other:?}"),
@@ -1643,10 +1673,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             v,
-            Value::Number(Number::Complex {
-                re: Box::new(Number::from(3)),
-                im: Box::new(Number::from(0)),
-            })
+            Value::Number(Number::from_complex(Number::from(3), Number::from(0)))
         );
     }
 

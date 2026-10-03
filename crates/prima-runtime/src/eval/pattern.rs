@@ -116,7 +116,7 @@ impl Evaluator {
                 },
                 "Err" => match v {
                     Value::Result(Err(msg)) if args.len() == 1 => {
-                        self.match_pattern(env, &Value::String((**msg).clone()), &args[0])
+                        self.match_pattern(env, &Value::String(msg.as_str().into()), &args[0])
                     }
                     _ => None,
                 },

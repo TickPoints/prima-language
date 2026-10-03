@@ -60,13 +60,9 @@ pub(crate) struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Interpret a program (the file is the root module). Defaults to the project entry.
-    Run {
-        file: Option<PathBuf>,
-    },
+    Run { file: Option<PathBuf> },
     /// Dump the AST of a source file.
-    Parse {
-        file: PathBuf,
-    },
+    Parse { file: PathBuf },
     /// Emit a C header or build a C-ABI shared library.
     Compile {
         file: PathBuf,
@@ -95,9 +91,7 @@ enum Command {
         deny: Vec<String>,
     },
     /// Run every `*.pra` file under a directory (default: `src/` in a project, else `examples/`).
-    Test {
-        path: Option<PathBuf>,
-    },
+    Test { path: Option<PathBuf> },
     /// Generate Markdown docs from `///` comments. Defaults to the project entry.
     Doc {
         /// Source file to document (omitted with `--stdlib`).
@@ -117,15 +111,11 @@ enum Command {
         run: bool,
     },
     /// Create a new project skeleton in `<name>/` (spec §20).
-    New {
-        name: String,
-    },
+    New { name: String },
     /// Create a project skeleton in the current directory (spec §20).
     Init,
     /// Generate a shell completion script to stdout.
-    Completions {
-        shell: Shell,
-    },
+    Completions { shell: Shell },
 }
 
 fn main() -> ExitCode {

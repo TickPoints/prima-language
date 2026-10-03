@@ -1,0 +1,21 @@
+//! `sys::process`: run external commands and capture their output (spec §18.6).
+//!
+//! The `@builtin` declarations below are signature-only; each binds to the Rust-hosted
+//! implementation registered under `sys::process::<name>`.
+//!
+//! Trust boundary: `run` and `exit_code` execute arbitrary commands through the platform shell
+//! with the privileges of the host process. Only run commands you trust.
+
+// `sys::process` module signatures (spec §18.6).
+// `@builtin` declarations are signature-only: each binds to the Rust-hosted implementation
+// registered under `sys::process::<name>` (spec §18.4).
+
+/// Run `cmd` through the platform shell (`sh -c` on unix, `cmd /C` on Windows), capturing both
+/// stdout and stderr. On success returns stdout; on a non-zero exit returns an error carrying the
+/// exit code and the captured output. Runs arbitrary commands — see the module trust boundary.
+@builtin
+pub fn run(cmd: String) -> Result<String, String>;
+/// The exit status of running `cmd` through the platform shell. A non-zero status is still `Ok`;
+/// an error is returned only when the shell could not be spawned. Runs arbitrary commands.
+@builtin
+pub fn exit_code(cmd: String) -> Result<Integer, String>;

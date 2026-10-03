@@ -817,7 +817,9 @@ pub(crate) fn literal_value(e: &Expr) -> Option<Value> {
             .map(|b| Number::Integer(Box::new(b)))
             .map(Value::Number),
         ExprKind::Literal(Literal::Bool(b)) => Some(Value::Bool(*b)),
-        ExprKind::Literal(Literal::String { value, .. }) => Some(Value::String(value.clone())),
+        ExprKind::Literal(Literal::String { value, .. }) => {
+            Some(Value::String(value.clone().into()))
+        }
         ExprKind::Unary {
             op: UnOp::Neg,
             operand,

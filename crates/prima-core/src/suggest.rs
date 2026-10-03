@@ -66,8 +66,7 @@ where
             continue;
         }
         let cand_lower = cand.to_lowercase();
-        let prefix =
-            cand_lower.starts_with(&input_lower) || input_lower.starts_with(&cand_lower);
+        let prefix = cand_lower.starts_with(&input_lower) || input_lower.starts_with(&cand_lower);
         let distance = levenshtein(&input_lower, &cand_lower);
         let longest = input_len.max(cand.chars().count());
         // A length-scaled threshold keeps short names from matching unrelated short names.
@@ -135,7 +134,10 @@ mod tests {
         let names = ["alpha", "beta", "gamma"];
         let got = did_you_mean("alpha", names, 3);
         assert!(!got.contains(&"alpha".to_string()));
-        assert!(got.is_empty(), "unrelated names must not be suggested: {got:?}");
+        assert!(
+            got.is_empty(),
+            "unrelated names must not be suggested: {got:?}"
+        );
     }
 
     #[test]

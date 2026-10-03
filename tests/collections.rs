@@ -252,10 +252,9 @@ fn dict_mutation_and_views() {
     let items = eval("let d = { \"a\": 1 };\nd.items()");
     assert_eq!(
         items,
-        arr(vec![Value::Tuple(vec![
-            Value::String("a".into()),
-            Value::Number(Number::from(1))
-        ])])
+        arr(vec![Value::Tuple(
+            vec![Value::String("a".into()), Value::Number(Number::from(1))].into()
+        )])
     );
     // `update` returns the merged dict (spec §11.6).
     assert_eq!(
@@ -345,22 +344,34 @@ fn array_comprehension() {
     assert_eq!(
         eval("[(x, y) for x in range(0, 2) for y in range(0, 2)]"),
         arr(vec![
-            Value::Tuple(vec![
-                Value::Number(Number::from(0)),
-                Value::Number(Number::from(0))
-            ]),
-            Value::Tuple(vec![
-                Value::Number(Number::from(0)),
-                Value::Number(Number::from(1))
-            ]),
-            Value::Tuple(vec![
-                Value::Number(Number::from(1)),
-                Value::Number(Number::from(0))
-            ]),
-            Value::Tuple(vec![
-                Value::Number(Number::from(1)),
-                Value::Number(Number::from(1))
-            ]),
+            Value::Tuple(
+                vec![
+                    Value::Number(Number::from(0)),
+                    Value::Number(Number::from(0))
+                ]
+                .into()
+            ),
+            Value::Tuple(
+                vec![
+                    Value::Number(Number::from(0)),
+                    Value::Number(Number::from(1))
+                ]
+                .into()
+            ),
+            Value::Tuple(
+                vec![
+                    Value::Number(Number::from(1)),
+                    Value::Number(Number::from(0))
+                ]
+                .into()
+            ),
+            Value::Tuple(
+                vec![
+                    Value::Number(Number::from(1)),
+                    Value::Number(Number::from(1))
+                ]
+                .into()
+            ),
         ])
     );
 }
@@ -382,20 +393,32 @@ fn dict_and_set_comprehension() {
     );
     assert_eq!(
         eval("((x, x+1) for x in range(0, 3))"),
-        Value::Tuple(vec![
-            Value::Tuple(vec![
-                Value::Number(Number::from(0)),
-                Value::Number(Number::from(1))
-            ]),
-            Value::Tuple(vec![
-                Value::Number(Number::from(1)),
-                Value::Number(Number::from(2))
-            ]),
-            Value::Tuple(vec![
-                Value::Number(Number::from(2)),
-                Value::Number(Number::from(3))
-            ]),
-        ])
+        Value::Tuple(
+            vec![
+                Value::Tuple(
+                    vec![
+                        Value::Number(Number::from(0)),
+                        Value::Number(Number::from(1))
+                    ]
+                    .into()
+                ),
+                Value::Tuple(
+                    vec![
+                        Value::Number(Number::from(1)),
+                        Value::Number(Number::from(2))
+                    ]
+                    .into()
+                ),
+                Value::Tuple(
+                    vec![
+                        Value::Number(Number::from(2)),
+                        Value::Number(Number::from(3))
+                    ]
+                    .into()
+                ),
+            ]
+            .into()
+        )
     );
 }
 
@@ -421,27 +444,15 @@ fn convenience_functions() {
     assert_eq!(
         eval("enumerate([\"a\", \"b\"])"),
         arr(vec![
-            Value::Tuple(vec![
-                Value::Number(Number::from(0)),
-                Value::String("a".into())
-            ]),
-            Value::Tuple(vec![
-                Value::Number(Number::from(1)),
-                Value::String("b".into())
-            ]),
+            Value::Tuple(vec![Value::Number(Number::from(0)), Value::String("a".into())].into()),
+            Value::Tuple(vec![Value::Number(Number::from(1)), Value::String("b".into())].into()),
         ])
     );
     assert_eq!(
         eval("zip([1, 2], [\"a\", \"b\"])"),
         arr(vec![
-            Value::Tuple(vec![
-                Value::Number(Number::from(1)),
-                Value::String("a".into())
-            ]),
-            Value::Tuple(vec![
-                Value::Number(Number::from(2)),
-                Value::String("b".into())
-            ]),
+            Value::Tuple(vec![Value::Number(Number::from(1)), Value::String("a".into())].into()),
+            Value::Tuple(vec![Value::Number(Number::from(2)), Value::String("b".into())].into()),
         ])
     );
     assert_eq!(

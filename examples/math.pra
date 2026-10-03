@@ -1,0 +1,19 @@
+// math (spec §18.6): integer number theory and polynomial/series numeric tools.
+import math;
+
+// —— Integer number theory ——
+println(math::gcd(12, 18));            // → 6
+println(math::lcm(4, 6));              // → 12
+println(math::factor(360));            // → [2, 2, 2, 3, 3, 5]
+println(math::primes(30));             // → [2, 3, 5, 7, 11, 13, 17, 19, 23, 29]
+println(math::mod_pow(2, 10, 1000));   // → 24
+println(math::crt([2, 3, 2], [3, 5, 7])); // → Ok(23)
+
+// —— Polynomials: coefficients are lowest-degree first ——
+println(math::poly_eval([1.0, 2.0, 3.0], 2.0));    // 1 + 2x + 3x^2 at x = 2 → 17
+println(math::poly_mul([1.0, 1.0], [1.0, -1.0]));  // (1+x)(1-x) → [1, 0, -1]
+println(math::poly_derivative([1.0, 2.0, 3.0]));   // → [2, 6]
+println(math::poly_roots([1.0, 0.0, 1.0]));        // x^2 + 1 → [-i, i]
+
+// —— Continued fractions ——
+println(math::continued_fraction(3.14159, 4));     // → [3, 7, 15, 1]

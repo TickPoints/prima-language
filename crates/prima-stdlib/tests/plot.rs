@@ -1,3 +1,4 @@
+#![cfg(feature = "advanced")]
 use std::fs;
 use std::path::PathBuf;
 
@@ -127,5 +128,102 @@ fn plot_scatter_and_bar_render() {
 fn plot_show_prints_svg() {
     assert!(run(
         "import plot;\nplot::plot([0.0, 1.0], [0.0, 1.0]);\nplot::show();"
+    ));
+}
+
+#[test]
+fn plot_heatmap_renders_cells_and_colorbar() {
+    let path = tmp("prima_plot_heatmap.svg");
+    remove(&path);
+    let src = format!(
+        "import plot;\n\
+         plot::heatmap([[0.0, 1.0], [0.0, 1.0]], \"grid\");\n\
+         plot::savefig(\"{}\");",
+        primed_str(&path.to_string_lossy())
+    );
+    assert!(run(&src), "program failed");
+    let content = fs::read_to_string(&path).expect("svg file should exist");
+    assert!(content.starts_with("<svg"), "content: {content}");
+    // The color map spans the low and high control points; the label comes from the colorbar.
+    assert!(content.contains("#440154"), "low color missing: {content}");
+    assert!(content.contains("#fde725"), "high color missing: {content}");
+    assert!(
+        content.contains("grid"),
+        "overlay label should be rendered: {content}"
+    );
+    remove(&path);
+}
+
+#[test]
+fn plot_contour_renders_iso_lines() {
+    let path = tmp("prima_plot_contour.svg");
+    remove(&path);
+    let src = format!(
+        "import plot;\n\
+         plot::contour([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]], 2, \"iso\");\n\
+         plot::savefig(\"{}\");",
+        primed_str(&path.to_string_lossy())
+    );
+    assert!(run(&src), "program failed");
+    let content = fs::read_to_string(&path).expect("svg file should exist");
+    assert!(content.starts_with("<svg"), "content: {content}");
+    assert!(content.contains("<polyline"), "content: {content}");
+    assert!(
+        content.contains("iso"),
+        "overlay label should be rendered: {content}"
+    );
+    remove(&path);
+}
+
+#[test]
+fn plot_hist_renders_bars() {
+    let path = tmp("prima_plot_hist.svg");
+    remove(&path);
+    let src = format!(
+        "import plot;\n\
+         plot::hist([1.0, 1.0, 2.0, 2.0, 2.0, 3.0], 3, \"samples\");\n\
+         plot::savefig(\"{}\");",
+        primed_str(&path.to_string_lossy())
+    );
+    assert!(run(&src), "program failed");
+    let content = fs::read_to_string(&path).expect("svg file should exist");
+    assert!(content.starts_with("<svg"), "content: {content}");
+    assert!(content.contains("<rect"), "content: {content}");
+    remove(&path);
+}
+
+#[test]
+fn plot_grid_handles_non_finite_values() {
+    let path = tmp("prima_plot_nonfinite.svg");
+    remove(&path);
+    let src = format!(
+        "config {{ fraction := false }}\n\
+         import plot;\n\
+         plot::heatmap([[1.0, 0.0/0.0], [1.0/0.0, 2.0]], \"g\");\n\
+         plot::savefig(\"{}\");",
+        primed_str(&path.to_string_lossy())
+    );
+    assert!(run(&src), "non-finite cells must not panic");
+    let content = fs::read_to_string(&path).expect("svg file should exist");
+    assert!(content.starts_with("<svg"), "content: {content}");
+    remove(&path);
+}
+
+#[test]
+fn plot_heatmap_rejects_non_rectangular_grid() {
+    assert!(!run(
+        "import plot;\nplot::heatmap([[1.0, 2.0], [3.0]], \"x\");"
+    ));
+}
+
+#[test]
+fn plot_heatmap_rejects_empty_grid() {
+    assert!(!run("import plot;\nplot::heatmap([], \"x\");"));
+}
+
+#[test]
+fn plot_contour_rejects_nonpositive_levels() {
+    assert!(!run(
+        "import plot;\nplot::contour([[1.0, 2.0], [3.0, 4.0]], 0, \"x\");"
     ));
 }

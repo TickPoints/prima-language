@@ -896,7 +896,12 @@ fn collect_program_classes(stmt: &Stmt, known: &mut HashSet<String>) {
 fn collect_module_type_names(stmt: &Stmt, known: &mut HashSet<String>) {
     match stmt {
         Stmt::Pub(inner) => collect_module_type_names(inner, known),
-        Stmt::FnDef { name, params, ret, .. } | Stmt::MathDef { name, params, ret, .. } => {
+        Stmt::FnDef {
+            name, params, ret, ..
+        }
+        | Stmt::MathDef {
+            name, params, ret, ..
+        } => {
             add_qualified_type_names(name, known);
             for p in params {
                 if let Some(t) = &p.type_ann {

@@ -123,7 +123,9 @@ impl Evaluator {
                             .iter()
                             .enumerate()
                             .map(|(i, e)| {
-                                Value::Tuple(vec![Value::Number(Number::from(i as i64)), e.clone()])
+                                Value::Tuple(
+                                    vec![Value::Number(Number::from(i as i64)), e.clone()].into(),
+                                )
                             })
                             .collect::<Vec<Value>>()
                     })
@@ -140,7 +142,7 @@ impl Evaluator {
                         y.with(|ys| {
                             xs.iter()
                                 .zip(ys)
-                                .map(|(a, b)| Value::Tuple(vec![a.clone(), b.clone()]))
+                                .map(|(a, b)| Value::Tuple(vec![a.clone(), b.clone()].into()))
                                 .collect::<Vec<Value>>()
                         })
                     })
@@ -325,7 +327,7 @@ impl Evaluator {
                     }
                     Ok(out)
                 })?;
-                Ok(Value::String(out))
+                Ok(Value::String(out.into()))
             }
             Builtin::Count => {
                 check_arity("count", &args, 2)?;
@@ -481,9 +483,9 @@ impl Evaluator {
                 while line.ends_with('\n') || line.ends_with('\r') {
                     line.pop();
                 }
-                Ok(Value::String(line))
+                Ok(Value::String(line.into()))
             }
-            Err(_) => Ok(Value::String(String::new())),
+            Err(_) => Ok(Value::String(String::new().into())),
         }
     }
 }

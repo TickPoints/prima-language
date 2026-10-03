@@ -33,7 +33,7 @@ fn number_arg(args: &[Value], i: usize, fname: &str) -> Result<Number, RuntimeEr
 
 fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeError> {
     match args.get(i) {
-        Some(Value::String(s)) => Ok(s.clone()),
+        Some(Value::String(s)) => Ok(s.to_string()),
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a string, got {other:?}"
         ))),
@@ -142,7 +142,7 @@ fn time_format(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErro
             out.push(c);
         }
     }
-    Ok(Value::String(out))
+    Ok(Value::String(out.into()))
 }
 
 fn time_parse(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {

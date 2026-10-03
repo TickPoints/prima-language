@@ -1500,7 +1500,7 @@ impl Evaluator {
             }
             Op::MakeTuple(n) => {
                 let items = split_args(&mut vm.stack, n as usize);
-                vm.stack.push(Value::Tuple(items));
+                vm.stack.push(Value::Tuple(items.into()));
                 Ok(())
             }
             Op::MakeSet(n) => {
@@ -2259,7 +2259,7 @@ fn jump_target(ip: usize, off: i32) -> usize {
 fn resolve_const(c: Option<Const>) -> Value {
     match c {
         Some(Const::Value(v)) => v,
-        Some(Const::Str(s)) => Value::String(s),
+        Some(Const::Str(s)) => Value::String(s.into()),
         Some(Const::Name(_)) => Value::Nil, // name constants only used by LoadName/CallName/Method
         None => Value::Nil,
     }

@@ -155,7 +155,7 @@ impl ExprPool {
                 }
             }
             Number::Real(r) => self.intern(ExprData::Real(*r)),
-            Number::Complex { .. } => return None,
+            Number::Complex(_) => return None,
             // Fixed-width collapsed layer interns to the exact/`Real` node (spec §6.1).
             Number::I8(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),
             Number::I16(v) => self.intern(ExprData::Integer(Box::new(BigInt::from(*v)))),

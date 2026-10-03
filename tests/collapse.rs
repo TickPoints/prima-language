@@ -101,9 +101,9 @@ fn to_rational_preserves_exact() {
 #[test]
 fn to_complex_wraps() {
     match eval("to_complex(3)") {
-        Value::Number(Number::Complex { re, im }) => {
-            assert_eq!(*re, Number::from(3));
-            assert_eq!(*im, Number::from(0));
+        Value::Number(Number::Complex(c)) => {
+            assert_eq!(c.re, Number::from(3));
+            assert_eq!(c.im, Number::from(0));
         }
         other => panic!("expected Complex, got {other:?}"),
     }

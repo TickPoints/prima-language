@@ -21,10 +21,7 @@ pub enum RuntimeError {
     /// missing key, not-found, empty collection) or where a precise code must override the
     /// category default.
     #[error("{message}")]
-    Coded {
-        code: &'static str,
-        message: String,
-    },
+    Coded { code: &'static str, message: String },
     /// Wraps an error with the source span of the statement/expression being evaluated,
     /// so diagnostics can point at the offending location (spec §16.4).
     #[error("{error}")]

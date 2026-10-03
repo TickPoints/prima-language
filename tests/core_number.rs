@@ -81,9 +81,9 @@ fn f32_to_f64_promotion() {
 fn complex_promotion() {
     let z = Number::complex(1, 2) + Number::from(3);
     match z {
-        Number::Complex { re, im } => {
-            assert_eq!(*re, Number::from(4));
-            assert_eq!(*im, Number::from(2));
+        Number::Complex(c) => {
+            assert_eq!(c.re, Number::from(4));
+            assert_eq!(c.im, Number::from(2));
         }
         other => panic!("expected Complex, got {other:?}"),
     }
@@ -226,9 +226,9 @@ fn fixed_width_promotes_with_real() {
     }
     let z = Number::I16(2) + Number::complex(1, 2);
     match z {
-        Number::Complex { re, im } => {
-            assert_eq!(*re, Number::from(3));
-            assert_eq!(*im, Number::from(2));
+        Number::Complex(c) => {
+            assert_eq!(c.re, Number::from(3));
+            assert_eq!(c.im, Number::from(2));
         }
         other => panic!("expected Complex, got {other:?}"),
     }

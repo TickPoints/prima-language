@@ -57,6 +57,10 @@ The scripts detect your OS/architecture, download the matching release binary, v
 Or build from source:
 
 ```bash
+# The `prima` binary defaults to `full` (every stdlib tier); the `prima-stdlib` library
+# baseline stays the lean `core` (built-in classes + `num`). A lean binary is
+# `cargo build --no-default-features --features core`. Tiers: `core` / `system` (`io`,`time`,`sys`)
+# / `advanced` (`linalg`,`stats`,`math`,`physics`,`plot`) / `render` (formula rendering).
 cargo install --git https://github.com/TickPoints/prima-language prima-language
 ```
 

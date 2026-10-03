@@ -1,9 +1,10 @@
 # CI pipeline: format, lint, and test on every push to main/dev and every PR.
 #
 # - fmt:     `cargo fmt --all --check` (formatting must be canonical).
-# - clippy:  `cargo clippy --workspace --all-targets -- -D warnings` (zero warnings).
-# - test:    `cargo test --workspace` on Linux and Windows (insta snapshots,
+# - clippy:  `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+# - test:    `cargo test --workspace --all-features` on Linux and Windows (insta snapshots,
 #            assert_cmd CLI tests, proptest, stdlib integration tests).
+# - tiers:   each stdlib Cargo tier compiles on its own (`core`/`system`/`advanced`/`render`/`full`).
 
 name: ci
 
@@ -44,8 +45,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Clippy (all targets, warnings denied)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Clippy (all targets/features, warnings denied)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -61,4 +62,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
         shell: bash
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
+
+  tiers:
+    name: tiers
+    needs: [fmt, clippy]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Each stdlib tier compiles on its own
+        shell: bash
+        run: |
+          set -e
+          for tier in core system advanced render full; do
+            echo "::group::prima-stdlib --no-default-features --features $tier"
+            cargo check -p prima-stdlib --no-default-features --features "$tier"
+            echo "::endgroup::"
+          done

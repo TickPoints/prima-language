@@ -769,7 +769,7 @@ impl Evaluator {
             "is_ascii" => Ok(Value::Bool(c.is_ascii())),
             "to_upper" => Ok(Value::Char(c.to_uppercase().next().unwrap_or(c))),
             "to_lower" => Ok(Value::Char(c.to_lowercase().next().unwrap_or(c))),
-            "to_string" => Ok(Value::String(c.to_string())),
+            "to_string" => Ok(Value::String(c.to_string().into())),
             "code" => Ok(Value::Number(Number::from(u32::from(c) as i64))),
             _ => crate::error::err(format!("unknown `Char` method `{name}`")),
         }
@@ -855,14 +855,14 @@ impl Evaluator {
                 if !args.is_empty() {
                     return crate::error::err("`String::new` takes no arguments");
                 }
-                Ok(Some(Value::String(String::new())))
+                Ok(Some(Value::String(String::new().into())))
             }
             "from" => {
                 if args.len() != 1 {
                     return crate::error::err("`String::from` expects 1 argument");
                 }
                 let v = self.eval_expr(env, &args[0])?;
-                Ok(Some(Value::String(self.format_value(&v))))
+                Ok(Some(Value::String(self.format_value(&v).into())))
             }
             _ => Ok(None),
         }
@@ -1180,7 +1180,7 @@ impl Evaluator {
                 Ok(Value::Array(
                     self.sorted_dict_keys(d)
                         .iter()
-                        .map(|k| Value::Tuple(vec![k.to_value(), d[k].clone()]))
+                        .map(|k| Value::Tuple(vec![k.to_value(), d[k].clone()].into()))
                         .collect::<Vec<Value>>()
                         .into(),
                 ))
@@ -1274,7 +1274,7 @@ impl Evaluator {
                         crate::error::coded("R0014", "`Dict.popitem` on an empty dict")
                     })?;
                 let v = d.remove(&k).unwrap();
-                Value::Tuple(vec![k.to_value(), v])
+                Value::Tuple(vec![k.to_value(), v].into())
             }
             _ => return crate::error::err(format!("unknown `Dict` method `{name}`")),
         };

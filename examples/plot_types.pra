@@ -1,0 +1,22 @@
+// plot (spec §18 / appendix B.4): scatter/line/bar plus the scalar-grid overlays.
+import plot;
+
+// A 9x9 "radius squared" scalar field, built with a nested comprehension.
+let n = 9;
+let grid = [[ (to_f64(i) - 4.0)^2 + (to_f64(j) - 4.0)^2 for j in range(0, n) ] for i in range(0, n)];
+
+// Figure 1: heatmap with iso-line contours overlaid on top.
+plot::title("Radius squared");
+plot::xlabel("column");
+plot::ylabel("row");
+plot::heatmap(grid, "value");
+plot::contour(grid, 5, "contour");
+plot::savefig("plot_types.svg");
+
+// Figure 2: histogram (reuses the bar renderer).
+plot::clear();
+plot::title("Histogram");
+plot::hist([1.0, 1.0, 2.0, 2.0, 2.0, 3.0, 3.0, 4.0], 4, "samples");
+plot::savefig("plot_types_hist.svg");
+
+println("wrote plot_types.svg and plot_types_hist.svg");

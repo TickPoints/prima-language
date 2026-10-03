@@ -739,6 +739,16 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
   cargo build --features term-render # feature 编译通过
   ```
 
+> **Phase 11 分块落地记录（进行中）**：
+>
+> - **stdlib 四层 feature（前置）**：`core`/`system`/`advanced`/`render` + `full`，隔离重依赖；`prima` 二进制默认 `full`，`prima-stdlib` 库基线 `core`（精简二进制用 `--no-default-features --features <tier>`），CI `--all-features` 且逐层 `check`。详见 §7「v2.3+ 工具链 ADR」。
+> - **`math` 已落地**（`advanced`）：`gcd`/`lcm`/`factor`/`primes`/`crt`/`mod_pow` + 多项式（`poly_eval`/`poly_add`/`poly_mul`/`poly_derivative`/`poly_roots`，Durand–Kerner）+ `continued_fraction`。**偏差**：`factor` 用确定性试除（Pollard rho 仅列为大数可选优化，未实现）；`taylor(f,x,x0,n)` 未实现（需调用点拦截，超出 builtin 参数求值模型）；`primes` 为唯一 `@builtin(O1)` 分层（`factor` 因 `n<=0` 报错无法在 `.pra` 回退中表达而保持 O0）。`num::gcd/lcm` 与 `math::gcd/lcm` 共用实现。
+> - **`sys` 扩展已落地**（`system`）：`sys::process`（`run`/`exit_code`，平台 shell）、`sys::fs`（`exists`/`is_file`/`is_dir`/`size`/`read_dir`/`metadata`）、`sys::term`（`size`/`is_tty`）；raw 模式未实现。**偏差**：`sys::fs::metadata` 返回 `Result<Dict,String>`（附录 B.7 草图为 `Option<Dict>`）、`sys::term::size` 返回 `Dict{rows,cols}`（草图为元组）——以 `.pra` 文档为方法清单唯一来源（§十八 管理原则）。
+> - **`physics` 已落地**（`advanced`）：由宿主命名空间改为内嵌 `.pra` 模块，CODATA 2022 常数改为带类型的 `pub const`（SI 精确值保留 `Integer`/`Rational`），新增 Rust `@builtin` 初等公式（运动学/力学/简谐/热学/电磁基础）与 `Vector3` Class。**偏差**：`ideal_gas_pressure(n, T, V)` 用玻尔兹曼常数（`n·k_B·T/V`）；另补规范附录 B.7 示例 `simple_pendulum(L, g)`（小角度周期）。
+> - **`plot` 扩展已落地**（`advanced`）：`heatmap`（viridis 色条）/`contour`（marching squares）/`hist`；网格非法即 `RuntimeError`，`NaN`/`Inf` 跳过。
+> - **`render` 已落地**（`render` tier）：`to_svg`（core LaTeX → RaTeX `parse`/`layout`/`to_display_list`/`render_to_svg`，`embed-fonts` 自包含 SVG）+ `to_terminal`（LaTeX→Unicode 转写）。**偏差**：`to_png` 与 `print` 终端公式渲染 `term-render` feature 未实现。
+> - **待落地**：`mem::Arc`（Phase 12）；`math::taylor`、`factor` 的 Pollard rho、`sys::term` raw 模式、`render::to_png`/`term-render` 列为后续可选项。
+
 ### Phase 12：`mem::Arc` 显式引用计数（规范 §12.3/12.4，优先级 low）
 
 **对应工作项 7**（标准库提供显式引用计数；宿主层不引入追踪式 GC）。
@@ -846,6 +856,12 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 | §9.7（v2.0） | `\|>` 管道弃用（W0002），逐步移除 | **移除 `\|>`，改报解析错误 `E0010`（removed-syntax 提示，同 `try/catch`）；删除 `W0002`** | 规范 §9.7（v2.3）定稿：类方法链已完全取代管道，语法层不再接受该形式 |
 | §4.2（v2.0） | 换行分隔弃用（W0001），逐步移除 | **移除换行分隔，`;` 为唯一语句分隔符，报 `E0011`（`expected_separator`）；删除 `W0001` 与 `pending_newline` 机制** | 规范 §4.2（v2.3）定稿：`;` 统一分隔，消除跨行歧义；无过渡期警告 |
 
+**v2.3+ 工具链 ADR 新增**：
+
+| 规范条款 | 规范建议 | 本方案 | 理由 |
+|---------|---------|--------|------|
+| §18（v2.2 ADR） | stdlib 模块集固定编译进二进制 | **四层 Cargo feature：`core`（库默认）/ `system` / `advanced` / `render`，加 `full` 聚合；`prima` 二进制默认 `full`，精简构建用 `--no-default-features --features <tier>`** | 隔离重依赖（`nalgebra` 在 `advanced`、LaTeX→SVG 在 `render`）与库默认构建；库基线保持精简，工具链发布物默认完整。CI 跑 `--all-features` 并逐层 `cargo check` 防退化 |
+
 其余所有设计（三世界架构、Number 塔、ExprPool、策略三级、模块系统、错误模型、并行哲学、类所有权）与规范完全一致。
 
 ## 8. 遗留优化与后续修复清单（v0.4.0 性能评估后，已完成）
@@ -869,13 +885,20 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 > P3 池化 VM 帧/操作数栈缓冲；P5 补充字典索引赋值、切片赋值与字典/集合字面量的 VM 编译（字典/集合
 > 变异方法仍回退 AST）。**P2（`Value` 瘦身至 24B）未实施**：JIT 已覆盖热点数值循环，跨 ~250 处
 > `Number::Real`/`Real` 的机械改造收益有限而风险高，保留为后续可选项。
+>
+> **第三轮落地结果（P2）**：`Number` 瘦身至 16B、`Value` 至 24B 已完成，语义零变化：`Complex`
+> 收为单装箱指针（`Number::Complex(Box<Complex>)`，`Number::from_complex`/`as_complex_parts`），
+> `Value::String`/`Error` 改 `Box<str>`、`Tuple` 改 `Box<[Value]>`（16B 胖指针，无额外分配），
+> 并以编译期 `const` 断言锁定尺寸。**修正原估计**：无需扁平化 `Real` —— `Complex` 装箱后，`Real`
+> 变体（16B）的判别式 niche 恰好承载 `Number` 标签，故 `Number` 直接到 16B，改动面远小于「~250
+> 处 `Number::Real` 机械改造」；默认整函数 JIT 路径不变，解释器路径无回归（`benches/RESULTS.md`）。
 
 ### 8.1 性能优化（下一轮）
 
 | 项 | 内容 | 预期收益 | 说明 |
 |---|---|---|---|
 | P1 | 寄存器式/非装箱数值通道：热点算术不经过 `Value`（槽位直接持有 unboxed `f64`/`i64`，或按类型特化的指令组），需编译期类型推断或运行期反 Box 化 | sieve/poly/pi 类内核 2–5× | 剩余差距的结构性修复；与现有 AST 解释器保持结果一致（vm_parity 扩展） |
-| P2 | `Value` 进一步瘦身至 24B：`Real` 扁平化为 `Number::F64/F32/BigFloat` 变体（`Number` 24B→16B）、`Value::String` 装箱 | 全内核 15–20% | 机械性改造、语义零变化；`String` 装箱为每次字符串构造增加一次小分配，需基准核对字符串密集负载 |
+| P2 | ~~`Value` 瘦身至 24B~~ **已落地（第三轮）**：`Complex` 收为单装箱指针（`Number` 24B→16B），`Value::String`/`Error`→`Box<str>`、`Tuple`→`Box<[Value]>`（`Value` 32B→24B）；无需扁平化 `Real` | 尺寸断言锁定；解释器路径无回归 | 机械性改造、语义零变化；16B 胖指针不增加分配，字符串密集负载基准核对 |
 | P3 | 用户函数调用开销：每次调用进入 VM 都新建 `Vm`（frames/stack 分配）；引入可复用调用栈或调用约定 | 递归/互调内核 2–3× | 微基准：用户 `fn` 调用 ≈335ns/次（含 `Vm` 构造与参数绑定） |
 | P4 | `ArrayVal::with_mut` 的 `Arc strong_count` + `RwLock` 每操作开销（~70–90ns；Python list ≈40ns）：唯一持有快通道（去锁，需重新论证 `Send/Sync`）或批量变异指令 | sieve/dot 1.5–2× | parfor 与 VM/AST 共享数组时的正确性必须有回归覆盖 |
 | P5 | VM 子集继续扩充：多维索引 `M[.., 1]`、切片赋值、字典/集合变异方法（目前 `Method` 层整体回退） | 真实代码覆盖率 | 减少整函数回退 AST；回退判别已区分「不支持」与「运行期错误」 |

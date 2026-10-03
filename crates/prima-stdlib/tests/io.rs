@@ -1,3 +1,4 @@
+#![cfg(feature = "system")]
 use prima_core::{Number, Value, ValueKey};
 use prima_runtime::Evaluator;
 

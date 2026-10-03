@@ -162,10 +162,12 @@ jobs:
       - name: Build release binary
         shell: bash
         run: |
+          # The shipped binary enables every stdlib tier (`core`/`system`/`advanced`/`render`);
+          # the crate default is the lean `core` baseline.
           if [ "${{ matrix.xwin }}" = "true" ]; then
-            cargo xwin build --release --target ${{ matrix.target }} --locked
+            cargo xwin build --release --target ${{ matrix.target }} --locked --features full
           else
-            cargo build --release --target ${{ matrix.target }} --locked
+            cargo build --release --target ${{ matrix.target }} --locked --features full
           fi
 
       - name: Verify macOS x86_64 artifact architecture

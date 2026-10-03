@@ -8,9 +8,32 @@ license.workspace = true
 description = "Prima standard library modules (linalg, stats, io, physics, plot)"
 
 [dependencies]
-prima-runtime = { path = "../prima-runtime", version = "0.4.2" }
-prima-core = { path = "../prima-core", version = "0.4.2" }
-prima-syntax = { path = "../prima-syntax", version = "0.4.2" }
+prima-runtime = { path = "../prima-runtime", version = "0.5.0" }
+prima-core = { path = "../prima-core", version = "0.5.0" }
+prima-syntax = { path = "../prima-syntax", version = "0.5.0" }
 num-bigint = { workspace = true }
-nalgebra = { workspace = true }
-serde_json = { workspace = true }
+nalgebra = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+ratex-parser = { version = "0.1.14", optional = true }
+ratex-layout = { version = "0.1.14", optional = true }
+ratex-svg = { version = "0.1.14", optional = true, features = ["embed-fonts"] }
+
+[features]
+# Four opt-in tiers (default: `core` only). `full` is the aggregate used by the `prima` binary.
+default = ["core"]
+# Built-in classes (`core::*`), `num`: no OS or heavy dependencies.
+core = []
+# OS interaction: `io`, `time`, `sys::path/env/os` (+ later `sys::process/fs/term`).
+system = ["core", "dep:serde_json"]
+# Scientific modules: `linalg`, `stats`, `math`, `physics`, `plot` (pulls `nalgebra`).
+advanced = ["core", "dep:nalgebra"]
+# Formula rendering (LaTeX -> SVG via RaTeX); the heaviest dependency.
+render = [
+    "advanced",
+    "dep:ratex-parser",
+    "dep:ratex-layout",
+    "dep:ratex-svg",
+]
+# The aggregate shipped in the release binary.
+full = ["system", "advanced", "render"]
+

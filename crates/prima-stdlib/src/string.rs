@@ -14,7 +14,7 @@ use prima_runtime::{Evaluator, RuntimeError, value_type_name};
 /// Extract the `String` receiver (`args[0]`).
 fn recv(args: &[Value], name: &str) -> Result<String, RuntimeError> {
     match args.first() {
-        Some(Value::String(s)) => Ok(s.clone()),
+        Some(Value::String(s)) => Ok(s.to_string()),
         Some(other) => Err(RuntimeError::Message(format!(
             "`String.{name}` expects a string receiver, got {}",
             value_type_name(other)
@@ -28,7 +28,7 @@ fn recv(args: &[Value], name: &str) -> Result<String, RuntimeError> {
 /// Method argument `i` (1-based, after the receiver) as a `String`.
 fn str_arg(args: &[Value], i: usize, name: &str) -> Result<String, RuntimeError> {
     match args.get(i) {
-        Some(Value::String(s)) => Ok(s.clone()),
+        Some(Value::String(s)) => Ok(s.to_string()),
         Some(other) => Err(RuntimeError::Message(format!(
             "`String.{name}` argument {i} must be a string, got {}",
             value_type_name(other)
@@ -83,7 +83,9 @@ fn string_is_empty(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, Runtime
 fn string_push(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = recv(args, "push")?;
     arity(args, 1, "push")?;
-    Ok(Value::String(format!("{s}{}", str_arg(args, 1, "push")?)))
+    Ok(Value::String(
+        format!("{s}{}", str_arg(args, 1, "push")?).into(),
+    ))
 }
 
 fn string_insert(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -101,7 +103,7 @@ fn string_insert(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeEr
     let mut out: String = s.chars().take(idx).collect();
     out.push_str(&sub);
     out.extend(s.chars().skip(idx));
-    Ok(Value::Result(Ok(Box::new(Value::String(out)))))
+    Ok(Value::Result(Ok(Box::new(Value::String(out.into())))))
 }
 
 fn string_char_at(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -135,7 +137,7 @@ fn string_substring(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, Runtim
             chars.len()
         )));
     }
-    Ok(Value::String(chars[a..b].iter().collect()))
+    Ok(Value::String(chars[a..b].iter().collect::<String>().into()))
 }
 
 fn string_contains(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -146,12 +148,12 @@ fn string_contains(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, Runtime
 
 fn string_to_upper(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = recv(args, "to_upper")?;
-    Ok(Value::String(s.to_uppercase()))
+    Ok(Value::String(s.to_uppercase().into()))
 }
 
 fn string_to_lower(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = recv(args, "to_lower")?;
-    Ok(Value::String(s.to_lowercase()))
+    Ok(Value::String(s.to_lowercase().into()))
 }
 
 fn string_repeat(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -172,12 +174,12 @@ fn string_repeat(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeEr
             "`String.repeat` result of {result_bytes} bytes exceeds the {MAX_REPEAT_BYTES} byte limit"
         )));
     }
-    Ok(Value::String(s.repeat(n as usize)))
+    Ok(Value::String(s.repeat(n as usize).into()))
 }
 
 fn string_trim(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = recv(args, "trim")?;
-    Ok(Value::String(s.trim().to_string()))
+    Ok(Value::String(s.trim().to_string().into()))
 }
 
 fn string_lstrip(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -185,7 +187,9 @@ fn string_lstrip(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeEr
     arity(args, 1, "lstrip")?;
     let pat: Vec<char> = str_arg(args, 1, "lstrip")?.chars().collect();
     Ok(Value::String(
-        s.trim_start_matches(|c| pat.contains(&c)).to_string(),
+        s.trim_start_matches(|c| pat.contains(&c))
+            .to_string()
+            .into(),
     ))
 }
 
@@ -194,7 +198,7 @@ fn string_rstrip(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeEr
     arity(args, 1, "rstrip")?;
     let pat: Vec<char> = str_arg(args, 1, "rstrip")?.chars().collect();
     Ok(Value::String(
-        s.trim_end_matches(|c| pat.contains(&c)).to_string(),
+        s.trim_end_matches(|c| pat.contains(&c)).to_string().into(),
     ))
 }
 
@@ -259,9 +263,9 @@ fn string_capitalize(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, Runti
             let mut out = String::new();
             out.push_str(&first.to_uppercase().collect::<String>());
             out.push_str(&cs.as_str().to_lowercase());
-            Ok(Value::String(out))
+            Ok(Value::String(out.into()))
         }
-        None => Ok(Value::String(String::new())),
+        None => Ok(Value::String(String::new().into())),
     }
 }
 
@@ -277,7 +281,7 @@ fn string_title(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErr
         }
         prev_alpha = c.is_alphabetic();
     }
-    Ok(Value::String(out))
+    Ok(Value::String(out.into()))
 }
 
 fn string_swapcase(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -292,12 +296,12 @@ fn string_swapcase(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, Runtime
             out.push(c);
         }
     }
-    Ok(Value::String(out))
+    Ok(Value::String(out.into()))
 }
 
 fn string_casefold(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = recv(args, "casefold")?;
-    Ok(Value::String(s.to_lowercase()))
+    Ok(Value::String(s.to_lowercase().into()))
 }
 
 // ---- layered hot methods (O2): must match the `.pra` fallback bodies in `string.pra` ----
@@ -307,12 +311,15 @@ fn string_split(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErr
     arity(args, 1, "split")?;
     let sep = str_arg(args, 1, "split")?;
     if sep.is_empty() {
-        let parts: Vec<Value> = s.chars().map(|c| Value::String(c.to_string())).collect();
+        let parts: Vec<Value> = s
+            .chars()
+            .map(|c| Value::String(c.to_string().into()))
+            .collect();
         return Ok(Value::Array(parts.into()));
     }
     let parts: Vec<Value> = s
         .split(&sep)
-        .map(|p| Value::String(p.to_string()))
+        .map(|p| Value::String(p.to_string().into()))
         .collect();
     Ok(Value::Array(parts.into()))
 }
@@ -323,9 +330,9 @@ fn string_replace(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeE
     let old = str_arg(args, 1, "replace")?;
     let new = str_arg(args, 2, "replace")?;
     if old.is_empty() {
-        return Ok(Value::String(s));
+        return Ok(Value::String(s.into()));
     }
-    Ok(Value::String(s.replace(&old, &new)))
+    Ok(Value::String(s.replace(&old, &new).into()))
 }
 
 fn string_strip(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -333,7 +340,7 @@ fn string_strip(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErr
     arity(args, 1, "strip")?;
     let pat: Vec<char> = str_arg(args, 1, "strip")?.chars().collect();
     Ok(Value::String(
-        s.trim_matches(|c| pat.contains(&c)).to_string(),
+        s.trim_matches(|c| pat.contains(&c)).to_string().into(),
     ))
 }
 
@@ -375,7 +382,7 @@ fn string_join(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErro
             }
         }
     }
-    Ok(Value::String(out))
+    Ok(Value::String(out.into()))
 }
 
 /// Register every `String::<name>` implementation (spec §18.1/§18.4).

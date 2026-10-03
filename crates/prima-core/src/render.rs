@@ -14,7 +14,7 @@ pub fn render_number(n: &Number) -> String {
         Number::Rational(r) => format!("\\frac{{{}}}{{{}}}", r.numer(), r.denom()),
         Number::Real(Real::F64(f)) => f.to_string(),
         Number::Real(Real::F32(f)) => f.to_string(),
-        Number::Complex { re, im } => format!("{} + {}i", render_number(re), render_number(im)),
+        Number::Complex(c) => format!("{} + {}i", render_number(&c.re), render_number(&c.im)),
         Number::I8(v) => v.to_string(),
         Number::I16(v) => v.to_string(),
         Number::I32(v) => v.to_string(),

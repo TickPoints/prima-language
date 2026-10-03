@@ -146,7 +146,11 @@ pub enum Value {
     Number(Number),
     Bool(bool),
     Char(char),
-    String(String),
+    /// Heap-string payload as `Box<str>` — a 16-byte fat pointer instead of `String`'s 24-byte
+    /// header, keeping `Value` at 24 bytes (spec §5). Building from a `String` goes through
+    /// `into_boxed_str` (no allocation beyond trimming excess capacity); `Deref<Target = str>`
+    /// keeps the read surface (`chars`/`len`/`trim`/…) unchanged.
+    String(Box<str>),
     Array(ArrayVal),
     // `Dict`/`Set` are boxed: the 48-byte `HashMap`/`HashSet` headers would otherwise dominate
     // this enum's size on the interpreter/VM hot path; the boxed handle keeps `Value` compact.
@@ -156,8 +160,10 @@ pub enum Value {
     Symbol(u32),
     Indeterminate(IndeterminateForm),
     Undefined,
-    Error(String),
-    Tuple(Vec<Value>),
+    Error(Box<str>),
+    /// Tuple payload as `Box<[Value]>` — a 16-byte fat pointer instead of `Vec`'s 24-byte header
+    /// (tuples are immutable, so the missing capacity field costs nothing).
+    Tuple(Box<[Value]>),
     // `Err` carries `Box<String>` so the inlined `Result` payload stays pointer-sized.
     Result(std::result::Result<Box<Value>, Box<String>>),
     Class(u32), // class instance handle (spec §5); registry lives in prima-runtime
@@ -167,6 +173,11 @@ pub enum Value {
     JitFunction(u32),
     Option(Option<Box<Value>>), // Option<T>: Some(T) / None
 }
+
+// Size guard (spec §5 interpreter/VM hot path): `Value` is cloned/moved on every stack operation
+// and must stay 24 bytes. The largest payloads are `Number` (16) and `Result` (16); `String`,
+// `Error` and `Tuple` use 16-byte fat pointers (`Box<str>` / `Box<[Value]>`) for exactly this.
+const _: () = assert!(std::mem::size_of::<Value>() == 24);
 
 /// Hashable key for `Dict`/`Set` (spec §11.6): a value-semantic, immutable subset of `Value` —
 /// numbers (canonicalized), strings, chars, bools, and symbol/expr handles.
@@ -189,7 +200,7 @@ impl ValueKey {
     pub fn from_value(v: &Value) -> Option<ValueKey> {
         match v {
             Value::Number(n) => number_to_key(n),
-            Value::String(s) => Some(ValueKey::Str(s.clone())),
+            Value::String(s) => Some(ValueKey::Str(s.to_string())),
             Value::Char(c) => Some(ValueKey::Char(*c)),
             Value::Bool(b) => Some(ValueKey::Bool(*b)),
             Value::Symbol(s) => Some(ValueKey::Symbol(*s)),
@@ -210,7 +221,7 @@ impl ValueKey {
                 BigRational::new(n.clone(), d.clone()),
             ))),
             ValueKey::Float(bits) => Value::Number(Number::Real(Real::F64(f64::from_bits(*bits)))),
-            ValueKey::Str(s) => Value::String(s.clone()),
+            ValueKey::Str(s) => Value::String(s.as_str().into()),
             ValueKey::Char(c) => Value::Char(*c),
             ValueKey::Bool(b) => Value::Bool(*b),
             ValueKey::Symbol(s) => Value::Symbol(*s),
@@ -368,7 +379,7 @@ mod tests {
     #[test]
     fn scalar_key_roundtrip() {
         assert_roundtrip(
-            Value::String("hello".to_string()),
+            Value::String("hello".into()),
             ValueKey::Str("hello".to_string()),
         );
         assert_roundtrip(Value::Char('x'), ValueKey::Char('x'));
@@ -503,7 +514,7 @@ mod tests {
         );
         assert_eq!(
             ValueKey::Str("abc".to_string()).to_value(),
-            Value::String("abc".to_string())
+            Value::String("abc".into())
         );
         assert_eq!(ValueKey::Char('z').to_value(), Value::Char('z'));
         assert_eq!(ValueKey::Bool(false).to_value(), Value::Bool(false));

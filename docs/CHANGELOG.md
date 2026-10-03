@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-03
+
+### Added
+
+- **Four-tier standard library (Cargo features).** `prima-stdlib` now splits its modules into
+  opt-in tiers — `core` (default: built-in classes + `num`), `system` (`io`/`time`/`sys`),
+  `advanced` (`linalg`/`stats`/`physics`/`plot`; pulls `nalgebra`), and `render` (formula
+  rendering; the heaviest dependency) — with a `full` aggregate. The `prima` binary now defaults to
+  `full` (all tiers, including `render`); the `prima-stdlib` library baseline remains `core`, and
+  leaner binaries use `--no-default-features --features <tier>`. CI runs `--all-features`, with a
+  tier job compiling each level on its own. This isolates the heavy optional dependencies (e.g. the
+  LaTeX→SVG backend) from the default library build.
+
+- **`math` standard-library module (spec §18.6).** Integer number theory — `gcd`/`lcm`,
+  `factor` (prime factorization), `primes` (sieve), `mod_pow`, and `crt` (Chinese remainder) —
+  plus polynomial tools over lowest-degree-first `Array<F64>` coefficients (`poly_eval`,
+  `poly_add`, `poly_mul`, `poly_derivative`, `poly_roots` via Durand–Kerner returning
+  `Array<Complex>`) and `continued_fraction`. `primes` is a layered `@builtin(O1)` with a `.pra`
+  fallback; allocation is bounded by explicit limits. `taylor` is not yet implemented (it needs a
+  call-site interceptor) and `factor` uses deterministic trial division.
+
+- **`sys::process` / `sys::fs` / `sys::term` (spec §18.6).** Run external commands through the
+  platform shell and capture output (`process::run`, `process::exit_code`), filesystem queries
+  (`fs::exists`/`is_file`/`is_dir`/`size`/`read_dir`/`metadata`), and terminal detection
+  (`term::size`/`is_tty`). All fallible operations return `Result` and never panic; the
+  arbitrary-command and arbitrary-path trust boundaries are documented in the module docs.
+
+- **`physics` formulas and `Vector3` (spec §18.6).** The `physics` module is now an embedded
+  `.pra` module rather than a Rust-hosted constants namespace: the CODATA 2022 constants are
+  declared as typed `pub const`s (SI-exact `Integer`/`Rational` forms preserved), and the module
+  gains elementary formulas implemented as Rust `@builtin`s — kinematics (`velocity`,
+  `displacement`, `projectile_*`), mechanics (`force`, `momentum`, `kinetic_energy`,
+  `potential_energy`, `work`, `power`), simple harmonic motion (`shm_*`, `simple_pendulum`),
+  thermodynamics (`celsius_to_kelvin`, `kelvin_to_celsius`, `heat`, `ideal_gas_pressure`), and
+  electromagnetism (`coulomb_force`, `ohm_*`, `electrical_power`) — plus a `Vector3` class with
+  `new`/`add`/`sub`/`scale`/`dot`/`cross`/`length`/`normalize`. All formulas take and return
+  `F64` and report wrong arity or non-real arguments as errors.
+
+- **`plot` heatmaps and contours (spec §18.6).** `plot::heatmap` renders a scalar grid as a
+  color-mapped image (viridis-like ramp with a colorbar in the figure margin), `plot::contour`
+  draws evenly spaced iso-lines with marching squares, and `plot::hist` renders a histogram.
+  Ragged/empty grids and invalid level/bin counts report a `RuntimeError`; `NaN`/`Inf` cells are
+  skipped rather than panicking.
+
+- **`render` formula rendering (spec §18.6).** `render::to_svg` renders a symbolic expression or
+  LaTeX string to a self-contained SVG (core LaTeX view → RaTeX `parse`/`layout`/`to_display_list`
+  → `render_to_svg` with embedded glyph outlines), and `render::to_terminal` transliterates the
+  same view into Unicode terminal math text. Available behind the `render` tier, which keeps the
+  RaTeX dependencies out of the default build. PNG output and the `print` terminal-formula
+  `term-render` integration remain deferred.
+
+### Changed
+
+- **The `prima` binary now defaults to the `full` stdlib tier (all modules, including `render`).**
+  The root package's default Cargo feature is `full`, so `cargo build`/`cargo install`/`cargo run`
+  produce a complete binary without `--features`; the `prima-stdlib` library baseline remains the
+  lean `core` (built-in classes + `num`), and lean binaries use
+  `--no-default-features --features <tier>`.
+
+- **`Number` slimmed to 16 bytes and `Value` to 24 bytes (spec §5/§6.1).** The interpreter/VM
+  hot-path value types lost their oversized payloads with semantics unchanged. `Number::Complex`
+  is now a single boxed pointer (`Number::Complex(Box<Complex>)`, built via `Number::from_complex`
+  and read via `Number::as_complex_parts`); previously its two inline `Box` fields formed a
+  16-byte payload with no spare niche, forcing the enum tag out to 24 bytes. `Value::String` and
+  `Value::Error` now hold `Box<str>` instead of `String`, and `Value::Tuple` holds `Box<[Value]>`
+  instead of `Vec<Value>` — 16-byte fat pointers rather than 24-byte headers, with no extra
+  allocation (construction goes through `into_boxed_str`/`into_boxed_slice`). Compile-time
+  `const _: () = assert!(...)` guards pin both sizes so a future variant cannot silently regrow
+  the hot path. Note: flattening the `Real` enum was **not** needed — with `Complex` boxed the
+  `Real` variant's spare discriminants host the `Number` tag, so `Number` reaches 16 bytes without
+  touching the ~500 `Number::Real(…)` sites. The default whole-function JIT path is unchanged;
+  `benches/RESULTS.md` was regenerated (interpreted paths within run-to-run noise).
+
 ## [0.4.2] - 2026-10-03
 
 ### Added

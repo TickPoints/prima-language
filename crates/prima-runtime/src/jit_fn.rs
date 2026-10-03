@@ -875,10 +875,9 @@ fn value_to_jit_word(v: &Value, ty: ScalarType) -> Option<u64> {
     match (v, ty) {
         (Value::Number(n), ScalarType::I64) => match n {
             // Only exact integers map to the JIT's i64; a Rational/Real/etc. would change semantics.
-            Number::Real(_)
-            | Number::Rational(_)
-            | Number::Complex { .. }
-            | Number::BigFloat(_) => None,
+            Number::Real(_) | Number::Rational(_) | Number::Complex(_) | Number::BigFloat(_) => {
+                None
+            }
             _ => n.as_i64().map(|x| x as u64),
         },
         (Value::Number(n), ScalarType::F64) if !n.is_complex() => Some(n.to_f64_lossy().to_bits()),

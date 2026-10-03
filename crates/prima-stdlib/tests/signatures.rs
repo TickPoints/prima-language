@@ -1,3 +1,4 @@
+#![cfg(feature = "full")]
 use prima_runtime::stdlib::{get_impl, get_module_source};
 
 /// The embedded stdlib signature modules and their `@builtin` implementations are registered by

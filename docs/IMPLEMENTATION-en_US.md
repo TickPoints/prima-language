@@ -740,6 +740,16 @@ Each Phase ends with runnable acceptance commands. Phases 0–10 are all deliver
   cargo build --features term-render # feature compiles
   ```
 
+> **Phase 11 incremental landing (in progress)**:
+>
+> - **stdlib four-tier features (prerequisite)**: `core`/`system`/`advanced`/`render` + `full`, isolating the heavy dependencies; the release binary uses `--features full`, and CI runs `--all-features` plus a per-tier `check`. See §7 "v2.3+ toolchain ADR".
+> - **`math` landed** (`advanced`): `gcd`/`lcm`/`factor`/`primes`/`crt`/`mod_pow` plus polynomials (`poly_eval`/`poly_add`/`poly_mul`/`poly_derivative`/`poly_roots` via Durand–Kerner) and `continued_fraction`. **Deviations**: `factor` uses deterministic trial division (Pollard rho is listed only as an optional large-input optimization and is not implemented); `taylor(f,x,x0,n)` is not implemented (it needs call-site interception, beyond the builtin argument-evaluation model); `primes` is the only layered `@builtin(O1)` (`factor` stays O0 because its `n <= 0` error cannot be expressed in a `.pra` fallback). `num::gcd/lcm` and `math::gcd/lcm` share one implementation.
+> - **`sys` expansion landed** (`system`): `sys::process` (`run`/`exit_code`, platform shell), `sys::fs` (`exists`/`is_file`/`is_dir`/`size`/`read_dir`/`metadata`), `sys::term` (`size`/`is_tty`); raw mode is not implemented. **Deviations**: `sys::fs::metadata` returns `Result<Dict, String>` (appendix B.7 sketches `Option<Dict>`) and `sys::term::size` returns `Dict{rows,cols}` (the sketch uses a tuple) — the embedded `.pra` docs are the sole method-list source (§eighteen management principle).
+> - **`physics` landed** (`advanced`): moved from a host namespace to an embedded `.pra` module; the CODATA 2022 constants become typed `pub const`s (SI-exact values keep their `Integer`/`Rational` form), plus Rust `@builtin` elementary formulas (kinematics/mechanics/harmonic oscillation/thermodynamics/basic electromagnetism) and a `Vector3` class. **Deviations**: `ideal_gas_pressure(n, T, V)` uses the Boltzmann constant (`n·k_B·T/V`); the spec appendix B.7 example `simple_pendulum(L, g)` (small-angle period) is also provided.
+> - **`plot` expansion landed** (`advanced`): `heatmap` (viridis colorbar) / `contour` (marching squares) / `hist`; invalid grids raise a `RuntimeError` and `NaN`/`Inf` cells are skipped.
+> - **`render` landed** (`render` tier): `to_svg` (core LaTeX → RaTeX `parse`/`layout`/`to_display_list`/`render_to_svg` with `embed-fonts` for a self-contained SVG) plus `to_terminal` (LaTeX→Unicode transliteration). **Deviations**: `to_png` and the `print` terminal-formula `term-render` feature are not implemented.
+> - **Remaining**: `mem::Arc` (Phase 12); `math::taylor`, Pollard rho for `factor`, `sys::term` raw mode, and `render::to_png`/`term-render` are optional follow-ups.
+
 ### Phase 12: `mem::Arc` explicit reference counting (spec §12.3/12.4, priority low)
 
 **Work item 7** (the standard library provides explicit reference counting; the host layer does not introduce a tracing GC).
@@ -847,6 +857,12 @@ Each Phase ends with runnable acceptance commands. Phases 0–10 are all deliver
 | §9.7 (v2.0) | `\|>` pipeline deprecated (W0002), to be gradually removed | **`\|>` removed, reporting the parse error `E0010` (removed-syntax hint, same as `try/catch`); `W0002` deleted** | Finalized in spec §9.7 (v2.3): class method chaining has fully replaced the pipeline; the syntax layer no longer accepts the form |
 | §4.2 (v2.0) | Newline separation deprecated (W0001), to be gradually removed | **Newline separation removed; `;` is the sole statement separator, reporting `E0011` (`expected_separator`); `W0001` and the `pending_newline` machinery deleted** | Finalized in spec §4.2 (v2.3): `;` separates uniformly, removing cross-line ambiguity; no transition-period warning |
 
+**v2.3+ toolchain ADR additions**:
+
+| Spec clause | Spec suggestion | This plan | Rationale |
+|---------|---------|--------|------|
+| §18 (v2.2 ADR) | stdlib module set compiled into the binary unconditionally | **Four Cargo tiers: `core` (library default) / `system` / `advanced` / `render`, plus the `full` aggregate; the `prima` binary defaults to `full`, and lean builds use `--no-default-features --features <tier>`** | Isolates the heavy optional dependencies (`nalgebra` in `advanced`, the LaTeX→SVG backend in `render`) from the library default build; the library baseline stays lean while the shipped toolchain is complete by default. CI runs `--all-features` and checks each tier individually to prevent drift |
+
 All remaining design (three-world architecture, Number tower, ExprPool, the three-level Config policy, module system, error model, parallelism philosophy, class ownership) is fully consistent with the spec.
 
 ## 8. Deferred Optimizations and Follow-up Fixes (after the v0.4.0 performance evaluation; completed)
@@ -875,13 +891,22 @@ All remaining design (three-world architecture, Number tower, ExprPool, the thre
 > assignment and dict/set literals in the VM (dict/set mutating *methods* still fall back). **P2
 > (slim `Value` to 24B) is deferred**: the JIT already covers hot numeric loops, and the
 > mechanical ~250-site `Number::Real`/`Real` change has limited upside and high regression risk.
+>
+> **Third round (P2)**: `Number` is now 16B and `Value` 24B, semantics unchanged. `Complex` became a
+> single boxed pointer (`Number::Complex(Box<Complex>)`, built with `Number::from_complex` / read
+> with `as_complex_parts`), and `Value::String`/`Error` became `Box<str>` and `Tuple` `Box<[Value]>`
+> (16-byte fat pointers, no extra allocation), with compile-time `const` assertions pinning both
+> sizes. **Correcting the earlier estimate**: flattening `Real` was unnecessary — with `Complex`
+> boxed, the `Real` variant's spare discriminants host the `Number` tag, so `Number` reaches 16
+> bytes with a far smaller change than the "~250 `Number::Real` sites"; the default whole-function
+> JIT path is unchanged and interpreted paths show no regression (`benches/RESULTS.md`).
 
 ### 8.1 Performance (next round)
 
 | # | Item | Expected payoff | Notes |
 |---|---|---|---|
 | P1 | Register-style / unboxed numeric channel: hot arithmetic bypasses `Value` (slots hold unboxed `f64`/`i64` directly, or type-specialized instruction groups), requiring compile-time type inference or runtime de-boxing | 2–5× on sieve/poly/pi-class kernels | The structural fix for the remaining gap; results must stay identical to the AST interpreter (extend vm_parity) |
-| P2 | Slim `Value` further to 24B: flatten `Real` into `Number::F64/F32/BigFloat` variants (Number 24B→16B), box `Value::String` | 15–20% on all kernels | Mechanical, semantics unchanged; boxing `String` adds one small allocation per string construction — benchmark string-heavy workloads |
+| P2 | ~~Slim `Value` to 24B~~ **Landed (third round)**: `Complex` boxed as a single pointer (Number 24B→16B), `Value::String`/`Error`→`Box<str>`, `Tuple`→`Box<[Value]>` (Value 32B→24B); no `Real` flattening needed | size pinned by compile-time assertions; interpreted paths show no regression | Mechanical, semantics unchanged; the 16-byte fat pointers add no allocation — string-heavy benchmarks checked |
 | P3 | User-function call overhead: each call builds a fresh `Vm` (frames/stack allocations); introduce a reusable call stack or calling convention | 2–3× on recursion/call-heavy kernels | Micro-benchmark: a user `fn` call costs ≈335ns (including `Vm` construction and parameter binding) |
 | P4 | Per-op `Arc strong_count` + `RwLock` cost in `ArrayVal::with_mut` (~70–90ns; Python list ≈40ns): uniquely-held fast path (lock-free, must re-justify `Send/Sync`) or batched mutation instructions | 1.5–2× on sieve/dot | Correctness with arrays shared between parfor/VM/AST needs regression coverage |
 | P5 | Grow the VM subset: multi-dimensional indexing `M[.., 1]`, slice assignment, dict/set mutating methods (currently a whole-op fallback at `Method`) | Real-code coverage | Fewer whole-function AST fallbacks; the fallback discriminator already separates "unsupported" from "runtime error" |

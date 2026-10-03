@@ -328,7 +328,10 @@ impl Evaluator {
         self.push_module_config(root.program.config.as_ref())?;
         for stmt in &root.program.stmts {
             if let Flow::Return(_) = self.eval_stmt(env, stmt)? {
-                return Err(crate::error::coded("E0080", "`return` outside of a function"));
+                return Err(crate::error::coded(
+                    "E0080",
+                    "`return` outside of a function",
+                ));
             }
         }
         Ok(())
@@ -488,8 +491,9 @@ impl Evaluator {
                         .get(&key)
                         .cloned()
                         .or_else(|| crate::stdlib::get_namespace(&key))
-                        .ok_or_else(|| {
-                            RuntimeError::Coded { code: "R0008", message: format!("module `{key}` is not loaded") }
+                        .ok_or_else(|| RuntimeError::Coded {
+                            code: "R0008",
+                            message: format!("module `{key}` is not loaded"),
                         })?;
                     for item in items.values() {
                         if let NamespaceItem::Class(def) = item {
@@ -501,7 +505,10 @@ impl Evaluator {
                         .map(|a| a.value.clone())
                         .unwrap_or_else(|| key.clone());
                     if env.borrow_mut().set_module(&ns, items) {
-                        return Err(crate::error::coded("E0031", format!("conflicting import: module `{ns}`")));
+                        return Err(crate::error::coded(
+                            "E0031",
+                            format!("conflicting import: module `{ns}`"),
+                        ));
                     }
                 }
                 ImportKind::From {
@@ -512,15 +519,19 @@ impl Evaluator {
                         .get(&key)
                         .cloned()
                         .or_else(|| crate::stdlib::get_namespace(&key))
-                        .ok_or_else(|| {
-                            RuntimeError::Coded { code: "R0008", message: format!("module `{key}` is not loaded") }
+                        .ok_or_else(|| RuntimeError::Coded {
+                            code: "R0008",
+                            message: format!("module `{key}` is not loaded"),
                         })?;
                     for it in from_items {
                         match it {
                             ImportItem::Star => {
                                 for (name, item) in &module {
                                     if !bound.insert(name.clone()) {
-                                        return Err(crate::error::coded("E0031", format!("conflicting import: `{name}`")));
+                                        return Err(crate::error::coded(
+                                            "E0031",
+                                            format!("conflicting import: `{name}`"),
+                                        ));
                                     }
                                     self.bind_imported_item(env, name, item);
                                 }
@@ -540,7 +551,10 @@ impl Evaluator {
                                     .map(|a| a.value.clone())
                                     .unwrap_or_else(|| name.value.clone());
                                 if !bound.insert(target.clone()) {
-                                    return Err(crate::error::coded("E0031", format!("conflicting import: `{target}`")));
+                                    return Err(crate::error::coded(
+                                        "E0031",
+                                        format!("conflicting import: `{target}`"),
+                                    ));
                                 }
                                 self.bind_imported_item(env, &target, &item);
                             }
@@ -585,7 +599,10 @@ impl Evaluator {
         self.push_module_config(program.config.as_ref())?;
         for stmt in &program.stmts {
             if let Flow::Return(_) = self.eval_stmt(env, stmt)? {
-                return Err(crate::error::coded("E0080", "`return` outside of a function"));
+                return Err(crate::error::coded(
+                    "E0080",
+                    "`return` outside of a function",
+                ));
             }
         }
         Ok(())
@@ -724,7 +741,12 @@ impl Evaluator {
             } else {
                 match self.eval_stmt(env, stmt)? {
                     Flow::Continue => {}
-                    Flow::Return(_) => return Err(crate::error::coded("E0080", "`return` outside of a function")),
+                    Flow::Return(_) => {
+                        return Err(crate::error::coded(
+                            "E0080",
+                            "`return` outside of a function",
+                        ));
+                    }
                 }
             }
         }
@@ -737,7 +759,7 @@ impl Evaluator {
             Value::Number(n) => prima_core::render::render_number(n),
             Value::Bool(b) => b.to_string(),
             Value::Char(c) => c.to_string(),
-            Value::String(s) => s.clone(),
+            Value::String(s) => s.to_string(),
             Value::Array(elems) => {
                 let inner: Vec<String> =
                     elems.with(|items| items.iter().map(|e| self.format_value(e)).collect());

@@ -3,9 +3,9 @@
 //!
 //! Three registries, all process-global `OnceLock`s:
 //!
-//! - **Namespaces** (`register_namespace`): Rust-hosted stdlib modules (e.g. `"linalg"`,
-//!   `"sys::env"`, `"time"`) whose items are `NamespaceItem`s with no backing file. This is the
-//!   legacy form (spec §18); the physics constants remain a plain host namespace of `NamespaceItem::Val`.
+//! - **Namespaces** (`register_namespace`): Rust-hosted stdlib modules whose items are
+//!   `NamespaceItem`s with no backing file. This is the legacy form (spec §18); the shipped
+//!   stdlib modules use embedded `.pra` sources instead.
 //! - **`@builtin` implementations** (`register_impl`): keyed by fully-qualified `"module::name"`
 //!   (e.g. `"linalg::Matrix::zeros"`, `"time::Duration::from_secs"`). Embedded stdlib signature
 //!   modules bind their `@builtin pub fn` declarations to these at evaluation time (spec §18.4).

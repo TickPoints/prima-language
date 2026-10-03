@@ -1,0 +1,15 @@
+//! `render`: formula rendering (spec §18.6).
+//!
+//! The `@builtin` declarations below bind to the Rust-hosted implementation registered under
+//! `render::<name>`. `to_svg` goes through the core LaTeX view and the RaTeX pipeline to produce a
+//! self-contained SVG document; `to_terminal` produces Unicode terminal math text. Both accept a
+//! symbolic `Expr` (the result of an unevaluated expression) or a `String` (LaTeX source).
+
+/// Render `expr` as a standalone SVG formula image. `expr` may be a symbolic expression or a
+/// LaTeX `String`. Errors are returned as `Err` (e.g. unparseable LaTeX).
+@builtin
+pub fn to_svg(expr: Value) -> Result<String, String>;
+/// Render `expr` as Unicode terminal math text. `expr` may be a symbolic expression or a LaTeX
+/// `String`.
+@builtin
+pub fn to_terminal(expr: Value) -> String;
