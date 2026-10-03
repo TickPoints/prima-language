@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-03
+
+### Fixed
+
+- **Flaky `plot` integration tests on multi-core CI.** The `plot` module accumulates a figure in
+  process-global state, but its integration tests ran concurrently in one process, so a test's
+  `savefig` could render another test's series and overlay label (observed on Windows CI, where the
+  contour test saw a foreign colorbar label). The tests now serialize themselves with a local lock.
+
 ## [0.5.0] - 2026-10-03
 
 ### Added
