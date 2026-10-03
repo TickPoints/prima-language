@@ -2462,7 +2462,7 @@ prima completions bash
 **全局开关**（适用于所有子命令）：
 
 - `--color auto|always|never`：诊断着色策略（默认 `auto`，仅在终端着色）。
-- `--json`：诊断以 **rustc 风格 NDJSON** 逐行输出到 stderr（字段 `severity`/`code`/`message`/`spans`/`notes`/`help`），程序自身的 stdout 保持干净，便于编辑器与 CI 逐行解析；`--json` 隐含关闭颜色。
+- `--json`：诊断以 **rustc 风格 NDJSON** 逐行输出到 stderr（字段 `severity`/`code`/`message`/`spans`/`notes`/`help`），程序自身的 stdout 保持干净，便于编辑器与 CI 逐行解析；`--json` 隐含关闭颜色。`prima test --json` 同样在 stderr 输出测试事件的 NDJSON（`{"type":"test","file","status","message"}`，`status` 为 `ok`/`fail`/`skip`）与最终汇总（`{"type":"summary","passed","failed","skipped"}`）。
 - `--quiet` / `-q`：抑制非致命警告（错误仍然输出）。
 
 **项目根发现**：`run`/`check`/`fmt`/`doc` 的文件参数可省略，此时从当前目录向上寻找最近的含 `prima.toml` 或 `src/main.pra` 的目录作为项目根，并以其 `src/main.pra` 为入口；`test` 在项目内默认扫描 `src/`，否则回退 `examples/`。

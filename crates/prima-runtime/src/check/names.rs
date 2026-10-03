@@ -2,9 +2,11 @@
 //!
 //! A lightweight scope-stack walk over the AST that detects statically-decidable name errors
 //! without evaluating: `E0040 undefined_name` (a single-segment variable path used outside its
-//! scope), `E0080 return_outside_fn` (a `return` outside any function/method body), `E0062
-//! self_outside_method` (`self` outside a method), and `W0003 unused_binding` (`let`-bound names
-//! never referenced in a later expression).
+//! scope), `E0041 duplicate_definition` (a `fn`/`class`/`const`/math def, parameter, field or method
+//! repeated in the same scope), `E0052 unknown_type` (a `Type::User` name not in scope),
+//! `E0062 self_outside_method` (`self` outside a method), `E0063 self_not_first` (`self` not the
+//! first method parameter), `E0080 return_outside_fn` (a `return` outside any function/method body),
+//! and `W0003 unused_binding` (`let`-bound names never referenced in a later expression).
 //!
 //! It is deliberately conservative: only *single-segment* path/symbol references in value position
 //! are considered variable uses, and the pre-imported `core` builtins plus the primitive type names
@@ -13,9 +15,10 @@
 use std::collections::HashSet;
 
 use prima_syntax::ast::{
-    ClassMemberKind, ComprehensionClause, Expr, FStringPart, IndexItem, Param, Pattern, Stmt, Type,
+    ClassMemberKind, ComprehensionClause, Expr, FStringPart, ImportKind, IndexItem, Param, Pattern,
+    Program, Spanned, Stmt, Type,
 };
-use prima_syntax::{Span, SyntaxWarning};
+use prima_syntax::{Span, SyntaxWarning, parse};
 
 use prima_core::suggest::did_you_mean_help;
 
@@ -146,13 +149,17 @@ const ROOT_NAMES: &[&str] = &[
 const TYPE_NAMES: &[&str] = &[
     "Number", "Integer", "Rational", "F64", "F32", "I8", "I16", "I32", "I64", "I128", "U8", "U16",
     "U32", "U64", "U128", "Isize", "Usize", "Complex", "Expr", "Symbol", "Bool", "String", "Char",
-    "Value", "Error", "Self", "SelfType",
+    "Value", "Any", "Error", "Nil", "Self", "SelfType", "Array", "Matrix", "Tuple", "Option",
+    "Result", "Dict", "Set",
 ];
 
 /// One lexical scope: `name → binding span` plus a manual "used" set; the used set is reset by the
 /// check walk until a binding is referenced.
 struct Scope {
     binds: Vec<(String, Span)>,
+    /// Program declarations (`fn`/`class`/`const`/math def) recorded in this scope, for same-scope
+    /// duplicate detection (spec §16.2 `E0041`). Seeded builtins and `let` bindings are excluded.
+    defs: HashSet<String>,
     used: HashSet<String>,
 }
 
@@ -160,6 +167,7 @@ impl Scope {
     fn new() -> Scope {
         Scope {
             binds: Vec::new(),
+            defs: HashSet::new(),
             used: HashSet::new(),
         }
     }
@@ -170,6 +178,16 @@ impl Scope {
         if !self.binds.iter().any(|(n, _)| n == name) {
             self.binds.push((name.to_string(), span));
         }
+    }
+
+    /// Record a program definition in this scope, returning `false` when the name was already
+    /// defined here (a same-scope duplicate, spec §16.2 `E0041`). Shadowing an outer scope is fine.
+    fn bind_definition(&mut self, name: &str, span: Span) -> bool {
+        if !self.defs.insert(name.to_string()) {
+            return false;
+        }
+        self.bind(name, span);
+        true
     }
 }
 
@@ -202,6 +220,14 @@ impl NameCtx {
     fn bind(&mut self, name: &str, span: Span) {
         if let Some(s) = self.scopes.last_mut() {
             s.bind(name, span);
+        }
+    }
+
+    /// Define a program item in the current scope; `false` means a same-scope duplicate.
+    fn define(&mut self, name: &str, span: Span) -> bool {
+        match self.scopes.last_mut() {
+            Some(s) => s.bind_definition(name, span),
+            None => true,
         }
     }
 
@@ -261,7 +287,8 @@ pub(crate) fn check_program_names(
     warnings: &mut Vec<SyntaxWarning>,
 ) {
     let mut ctx = NameCtx::new();
-    check_block(src, &program.stmts, &mut ctx, errors);
+    let known = collect_known_types(program);
+    check_block(src, &program.stmts, &mut ctx, errors, &known);
     for (name, span) in collect_unused(&ctx) {
         warnings.push(SyntaxWarning {
             span,
@@ -271,21 +298,62 @@ pub(crate) fn check_program_names(
     }
 }
 
-fn check_block(src: &str, stmts: &[Stmt], ctx: &mut NameCtx, errors: &mut Vec<TypeError>) {
-    for stmt in stmts {
-        check_stmt(src, stmt, ctx, errors);
+/// Report a same-scope duplicate definition (`E0041`) at the later definition's name span (spec §16.2).
+fn define_name(ctx: &mut NameCtx, src: &str, name: &Spanned<String>, errors: &mut Vec<TypeError>) {
+    if !ctx.define(&name.value, name.span) {
+        push_err_with_help(
+            src,
+            errors,
+            name.span,
+            "E0041",
+            format!("duplicate definition of `{}`", name.value),
+            None,
+            Some("rename one of the definitions".into()),
+        );
     }
 }
 
-fn check_stmt(src: &str, stmt: &Stmt, ctx: &mut NameCtx, errors: &mut Vec<TypeError>) {
+fn check_block(
+    src: &str,
+    stmts: &[Stmt],
+    ctx: &mut NameCtx,
+    errors: &mut Vec<TypeError>,
+    known: &HashSet<String>,
+) {
+    for stmt in stmts {
+        check_stmt(src, stmt, ctx, errors, known);
+    }
+}
+
+fn check_stmt(
+    src: &str,
+    stmt: &Stmt,
+    ctx: &mut NameCtx,
+    errors: &mut Vec<TypeError>,
+    known: &HashSet<String>,
+) {
     match stmt {
-        Stmt::Let { pat, value, .. } => {
-            check_expr(src, value, ctx, errors);
+        Stmt::Let {
+            pat,
+            type_ann,
+            value,
+            ..
+        } => {
+            if let Some(t) = type_ann {
+                check_type(t, known, src, errors);
+            }
+            check_expr(src, value, ctx, errors, known);
             bind_pattern(pat, ctx);
         }
-        Stmt::Const { name, value, .. } => {
-            check_expr(src, value, ctx, errors);
-            ctx.bind(&name.value, name.span);
+        Stmt::Const {
+            name,
+            type_ann,
+            value,
+            ..
+        } => {
+            check_type(type_ann, known, src, errors);
+            check_expr(src, value, ctx, errors, known);
+            define_name(ctx, src, name, errors);
         }
         Stmt::FnDef {
             name,
@@ -294,14 +362,14 @@ fn check_stmt(src: &str, stmt: &Stmt, ctx: &mut NameCtx, errors: &mut Vec<TypeEr
             body,
             ..
         } => {
-            ctx.bind(&name.value, name.span);
+            define_name(ctx, src, name, errors);
             if let Some(t) = ret {
-                check_type(t);
+                check_type(t, known, src, errors);
             }
             ctx.push_scope();
             ctx.fn_depth += 1;
-            bind_params(params, ctx);
-            check_block(src, &body.stmts, ctx, errors);
+            bind_params(params, ctx, src, errors, known);
+            check_block(src, &body.stmts, ctx, errors, known);
             ctx.fn_depth -= 1;
             ctx.pop_scope();
         }
@@ -312,25 +380,42 @@ fn check_stmt(src: &str, stmt: &Stmt, ctx: &mut NameCtx, errors: &mut Vec<TypeEr
             body,
             ..
         } => {
-            ctx.bind(&name.value, name.span);
+            define_name(ctx, src, name, errors);
             if let Some(t) = ret {
-                check_type(t);
+                check_type(t, known, src, errors);
             }
             ctx.push_scope();
             ctx.fn_depth += 1;
-            bind_params(params, ctx);
-            check_expr(src, body, ctx, errors);
+            bind_params(params, ctx, src, errors, known);
+            check_expr(src, body, ctx, errors, known);
             ctx.fn_depth -= 1;
             ctx.pop_scope();
         }
         Stmt::ClassDef { name, members, .. } => {
-            ctx.bind(&name.value, name.span);
+            define_name(ctx, src, name, errors);
+            // Duplicate field names and duplicate method names within one class are `E0041`
+            // (spec §16.2). Fields and methods are *separate* namespaces: a field and an accessor
+            // method may share a name (e.g. `total` field + `total(self)` method), so they are
+            // tracked independently.
+            let mut field_names: HashSet<String> = HashSet::new();
+            let mut method_names: HashSet<String> = HashSet::new();
             for member in members {
                 match &member.kind {
                     ClassMemberKind::Field {
                         name: fname, ty, ..
                     } => {
-                        check_type(ty);
+                        if !field_names.insert(fname.value.clone()) {
+                            push_err_with_help(
+                                src,
+                                errors,
+                                fname.span,
+                                "E0041",
+                                format!("duplicate definition of `{}`", fname.value),
+                                None,
+                                Some("rename one of the definitions".into()),
+                            );
+                        }
+                        check_type(ty, known, src, errors);
                         ctx.bind(&fname.value, fname.span);
                     }
                     ClassMemberKind::Method {
@@ -340,16 +425,28 @@ fn check_stmt(src: &str, stmt: &Stmt, ctx: &mut NameCtx, errors: &mut Vec<TypeEr
                         body,
                         ..
                     } => {
+                        if !method_names.insert(mname.value.clone()) {
+                            push_err_with_help(
+                                src,
+                                errors,
+                                mname.span,
+                                "E0041",
+                                format!("duplicate definition of `{}`", mname.value),
+                                None,
+                                Some("rename one of the definitions".into()),
+                            );
+                        }
                         ctx.bind(&mname.value, mname.span);
+                        check_self_position(src, params, errors);
                         if let Some(t) = ret {
-                            check_type(t);
+                            check_type(t, known, src, errors);
                         }
                         ctx.push_scope();
                         ctx.fn_depth += 1;
                         ctx.bind("self", mname.span);
-                        bind_params(params, ctx);
+                        bind_params(params, ctx, src, errors, known);
                         if let Some(b) = body {
-                            check_block(src, &b.stmts, ctx, errors);
+                            check_block(src, &b.stmts, ctx, errors, known);
                         }
                         ctx.fn_depth -= 1;
                         ctx.pop_scope();
@@ -359,13 +456,13 @@ fn check_stmt(src: &str, stmt: &Stmt, ctx: &mut NameCtx, errors: &mut Vec<TypeEr
         }
         Stmt::Impl { members, .. } => {
             for m in members {
-                check_stmt(src, m, ctx, errors);
+                check_stmt(src, m, ctx, errors, known);
             }
         }
-        Stmt::Expr(e) => check_expr(src, e, ctx, errors),
+        Stmt::Expr(e) => check_expr(src, e, ctx, errors, known),
         Stmt::Assign { target, value, .. } => {
-            check_expr(src, target, ctx, errors);
-            check_expr(src, value, ctx, errors);
+            check_expr(src, target, ctx, errors, known);
+            check_expr(src, value, ctx, errors, known);
         }
         Stmt::For {
             var,
@@ -374,14 +471,14 @@ fn check_stmt(src: &str, stmt: &Stmt, ctx: &mut NameCtx, errors: &mut Vec<TypeEr
             body,
             ..
         } => {
-            check_expr(src, &range.0, ctx, errors);
-            check_expr(src, &range.1, ctx, errors);
+            check_expr(src, &range.0, ctx, errors, known);
+            check_expr(src, &range.1, ctx, errors, known);
             if let Some(s) = step {
-                check_expr(src, s, ctx, errors);
+                check_expr(src, s, ctx, errors, known);
             }
             ctx.push_scope();
             ctx.bind(&var.value, var.span);
-            check_block(src, &body.stmts, ctx, errors);
+            check_block(src, &body.stmts, ctx, errors, known);
             ctx.pop_scope();
         }
         Stmt::ParFor {
@@ -391,20 +488,20 @@ fn check_stmt(src: &str, stmt: &Stmt, ctx: &mut NameCtx, errors: &mut Vec<TypeEr
             body,
             ..
         } => {
-            check_expr(src, &range.0, ctx, errors);
-            check_expr(src, &range.1, ctx, errors);
+            check_expr(src, &range.0, ctx, errors, known);
+            check_expr(src, &range.1, ctx, errors, known);
             if let Some(s) = step {
-                check_expr(src, s, ctx, errors);
+                check_expr(src, s, ctx, errors, known);
             }
             ctx.push_scope();
             ctx.bind(&var.value, var.span);
-            check_block(src, &body.stmts, ctx, errors);
+            check_block(src, &body.stmts, ctx, errors, known);
             ctx.pop_scope();
         }
         Stmt::While { cond, body, .. } => {
-            check_expr(src, cond, ctx, errors);
+            check_expr(src, cond, ctx, errors, known);
             ctx.push_scope();
-            check_block(src, &body.stmts, ctx, errors);
+            check_block(src, &body.stmts, ctx, errors, known);
             ctx.pop_scope();
         }
         Stmt::If {
@@ -414,19 +511,19 @@ fn check_stmt(src: &str, stmt: &Stmt, ctx: &mut NameCtx, errors: &mut Vec<TypeEr
             else_,
             ..
         } => {
-            check_expr(src, cond, ctx, errors);
+            check_expr(src, cond, ctx, errors, known);
             ctx.push_scope();
-            check_block(src, &then.stmts, ctx, errors);
+            check_block(src, &then.stmts, ctx, errors, known);
             ctx.pop_scope();
             for (c, b) in elifs {
-                check_expr(src, c, ctx, errors);
+                check_expr(src, c, ctx, errors, known);
                 ctx.push_scope();
-                check_block(src, &b.stmts, ctx, errors);
+                check_block(src, &b.stmts, ctx, errors, known);
                 ctx.pop_scope();
             }
             if let Some(b) = else_ {
                 ctx.push_scope();
-                check_block(src, &b.stmts, ctx, errors);
+                check_block(src, &b.stmts, ctx, errors, known);
                 ctx.pop_scope();
             }
         }
@@ -437,37 +534,37 @@ fn check_stmt(src: &str, stmt: &Stmt, ctx: &mut NameCtx, errors: &mut Vec<TypeEr
             else_,
             ..
         } => {
-            check_expr(src, value, ctx, errors);
+            check_expr(src, value, ctx, errors, known);
             ctx.push_scope();
             bind_pattern(pat, ctx);
-            check_block(src, &then.stmts, ctx, errors);
+            check_block(src, &then.stmts, ctx, errors, known);
             ctx.pop_scope();
             if let Some(b) = else_ {
                 ctx.push_scope();
-                check_block(src, &b.stmts, ctx, errors);
+                check_block(src, &b.stmts, ctx, errors, known);
                 ctx.pop_scope();
             }
         }
         Stmt::WhileLet {
             pat, value, body, ..
         } => {
-            check_expr(src, value, ctx, errors);
+            check_expr(src, value, ctx, errors, known);
             ctx.push_scope();
             bind_pattern(pat, ctx);
-            check_block(src, &body.stmts, ctx, errors);
+            check_block(src, &body.stmts, ctx, errors, known);
             ctx.pop_scope();
         }
         Stmt::Match {
             scrutinee, arms, ..
         } => {
-            check_expr(src, scrutinee, ctx, errors);
+            check_expr(src, scrutinee, ctx, errors, known);
             for arm in arms {
                 if let Some(g) = &arm.guard {
-                    check_expr(src, g, ctx, errors);
+                    check_expr(src, g, ctx, errors, known);
                 }
                 ctx.push_scope();
                 bind_pattern(&arm.pattern, ctx);
-                check_expr(src, &arm.body, ctx, errors);
+                check_expr(src, &arm.body, ctx, errors, known);
                 ctx.pop_scope();
             }
         }
@@ -484,15 +581,32 @@ fn check_stmt(src: &str, stmt: &Stmt, ctx: &mut NameCtx, errors: &mut Vec<TypeEr
                 );
             }
             if let Some(e) = value {
-                check_expr(src, e, ctx, errors);
+                check_expr(src, e, ctx, errors, known);
             }
         }
         Stmt::WithConfig { body, .. } => {
             ctx.push_scope();
-            check_block(src, &body.stmts, ctx, errors);
+            check_block(src, &body.stmts, ctx, errors, known);
             ctx.pop_scope();
         }
-        Stmt::Pub(inner) => check_stmt(src, inner, ctx, errors),
+        Stmt::Pub(inner) => check_stmt(src, inner, ctx, errors, known),
+    }
+}
+
+/// `E0063 self_not_first` (spec §4.5): a method's `self` receiver must be the first parameter.
+fn check_self_position(src: &str, params: &[Param], errors: &mut Vec<TypeError>) {
+    for (i, p) in params.iter().enumerate() {
+        if p.is_self && i != 0 {
+            push_err_with_help(
+                src,
+                errors,
+                p.name.span,
+                "E0063",
+                "`self` must be the first parameter of a method".into(),
+                None,
+                None,
+            );
+        }
     }
 }
 
@@ -523,19 +637,43 @@ fn bind_pattern(pat: &Pattern, ctx: &mut NameCtx) {
     }
 }
 
-fn bind_params(params: &[Param], ctx: &mut NameCtx) {
+fn bind_params(
+    params: &[Param],
+    ctx: &mut NameCtx,
+    src: &str,
+    errors: &mut Vec<TypeError>,
+    known: &HashSet<String>,
+) {
+    let mut seen: HashSet<String> = HashSet::new();
     for p in params {
         if !p.is_self {
+            if !seen.insert(p.name.value.clone()) {
+                push_err_with_help(
+                    src,
+                    errors,
+                    p.name.span,
+                    "E0041",
+                    format!("duplicate definition of `{}`", p.name.value),
+                    None,
+                    Some("rename one of the definitions".into()),
+                );
+            }
             ctx.bind(&p.name.value, p.name.span);
         }
         if let Some(t) = &p.type_ann {
-            check_type(t);
+            check_type(t, known, src, errors);
         }
     }
 }
 
 /// Check an expression tree for name/`self`/`return` issues.
-fn check_expr(src: &str, e: &Expr, ctx: &mut NameCtx, errors: &mut Vec<TypeError>) {
+fn check_expr(
+    src: &str,
+    e: &Expr,
+    ctx: &mut NameCtx,
+    errors: &mut Vec<TypeError>,
+    known: &HashSet<String>,
+) {
     match &e.kind {
         // A single-segment path is a variable reference (or a known root name).
         prima_syntax::ast::ExprKind::Path { segments } if segments.len() == 1 => {
@@ -585,97 +723,103 @@ fn check_expr(src: &str, e: &Expr, ctx: &mut NameCtx, errors: &mut Vec<TypeError
                 );
             }
         }
-        _ => check_expr_children(src, e, ctx, errors),
+        _ => check_expr_children(src, e, ctx, errors, known),
     }
 }
 
 /// Descend the structural children of an expression for further name checks. Multi-segment paths
 /// (`a::b`) and callable callees are treated as module/constructor references and not as variables.
-fn check_expr_children(src: &str, e: &Expr, ctx: &mut NameCtx, errors: &mut Vec<TypeError>) {
+fn check_expr_children(
+    src: &str,
+    e: &Expr,
+    ctx: &mut NameCtx,
+    errors: &mut Vec<TypeError>,
+    known: &HashSet<String>,
+) {
     use prima_syntax::ast::ExprKind;
     match &e.kind {
         ExprKind::Path { .. } | ExprKind::Symbol(_) | ExprKind::Literal(_) | ExprKind::Self_ => {}
         ExprKind::FString(parts) => {
             for p in parts {
                 if let FStringPart::Interp { expr, .. } = p {
-                    check_expr(src, expr, ctx, errors);
+                    check_expr(src, expr, ctx, errors, known);
                 }
             }
         }
         ExprKind::Call { callee, args } => {
-            check_expr(src, callee, ctx, errors);
+            check_expr(src, callee, ctx, errors, known);
             for a in args {
-                check_expr(src, a, ctx, errors);
+                check_expr(src, a, ctx, errors, known);
             }
         }
         ExprKind::MethodCall { receiver, args, .. } => {
-            check_expr(src, receiver, ctx, errors);
+            check_expr(src, receiver, ctx, errors, known);
             for a in args {
-                check_expr(src, a, ctx, errors);
+                check_expr(src, a, ctx, errors, known);
             }
         }
-        ExprKind::Field { receiver, .. } => check_expr(src, receiver, ctx, errors),
+        ExprKind::Field { receiver, .. } => check_expr(src, receiver, ctx, errors, known),
         ExprKind::StructLiteral { fields, base, .. } => {
             for f in fields {
                 if let Some(v) = &f.value {
-                    check_expr(src, v, ctx, errors);
+                    check_expr(src, v, ctx, errors, known);
                 }
             }
             if let Some(b) = base {
-                check_expr(src, b, ctx, errors);
+                check_expr(src, b, ctx, errors, known);
             }
         }
         ExprKind::Index { base, index } => {
-            check_expr(src, base, ctx, errors);
+            check_expr(src, base, ctx, errors, known);
             for it in &index.items {
                 match it {
-                    IndexItem::Elem(e) => check_expr(src, e, ctx, errors),
+                    IndexItem::Elem(e) => check_expr(src, e, ctx, errors, known),
                     IndexItem::Slice { start, end } => {
                         if let Some(s) = start {
-                            check_expr(src, s, ctx, errors);
+                            check_expr(src, s, ctx, errors, known);
                         }
                         if let Some(s) = end {
-                            check_expr(src, s, ctx, errors);
+                            check_expr(src, s, ctx, errors, known);
                         }
                     }
                 }
             }
         }
         ExprKind::Binary { lhs, rhs, .. } => {
-            check_expr(src, lhs, ctx, errors);
-            check_expr(src, rhs, ctx, errors);
+            check_expr(src, lhs, ctx, errors, known);
+            check_expr(src, rhs, ctx, errors, known);
         }
         ExprKind::Unary { operand, .. } | ExprKind::Try(operand) => {
-            check_expr(src, operand, ctx, errors)
+            check_expr(src, operand, ctx, errors, known)
         }
         ExprKind::Array(items) | ExprKind::Tuple(items) | ExprKind::Set(items) => {
             for i in items {
-                check_expr(src, i, ctx, errors);
+                check_expr(src, i, ctx, errors, known);
             }
         }
         ExprKind::Dict(entries) => {
             for (k, v) in entries {
-                check_expr(src, k, ctx, errors);
-                check_expr(src, v, ctx, errors);
+                check_expr(src, k, ctx, errors, known);
+                check_expr(src, v, ctx, errors, known);
             }
         }
         ExprKind::KeyValue { key, value } => {
-            check_expr(src, key, ctx, errors);
-            check_expr(src, value, ctx, errors);
+            check_expr(src, key, ctx, errors, known);
+            check_expr(src, value, ctx, errors, known);
         }
         ExprKind::Comprehension {
             output, clauses, ..
         } => {
             ctx.push_scope();
-            check_expr(src, output, ctx, errors);
+            check_expr(src, output, ctx, errors, known);
             for c in clauses {
                 match c {
                     ComprehensionClause::For { var, iter } => {
-                        check_expr(src, iter, ctx, errors);
+                        check_expr(src, iter, ctx, errors, known);
                         ctx.bind(&var.value, var.span);
                     }
                     ComprehensionClause::If { cond } => {
-                        check_expr(src, cond, ctx, errors);
+                        check_expr(src, cond, ctx, errors, known);
                     }
                 }
             }
@@ -683,31 +827,183 @@ fn check_expr_children(src: &str, e: &Expr, ctx: &mut NameCtx, errors: &mut Vec<
         }
         ExprKind::Lambda { params, body } => {
             ctx.push_scope();
-            bind_params(params, ctx);
-            check_expr(src, body, ctx, errors);
+            bind_params(params, ctx, src, errors, known);
+            check_expr(src, body, ctx, errors, known);
             ctx.pop_scope();
         }
         ExprKind::Match { scrutinee, arms } => {
-            check_expr(src, scrutinee, ctx, errors);
+            check_expr(src, scrutinee, ctx, errors, known);
             for arm in arms {
                 if let Some(g) = &arm.guard {
-                    check_expr(src, g, ctx, errors);
+                    check_expr(src, g, ctx, errors, known);
                 }
                 ctx.push_scope();
                 bind_pattern(&arm.pattern, ctx);
-                check_expr(src, &arm.body, ctx, errors);
+                check_expr(src, &arm.body, ctx, errors, known);
                 ctx.pop_scope();
             }
         }
         ExprKind::Custom(items) => {
             for (p, v) in items {
-                check_expr(src, p, ctx, errors);
-                check_expr(src, v, ctx, errors);
+                check_expr(src, p, ctx, errors, known);
+                check_expr(src, v, ctx, errors, known);
             }
         }
     }
 }
 
-/// Recursively descend a type to validate nested type references (currently a no-op hook; seeded
-/// primitive `Type::User` names are not flagged since classes/modules have no symbol table here).
-fn check_type(_t: &Type) {}
+/// Collect the type names visible to `check_type` (spec §16.2 `E0052`): the primitive `TYPE_NAMES`,
+/// every `class` declared in the program, and — for each embedded stdlib module the program imports
+/// — its class names plus any `Type::User` names appearing in its signatures. This mirrors
+/// `check/signature.rs::build_signature_table`.
+fn collect_known_types(program: &Program) -> HashSet<String> {
+    let mut known: HashSet<String> = TYPE_NAMES.iter().map(|s| (*s).to_string()).collect();
+    for stmt in &program.stmts {
+        collect_program_classes(stmt, &mut known);
+    }
+    for imp in &program.imports {
+        let segments: Vec<String> = match &imp.kind {
+            ImportKind::Namespace { path, .. } | ImportKind::From { path, .. } => {
+                path.iter().map(|s| s.value.clone()).collect()
+            }
+        };
+        let module_key = segments.join("::");
+        let Some(src) = crate::stdlib::get_module_source(&module_key) else {
+            continue;
+        };
+        // Embedded sources are ours and known-good; a parse failure just yields no type names.
+        let Ok(parsed) = parse(src) else { continue };
+        for stmt in &parsed.stmts {
+            collect_module_type_names(stmt, &mut known);
+        }
+    }
+    known
+}
+
+/// Collect the `class` names declared by the program (nested under `pub`), spec §16.2.
+fn collect_program_classes(stmt: &Stmt, known: &mut HashSet<String>) {
+    match stmt {
+        Stmt::ClassDef { name, .. } => {
+            known.insert(name.value.clone());
+        }
+        Stmt::Pub(inner) => collect_program_classes(inner, known),
+        _ => {}
+    }
+}
+
+/// Collect the `class` names and every `Type::User` name appearing in an embedded module's
+/// signatures/members (spec §18.4), so imported stdlib types are not reported as unknown.
+fn collect_module_type_names(stmt: &Stmt, known: &mut HashSet<String>) {
+    match stmt {
+        Stmt::Pub(inner) => collect_module_type_names(inner, known),
+        Stmt::FnDef { name, params, ret, .. } | Stmt::MathDef { name, params, ret, .. } => {
+            add_qualified_type_names(name, known);
+            for p in params {
+                if let Some(t) = &p.type_ann {
+                    add_user_type_names(t, known);
+                }
+            }
+            if let Some(t) = ret {
+                add_user_type_names(t, known);
+            }
+        }
+        Stmt::ClassDef { name, members, .. } => {
+            known.insert(name.value.clone());
+            for m in members {
+                match &m.kind {
+                    ClassMemberKind::Field { ty, .. } => add_user_type_names(ty, known),
+                    ClassMemberKind::Method { params, ret, .. } => {
+                        for p in params {
+                            if let Some(t) = &p.type_ann {
+                                add_user_type_names(t, known);
+                            }
+                        }
+                        if let Some(t) = ret {
+                            add_user_type_names(t, known);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Add the qualifier of a `::`-joined declaration name (`Matrix::zeros` → `Matrix`,
+/// `Duration::from_secs` → `Duration`) as a known type, so stdlib associated types are not `E0052`.
+fn add_qualified_type_names(name: &Spanned<String>, known: &mut HashSet<String>) {
+    if let Some((qualifier, _)) = name.value.split_once("::") {
+        known.insert(qualifier.to_string());
+    }
+}
+
+/// Insert every `Type::User` name reachable in a type into the known set.
+fn add_user_type_names(t: &Type, known: &mut HashSet<String>) {
+    match t {
+        Type::User(sp) => {
+            known.insert(sp.value.clone());
+        }
+        Type::Array(inner) | Type::Matrix(inner) | Type::Option(inner) => {
+            add_user_type_names(inner, known);
+        }
+        Type::Tuple(ts) => {
+            for x in ts {
+                add_user_type_names(x, known);
+            }
+        }
+        Type::Result(a, b) => {
+            add_user_type_names(a, known);
+            add_user_type_names(b, known);
+        }
+        Type::Fn { params, ret } | Type::MFn { params, ret } => {
+            for p in params {
+                add_user_type_names(p, known);
+            }
+            add_user_type_names(ret, known);
+        }
+        _ => {}
+    }
+}
+
+/// Validate a type annotation (spec §16.2 `E0052`): recursively descend collection/function type
+/// forms and report any `Type::User` name that is not in the known set. Module-qualified names
+/// (`c_api::int`, appendix B.6) cannot be resolved here and are treated as known — a false positive
+/// is worse than a missed check.
+fn check_type(t: &Type, known: &HashSet<String>, src: &str, errors: &mut Vec<TypeError>) {
+    match t {
+        Type::User(sp) => {
+            if sp.value.contains("::") || known.contains(&sp.value) {
+                return;
+            }
+            let help = did_you_mean_help(&sp.value, known.iter());
+            push_err_with_help(
+                src,
+                errors,
+                sp.span,
+                "E0052",
+                format!("unknown type `{}`", sp.value),
+                None,
+                help,
+            );
+        }
+        Type::Array(inner) | Type::Matrix(inner) | Type::Option(inner) => {
+            check_type(inner, known, src, errors);
+        }
+        Type::Tuple(ts) => {
+            for x in ts {
+                check_type(x, known, src, errors);
+            }
+        }
+        Type::Result(a, b) => {
+            check_type(a, known, src, errors);
+            check_type(b, known, src, errors);
+        }
+        Type::Fn { params, ret } | Type::MFn { params, ret } => {
+            for p in params {
+                check_type(p, known, src, errors);
+            }
+            check_type(ret, known, src, errors);
+        }
+        _ => {}
+    }
+}

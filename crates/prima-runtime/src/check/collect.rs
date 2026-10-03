@@ -12,7 +12,7 @@ use crate::capi::c_type;
 use crate::eval::CORE_BUILTIN_NAMES;
 use prima_core::suggest::did_you_mean_help;
 use prima_syntax::ast::{
-    Annotation, ClassMemberKind, Expr, ExprKind, MatchArm, Param, Spanned, Stmt, Type,
+    Annotation, ClassMemberKind, Expr, ExprKind, ImplOp, MatchArm, Param, Spanned, Stmt, Type,
 };
 
 use super::Ctx;
@@ -135,10 +135,19 @@ pub(crate) fn collect_stmt_errors(
                 !body.stmts.is_empty(),
                 is_pub,
             ));
+            check_missing_type_ann(src, name, params, ret, annotations, errors);
             let allow = matches!(ret, Some(Type::Result(..) | Type::Option(..)));
             collect_block_errors(src, body, errors, Ctx { allow_try: allow }, sigs);
         }
-        Stmt::MathDef { body, .. } => {
+        Stmt::MathDef {
+            name,
+            params,
+            ret,
+            annotations,
+            body,
+            ..
+        } => {
+            check_missing_type_ann(src, name, params, ret, annotations, errors);
             collect_expr_errors(src, body, errors, Ctx { allow_try: false }, sigs);
         }
         Stmt::ClassDef {
@@ -160,15 +169,23 @@ pub(crate) fn collect_stmt_errors(
             }
             for m in members {
                 if let ClassMemberKind::Method {
-                    ret, body: Some(b), ..
+                    name: mname,
+                    params,
+                    ret,
+                    annotations,
+                    body,
                 } = &m.kind
                 {
-                    let allow = matches!(ret, Some(Type::Result(..) | Type::Option(..)));
-                    collect_block_errors(src, b, errors, Ctx { allow_try: allow }, sigs);
+                    check_missing_type_ann(src, mname, params, ret, annotations, errors);
+                    if let Some(b) = body {
+                        let allow = matches!(ret, Some(Type::Result(..) | Type::Option(..)));
+                        collect_block_errors(src, b, errors, Ctx { allow_try: allow }, sigs);
+                    }
                 }
             }
         }
-        Stmt::Impl { members, .. } => {
+        Stmt::Impl { op, members, .. } => {
+            check_op_overload(src, *op, members, errors);
             for m in members {
                 collect_stmt_errors(src, m, errors, ctx, false, sigs);
             }
@@ -394,6 +411,99 @@ pub(crate) fn check_annotation_errors(
         }
     }
     errors
+}
+
+/// `E0051 missing_type_ann` (spec §18.4): an `@builtin` (any tier) or `@c_api::extern` signature is
+/// typed, so every non-`self` parameter must carry a type annotation, and `@c_api::extern` must also
+/// declare a return type. Ordinary untyped user functions are not affected.
+pub(crate) fn check_missing_type_ann(
+    src: &str,
+    name: &Spanned<String>,
+    params: &[Param],
+    ret: &Option<Type>,
+    annotations: &[Annotation],
+    errors: &mut Vec<TypeError>,
+) {
+    let is_builtin = annotations.iter().any(|a| a.is_builtin());
+    let is_extern = annotations.contains(&Annotation::CApiExtern);
+    if !is_builtin && !is_extern {
+        return;
+    }
+    for p in params {
+        if !p.is_self && p.type_ann.is_none() {
+            push_err_with_help(
+                src,
+                errors,
+                p.name.span,
+                "E0051",
+                format!("missing type annotation for parameter `{}`", p.name.value),
+                None,
+                Some(
+                    "add a type annotation; @builtin/@c_api::extern signatures are typed (spec §18.4)"
+                        .into(),
+                ),
+            );
+        }
+    }
+    if is_extern && ret.is_none() {
+        push_err_with_help(
+            src,
+            errors,
+            name.span,
+            "E0051",
+            "`@c_api::extern` function must declare a return type".into(),
+            None,
+            Some("add a return type; @c_api::extern signatures are typed (spec §18.4)".into()),
+        );
+    }
+}
+
+/// `E0063 self_not_first` / `E0081 op_overload_bad_arity` (spec §18.5): validate each `impl ops::Op`
+/// member. `Neg` takes exactly one parameter (`self`); every other operator takes exactly two
+/// (`self` and the operand). A `self` present but not first is `E0063`; a missing `self` or a wrong
+/// parameter count is `E0081`.
+fn check_op_overload(src: &str, op: ImplOp, members: &[Box<Stmt>], errors: &mut Vec<TypeError>) {
+    let required = if op == ImplOp::Neg { 1 } else { 2 };
+    for member in members {
+        let (name, params) = match member.as_ref() {
+            Stmt::FnDef { name, params, .. } | Stmt::MathDef { name, params, .. } => (name, params),
+            Stmt::Pub(inner) => match inner.as_ref() {
+                Stmt::FnDef { name, params, .. } | Stmt::MathDef { name, params, .. } => {
+                    (name, params)
+                }
+                _ => continue,
+            },
+            _ => continue,
+        };
+        let self_pos = params.iter().position(|p| p.is_self);
+        if let Some(pos) = self_pos
+            && pos != 0
+        {
+            push_err_with_help(
+                src,
+                errors,
+                params[pos].name.span,
+                "E0063",
+                "`self` must be the first parameter of a method".into(),
+                None,
+                None,
+            );
+        }
+        if params.len() != required || self_pos.is_none() {
+            push_err_with_help(
+                src,
+                errors,
+                name.span,
+                "E0081",
+                format!("operator overload `{}` has an invalid signature", name.value),
+                None,
+                Some(
+                    "operator overloads take `self` and the operand, e.g. `fn add(self, rhs: T) -> T`"
+                        .into(),
+                ),
+            );
+        }
+    }
 }
 
 /// Descend an expression tree, flagging `?` outside a `Result`/`Option`-returning function (spec

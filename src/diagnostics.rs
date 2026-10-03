@@ -65,6 +65,16 @@ fn options() -> &'static RenderOptions {
     OPTIONS.get_or_init(RenderOptions::default)
 }
 
+/// Whether `--json` was requested (used by non-diagnostic commands such as `prima test`).
+pub fn json_enabled() -> bool {
+    options().json
+}
+
+/// Whether `--quiet` was requested.
+pub fn quiet_enabled() -> bool {
+    options().quiet
+}
+
 /// rustc-style rendering (`--> file:line:col`, spec §16.4).
 fn term_config() -> Config {
     Config {

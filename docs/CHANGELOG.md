@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `error[R0005]:` instead of burying the code in the message text. `SyntaxError`/`TypeError` gained
   `code`/`help` fields and `RuntimeError` gained `code()` plus a `Coded` variant, so the
   `E####`/`R####` tables in appendix C are now enforced by the implementation.
+- **Previously unimplemented appendix C validations.** `E0041 duplicate_definition` (same-scope
+  `fn`/`class`/`const`, duplicate parameters, duplicate fields, duplicate methods), `E0051
+  missing_type_ann` (`@builtin`/`@c_api::extern` signatures must be typed), `E0052 unknown_type`
+  (with `did you mean`, covering `let`/`const`/parameter/return annotations), `E0063
+  self_not_first`, `E0081 op_overload_bad_arity`, and runtime `R0002 underflow` (integer collapse
+  below the target minimum, distinct from `R0001` overflow).
 - **Actionable suggestions.** `did you mean ...?` now covers undefined names (`E0040`), unknown
   types (`E0052`), unknown/missing fields (`E0060`/`E0061`), unknown config keys (`E0022`),
   `@builtin` optimization tiers (`E0057`), call-site arity, and method-name typos, alongside
@@ -28,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the nearest ancestor `prima.toml` (or `src/main.pra`); `prima test` defaults to `src/` inside a
   project.
 - **`prima completions <shell>`** emits a shell completion script via `clap_complete`.
+- **`prima test --json`** emits one NDJSON event per test (`{"type":"test","file","status","message"}`)
+  plus a final `{"type":"summary","passed","failed","skipped"}` on stderr; `--quiet` suppresses
+  passing/skipped lines while keeping failures and the summary.
 
 ### Changed
 

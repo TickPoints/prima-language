@@ -510,10 +510,35 @@ fn ensure_real(name: &str, n: &Number) -> Result<(), RuntimeError> {
 // ---- Table-driven integer collapse (spec §6.1/§9.2–9.4) ----
 //
 // The twelve fixed-width integer targets (`i8`…`usize`, spec §6.1) share the same shapes: `to_*` raises
-// `RuntimeError::Overflow` on a range/integrality failure, `try_*` returns a `Value::Result` instead, and
-// `checked_*` (the ten non-isize/usize targets, spec §9.4) also returns a `Value::Result` whose `Err` names the
-// overflow. Success always produces the matching fixed-width `Number` variant so the collapsed type identity survives
-// (spec §6.1: collapsed types exist only after explicit collapse).
+// a range/cast error on failure (`R0002` underflow below the target minimum, else `R0001` overflow),
+// `try_*` returns a `Value::Result` instead, and `checked_*` (the ten non-isize/usize targets, spec §9.4)
+// also returns a `Value::Result` whose `Err` names the direction. Success always produces the matching
+// fixed-width `Number` variant so the collapsed type identity survives (spec §6.1: collapsed types exist
+// only after explicit collapse).
+
+/// Direction of an integer range failure (spec §9.2/§9.4): a value below the target's minimum is an
+/// underflow (`R0002`), anything else is an overflow (`R0001`).
+fn int_failure_direction(n: &Number, min: f64) -> &'static str {
+    if n.to_f64_lossy() < min {
+        "underflow"
+    } else {
+        "overflow"
+    }
+}
+
+/// The `RuntimeError` for a `to_*` integer range failure (spec §9.2): below the target minimum is
+/// `R0002 underflow`, everything else `R0001 overflow`.
+fn int_range_error(name: &str, n: &Number, ty: &str, min: f64) -> RuntimeError {
+    let message = format!("`{name}`: {n} cannot be represented as {ty}");
+    if int_failure_direction(n, min) == "underflow" {
+        RuntimeError::Coded {
+            code: "R0002",
+            message: format!("underflow: {message}"),
+        }
+    } else {
+        RuntimeError::Overflow(message)
+    }
+}
 
 macro_rules! int_collapse_fns {
     // `to_`/`try_`/`checked_` (the ten fixed integer targets, spec §9.2–9.4).
@@ -524,10 +549,7 @@ macro_rules! int_collapse_fns {
             ensure_real(name, n)?;
             match n.$as() {
                 Some(v) => Ok(Value::Number(($wrap)(v))),
-                None => Err(RuntimeError::Overflow(format!(
-                    "`{name}`: {n} cannot be represented as {}",
-                    stringify!($ty)
-                ))),
+                None => Err(int_range_error(name, n, stringify!($ty), <$ty>::MIN as f64)),
             }
         }
 
@@ -546,7 +568,8 @@ macro_rules! int_collapse_fns {
             match n.$as() {
                 Some(v) => Value::Result(Ok(Box::new(Value::Number(($wrap)(v))))),
                 None => Value::Result(Err(Box::new(format!(
-                    "`{name}`: {n} cannot be represented as {}",
+                    "{}: `{name}`: {n} cannot be represented as {}",
+                    int_failure_direction(&n, <$ty>::MIN as f64),
                     stringify!($ty)
                 )))),
             }
@@ -557,7 +580,8 @@ macro_rules! int_collapse_fns {
             match n.$as() {
                 Some(v) => Ok(Value::Result(Ok(Box::new(Value::Number(($wrap)(v)))))),
                 None => Ok(Value::Result(Err(Box::new(format!(
-                    "overflow: `{name}`: {n} cannot be represented as {}",
+                    "{}: `{name}`: {n} cannot be represented as {}",
+                    int_failure_direction(n, <$ty>::MIN as f64),
                     stringify!($ty)
                 ))))),
             }
@@ -569,10 +593,7 @@ macro_rules! int_collapse_fns {
             ensure_real(name, n)?;
             match n.$as() {
                 Some(v) => Ok(Value::Number(($wrap)(v))),
-                None => Err(RuntimeError::Overflow(format!(
-                    "`{name}`: {n} cannot be represented as {}",
-                    stringify!($ty)
-                ))),
+                None => Err(int_range_error(name, n, stringify!($ty), <$ty>::MIN as f64)),
             }
         }
 
@@ -591,7 +612,8 @@ macro_rules! int_collapse_fns {
             match n.$as() {
                 Some(v) => Value::Result(Ok(Box::new(Value::Number(($wrap)(v))))),
                 None => Value::Result(Err(Box::new(format!(
-                    "`{name}`: {n} cannot be represented as {}",
+                    "{}: `{name}`: {n} cannot be represented as {}",
+                    int_failure_direction(&n, <$ty>::MIN as f64),
                     stringify!($ty)
                 )))),
             }
@@ -763,8 +785,13 @@ fn checked_binary(
     let v = op(a.to_f64_lossy(), b.to_f64_lossy());
     let vi = v as i64;
     if v.is_nan() || v.is_infinite() || vi as f64 != v {
+        let direction = if v < i64::MIN as f64 {
+            "underflow"
+        } else {
+            "overflow"
+        };
         return Ok(Value::Result(Err(Box::new(format!(
-            "overflow: `{name}`: result {v} cannot be represented as i64"
+            "{direction}: `{name}`: result {v} cannot be represented as i64"
         )))));
     }
     Ok(Value::Result(Ok(Box::new(Value::Number(Number::from(vi))))))
@@ -1175,12 +1202,62 @@ mod tests {
             builtins,
         )
         .unwrap_err();
-        assert!(matches!(err, RuntimeError::Overflow(_)));
+        // A value below the target minimum is a distinct underflow category (`R0002`, appendix C.2).
+        assert_eq!(err.code(), "R0002");
 
         // Non-integral values also fail with overflow (spec §9.8: only collapse failure errors).
         let frac = Number::from(7) / Number::from(2);
         let err = call("to_i8", &[Value::Number(frac)], &pool, builtins).unwrap_err();
         assert!(matches!(err, RuntimeError::Overflow(_)));
+    }
+
+    #[test]
+    fn to_below_minimum_is_underflow_r0002() {
+        let (pool, builtins) = setup();
+
+        // `to_u8(-1)`: below the unsigned minimum → `R0002` underflow.
+        let err = call("to_u8", &[Value::Number(Number::from(-1))], &pool, builtins).unwrap_err();
+        assert_eq!(err.code(), "R0002");
+        assert!(matches!(err, RuntimeError::Coded { code: "R0002", .. }));
+        assert!(err.to_string().starts_with("underflow:"), "got: {err}");
+
+        // `to_u8(256)`: above the maximum → stays the `R0001` overflow category.
+        let err = call("to_u8", &[Value::Number(Number::from(256))], &pool, builtins).unwrap_err();
+        assert!(matches!(err, RuntimeError::Overflow(_)));
+        assert_eq!(err.code(), "R0001");
+
+        // A signed target below its minimum is also underflow.
+        let below = Number::Integer(Box::new(BigInt::from(i64::from(i32::MIN) - 1)));
+        let err = call("to_i32", &[Value::Number(below)], &pool, builtins).unwrap_err();
+        assert_eq!(err.code(), "R0002");
+
+        // An `isize` target (no `checked_` form) uses the same classification.
+        let err = call("to_usize", &[Value::Number(Number::from(-1))], &pool, builtins).unwrap_err();
+        assert_eq!(err.code(), "R0002");
+    }
+
+    #[test]
+    fn checked_and_try_below_minimum_message_is_underflow() {
+        let (pool, builtins) = setup();
+
+        let out = call("checked_u8", &[Value::Number(Number::from(-1))], &pool, builtins).unwrap();
+        match out {
+            Value::Result(Err(msg)) => assert!(msg.starts_with("underflow:"), "got: {msg:?}"),
+            other => panic!("expected an Err result, got {other:?}"),
+        }
+
+        let out = call("try_u8", &[Value::Number(Number::from(-1))], &pool, builtins).unwrap();
+        match out {
+            Value::Result(Err(msg)) => assert!(msg.starts_with("underflow:"), "got: {msg:?}"),
+            other => panic!("expected an Err result, got {other:?}"),
+        }
+
+        // Above the maximum stays an overflow message.
+        let out = call("checked_u8", &[Value::Number(Number::from(256))], &pool, builtins).unwrap();
+        match out {
+            Value::Result(Err(msg)) => assert!(msg.starts_with("overflow:"), "got: {msg:?}"),
+            other => panic!("expected an Err result, got {other:?}"),
+        }
     }
 
     #[test]

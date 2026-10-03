@@ -2462,7 +2462,7 @@ prima completions bash
 **Global switches** (apply to every subcommand):
 
 - `--color auto|always|never`: diagnostic coloring (default `auto`, color only on a terminal).
-- `--json`: emit diagnostics as **rustc-style NDJSON**, one object per line on stderr (fields `severity`/`code`/`message`/`spans`/`notes`/`help`), keeping the program's own stdout clean for editors and CI; `--json` implies no color.
+- `--json`: emit diagnostics as **rustc-style NDJSON**, one object per line on stderr (fields `severity`/`code`/`message`/`spans`/`notes`/`help`), keeping the program's own stdout clean for editors and CI; `--json` implies no color. `prima test --json` likewise writes NDJSON test events to stderr (`{"type":"test","file","status","message"}`, `status` being `ok`/`fail`/`skip`) plus a final summary (`{"type":"summary","passed","failed","skipped"}`).
 - `--quiet` / `-q`: suppress non-fatal warnings (errors are still printed).
 
 **Project-root discovery**: the file argument of `run`/`check`/`fmt`/`doc` may be omitted; the CLI then searches upward from the current directory for the nearest directory holding `prima.toml` or `src/main.pra` and uses it as the project root, with `src/main.pra` as the entry. `test` scans `src/` inside a project, otherwise falls back to `examples/`.

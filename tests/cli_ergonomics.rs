@@ -90,3 +90,58 @@ fn completions_emit_a_script() {
         .success()
         .stdout(predicate::str::contains("prima"));
 }
+
+#[test]
+fn test_json_reports_ndjson_events_and_summary() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("good.pra"), "println(\"hi\");\n").unwrap();
+    // A file that does not parse is skipped, not failed.
+    std::fs::write(dir.path().join("fixture.pra"), "let x = ;\n").unwrap();
+
+    let output = prima()
+        .args(["--json", "test"])
+        .arg(dir.path())
+        .output()
+        .expect("spawn prima");
+    // Test events go to stderr so the programs' stdout stays clean (here: "hi").
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("hi"), "program output expected: {stdout:?}");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let events: Vec<serde_json::Value> = stderr
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("not JSON: {l:?} ({e})")))
+        .collect();
+    assert!(
+        events
+            .iter()
+            .any(|v| v["type"] == "test" && v["status"] == "ok"),
+        "expected an ok event: {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|v| v["type"] == "test" && v["status"] == "skip"),
+        "expected a skip event: {events:?}"
+    );
+    let summary = events
+        .iter()
+        .find(|v| v["type"] == "summary")
+        .expect("summary event");
+    assert_eq!(summary["passed"], 1);
+    assert_eq!(summary["failed"], 0);
+    assert_eq!(summary["skipped"], 1);
+}
+
+#[test]
+fn test_quiet_suppresses_passing_lines_but_keeps_summary() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("good.pra"), "println(\"hi\");\n").unwrap();
+    prima()
+        .args(["--quiet", "test"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 passed, 0 failed"));
+}

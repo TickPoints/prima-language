@@ -370,6 +370,92 @@ mod tests {
     }
 
     #[test]
+    fn e0041_duplicate_definition_is_detected() {
+        let (errors, _) = check_src_checked("fn dup() { }\nfn dup() { }");
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0041", "got: {errors:?}");
+        assert!(errors[0].message.contains("dup"));
+    }
+
+    #[test]
+    fn e0041_duplicate_parameter_is_detected() {
+        let (errors, _) =
+            check_src_checked("fn f(x: Integer, x: Integer) -> Integer { return x; }");
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0041", "got: {errors:?}");
+    }
+
+    #[test]
+    fn e0041_let_shadowing_is_allowed() {
+        let (errors, _) = check_src_checked("let x = 1;\nlet x = 2;\nprintln(x);");
+        assert!(errors.is_empty(), "got: {errors:?}");
+    }
+
+    #[test]
+    fn e0063_self_not_first_in_method_is_detected() {
+        let (errors, _) =
+            check_src_checked("class C { pub fn m(x: Integer, self) -> Integer { return x; } }");
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0063", "got: {errors:?}");
+    }
+
+    #[test]
+    fn e0081_op_overload_wrong_arity_is_detected() {
+        let errs = check_src(
+            "class V { pub x: F64 }\nimpl ops::Neg for V { fn neg(self, rhs) -> V { V { x: 0.0 } } }",
+        );
+        assert_eq!(errs.len(), 1, "got: {errs:?}");
+        assert_eq!(errs[0].code, "E0081", "got: {errs:?}");
+    }
+
+    #[test]
+    fn e0051_builtin_parameter_requires_type_annotation() {
+        let errs = check_src("@builtin fn sqrt(x);");
+        assert_eq!(errs.len(), 1, "got: {errs:?}");
+        assert_eq!(errs[0].code, "E0051", "got: {errs:?}");
+    }
+
+    #[test]
+    fn e0052_unknown_type_is_detected() {
+        let (errors, _) = check_src_checked("fn f(x: Foo) -> Integer { return 0; }");
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0052", "got: {errors:?}");
+        assert!(errors[0].message.contains("Foo"));
+    }
+
+    #[test]
+    fn e0052_declared_class_type_is_known() {
+        let (errors, _) =
+            check_src_checked("class Foo { pub x: Integer }\nfn f(v: Foo) -> Integer { return 0; }");
+        assert!(errors.is_empty(), "got: {errors:?}");
+    }
+
+    #[test]
+    fn e0052_let_annotation_is_checked_with_help() {
+        let (errors, _) = check_src_checked("let x: Strng = 1;");
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0052", "got: {errors:?}");
+        assert!(
+            errors[0]
+                .help
+                .as_deref()
+                .unwrap_or_default()
+                .contains("String"),
+            "expected a `String` suggestion: {:?}",
+            errors[0].help
+        );
+    }
+
+    #[test]
+    fn e0041_field_and_method_may_share_a_name() {
+        // A field and an accessor method are separate namespaces (spec §4.5), so this is legal.
+        let (errors, _) = check_src_checked(
+            "class C { pub total: Integer, pub fn total(self) -> Integer { self.total } }",
+        );
+        assert!(errors.is_empty(), "got: {errors:?}");
+    }
+
+    #[test]
     fn w0003_unused_binding_is_reported() {
         let (_, warnings) = check_src_checked("let a = 1; let b = a + 2;\nlet unused = 3;");
         let has = warnings
