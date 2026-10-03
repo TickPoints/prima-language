@@ -7,6 +7,7 @@ use crate::ast::*;
 use crate::error::SyntaxError;
 use crate::span::Span;
 use crate::token::{TokenKind, describe};
+use prima_core::suggest::did_you_mean_help;
 
 impl Parser {
     pub(crate) fn parse_stmt(&mut self, docs: Option<DocComment>) -> Result<Stmt, SyntaxError> {
@@ -28,10 +29,11 @@ impl Parser {
             TokenKind::KwTry => {
                 let span = self.span();
                 self.skip_to_statement_boundary();
-                return Err(SyntaxError {
+                return Err(SyntaxError::syntax(
                     span,
-                    message: "`try`/`catch` was removed in v2.0 (E0010); use `Result`/`match`/`?` instead (spec §16.3)".into(),
-                });
+                    "`try`/`catch` was removed in v2.0 (spec §16.3)",
+                )
+                .with_help("use `Result`/`match`/`?` instead (spec §16.3)"));
             }
             TokenKind::KwWith => self.parse_with_stmt()?,
             TokenKind::KwPub => self.parse_pub_stmt(&annotations, &docs)?,
@@ -403,13 +405,21 @@ impl Parser {
                                 let level_pat: [&str; 4] = ["O0", "O1", "O2", "O3"];
                                 match level_pat.iter().position(|&l| l == seg.value) {
                                     Some(idx) => opt_level = idx as u8,
-                                    None => return Err(self.err(
-                                        seg.span,
-                                        format!(
-                                            "invalid `@builtin` optimization level `{}` (E0057)",
-                                            seg.value
-                                        ),
-                                    )),
+                                    None => {
+                                        let help = did_you_mean_help(&seg.value, level_pat)
+                                            .unwrap_or_else(|| {
+                                                "valid tiers are `O0`, `O1`, `O2`, `O3`".into()
+                                            });
+                                        return Err(SyntaxError::new(
+                                            "E0057",
+                                            seg.span,
+                                            format!(
+                                                "invalid `@builtin` optimization level `{}`",
+                                                seg.value
+                                            ),
+                                        )
+                                        .with_help(help));
+                                    }
                                 }
                                 self.skip_newlines();
                                 self.expect(&TokenKind::RParen, "`)`")?;
@@ -422,13 +432,20 @@ impl Parser {
                             if seg.value == "extern" {
                                 Annotation::CApiExtern
                             } else {
-                                return Err(self.err(
+                                return Err(SyntaxError::new(
+                                    "E0070",
                                     seg.span,
                                     format!("unknown annotation `@c_api::{}`", seg.value),
                                 ));
                             }
                         }
-                        _ => return Err(self.err(t.span, format!("unknown annotation `@{s}`"))),
+                        _ => {
+                            return Err(SyntaxError::new(
+                                "E0070",
+                                t.span,
+                                format!("unknown annotation `@{s}`"),
+                            ));
+                        }
                     }
                 }
                 _ => return Err(self.err(t.span, "expected annotation name after `@`".into())),

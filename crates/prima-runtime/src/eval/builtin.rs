@@ -186,7 +186,7 @@ impl Evaluator {
                     return crate::error::err(format!("`{name}` expects an array"));
                 };
                 if a.is_empty() {
-                    return crate::error::err("empty collection");
+                    return Err(crate::error::coded("R0014", "empty collection"));
                 }
                 let op = if matches!(b, Builtin::Sum) {
                     BinOp::Add
@@ -233,7 +233,7 @@ impl Evaluator {
                     return crate::error::err(format!("`{name}` expects an array"));
                 };
                 if a.is_empty() {
-                    return crate::error::err("empty collection");
+                    return Err(crate::error::coded("R0014", "empty collection"));
                 }
                 let mut best = match a.get(0) {
                     Some(Value::Number(n)) => n,
@@ -344,7 +344,7 @@ impl Evaluator {
                 };
                 match a.with(|items| items.iter().position(|e| self.value_eq(e, &args[1]))) {
                     Some(i) => Ok(Value::Number(Number::from(i as i64))),
-                    None => crate::error::err("element not found"),
+                    None => Err(crate::error::coded("R0013", "element not found")),
                 }
             }
             Builtin::First | Builtin::Last => {

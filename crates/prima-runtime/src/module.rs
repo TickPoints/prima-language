@@ -9,6 +9,25 @@ use std::path::{Path, PathBuf};
 use prima_syntax::ast::{Import, ImportKind, Program};
 use prima_syntax::parse;
 
+use crate::error::RuntimeError;
+
+/// A module-load I/O failure (`R0007`): the file/directory could not be accessed or read (spec appendix C.2).
+fn io_err(message: impl Into<String>) -> RuntimeError {
+    RuntimeError::Coded {
+        code: "R0007",
+        message: message.into(),
+    }
+}
+
+/// A module-resolution/parse failure (`R0008`): missing module, import cycle, or a module that
+/// fails to parse (spec appendix C.2).
+fn import_err(message: impl Into<String>) -> RuntimeError {
+    RuntimeError::Coded {
+        code: "R0008",
+        message: message.into(),
+    }
+}
+
 /// Compilation unit (spec §15.3): one `.pra` file = one module body.
 #[derive(Debug)]
 pub struct ModuleUnit {
@@ -46,10 +65,15 @@ pub struct ModuleGraph {
 
 impl ModuleGraph {
     /// Load all reachable modules with `root_file` as the root module; imports resolve relative to `root_file`'s directory.
-    /// Returns an `Err(String)` describing: missing file / cycle / any module failing to parse.
-    pub fn load(root_file: &Path) -> Result<ModuleGraph, String> {
-        let root_file = fs::canonicalize(root_file)
-            .map_err(|e| format!("cannot access root module `{}`: {e}", root_file.display()))?;
+    /// Returns an `Err(RuntimeError)` coded `R0007` (I/O access/read failure) or `R0008` (missing
+    /// module / import cycle / parse failure) per spec appendix C.2.
+    pub fn load(root_file: &Path) -> Result<ModuleGraph, RuntimeError> {
+        let root_file = fs::canonicalize(root_file).map_err(|e| {
+            io_err(format!(
+                "cannot access root module `{}`: {e}",
+                root_file.display()
+            ))
+        })?;
         let mut loader = Loader::default();
         let root = loader.load_module(Vec::new(), &root_file)?;
         Ok(ModuleGraph {
@@ -74,27 +98,31 @@ struct Loader {
 }
 
 impl Loader {
-    fn load_module(&mut self, path: Vec<String>, file: &Path) -> Result<ModuleUnit, String> {
+    fn load_module(&mut self, path: Vec<String>, file: &Path) -> Result<ModuleUnit, RuntimeError> {
         let file = fs::canonicalize(file)
-            .map_err(|e| format!("cannot access module `{}`: {e}", file.display()))?;
+            .map_err(|e| io_err(format!("cannot access module `{}`: {e}", file.display())))?;
 
         if let Some(idx) = self.stack.iter().position(|(_, f)| *f == file) {
-            return Err(self.cycle_error(idx));
+            return Err(import_err(self.cycle_error(idx)));
         }
 
         let label = display_path(&path, &file);
-        let src = fs::read_to_string(&file)
-            .map_err(|e| format!("cannot read module `{label}` (`{}`): {e}", file.display()))?;
+        let src = fs::read_to_string(&file).map_err(|e| {
+            io_err(format!(
+                "cannot read module `{label}` (`{}`): {e}",
+                file.display()
+            ))
+        })?;
         let program = parse(&src).map_err(|errs| {
             let details = errs
                 .iter()
                 .map(|e| e.to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!(
+            import_err(format!(
                 "module `{label}` (`{}`) failed to parse: {details}",
                 file.display()
-            )
+            ))
         })?;
 
         let dir = file
@@ -109,10 +137,10 @@ impl Loader {
             match self.resolve_import(dir, &segments) {
                 Resolution::File(resolved) => {
                     let target = fs::canonicalize(&resolved).map_err(|e| {
-                        format!(
+                        io_err(format!(
                             "cannot access module `{key}` (`{}`): {e}",
                             resolved.display()
-                        )
+                        ))
                     })?;
                     if !self.done.contains(&target) {
                         let unit = self.load_module(segments.clone(), &target)?;
@@ -139,7 +167,9 @@ impl Loader {
                                 .map(|e| e.to_string())
                                 .collect::<Vec<_>>()
                                 .join(", ");
-                            format!("embedded stdlib module `{key}` failed to parse: {details}")
+                            import_err(format!(
+                                "embedded stdlib module `{key}` failed to parse: {details}"
+                            ))
                         })?;
                         let file = embedded_file(&path);
                         let unit = ModuleUnit {
@@ -170,12 +200,12 @@ impl Loader {
                     });
                 }
                 Resolution::None => {
-                    return Err(format!(
+                    return Err(import_err(format!(
                         "module `{key}` not found relative to `{}` (tried `{}.pra` and `{}/main.pra`)",
                         dir.display(),
                         segments.join("/"),
                         segments.join("/")
-                    ));
+                    )));
                 }
             }
         }
@@ -367,6 +397,7 @@ mod tests {
         let root = write(tmp.dir(), "main.pra", "import nope\n");
 
         let err = ModuleGraph::load(&root).unwrap_err();
+        let err = err.to_string();
         assert!(err.contains("nope"), "unexpected error: {err}");
         assert!(err.contains("nope.pra"), "unexpected error: {err}");
     }
@@ -379,6 +410,7 @@ mod tests {
         write(tmp.dir(), "b.pra", "import a\n");
 
         let err = ModuleGraph::load(&root).unwrap_err();
+        let err = err.to_string();
         assert!(err.contains("import cycle"), "unexpected error: {err}");
         assert!(err.contains("a"), "unexpected error: {err}");
         assert!(err.contains("b"), "unexpected error: {err}");

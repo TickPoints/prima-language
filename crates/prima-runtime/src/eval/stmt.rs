@@ -639,9 +639,10 @@ impl Evaluator {
             if let ParforStep::Eval(e) = s
                 && !self.expr_is_pure_call(env, e)
             {
-                return crate::error::err(
-                    "parfor iteration body must only call pure functions (E0082)",
-                );
+                return Err(crate::error::coded(
+                    "E0082",
+                    "parfor iteration body must only call pure functions",
+                ));
             }
         }
         let cfg = self.current_config().clone();

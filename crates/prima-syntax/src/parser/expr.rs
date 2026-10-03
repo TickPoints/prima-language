@@ -50,10 +50,11 @@ impl Parser {
             if self.at(&TokenKind::PipeArrow) {
                 let span = self.span();
                 self.skip_to_statement_boundary();
-                return Err(self.err(
+                return Err(SyntaxError::syntax(
                     span,
-                    "`|>` pipeline was removed in v2.3 (E0010); use class methods or a direct function call (spec §9.7)".into(),
-                ));
+                    "`|>` pipeline was removed in v2.3 (spec §9.7)",
+                )
+                .with_help("use a class method chain or a direct call instead (spec §9.7)"));
             }
             let Some((op, lbp, rbp)) = binop_bp(self.peek()) else {
                 break;
@@ -196,10 +197,10 @@ impl Parser {
             TokenKind::Pipe => return self.parse_lambda(span),
             TokenKind::KwMatch => return self.parse_match_expr(span),
             _ => {
-                return Err(SyntaxError {
+                return Err(SyntaxError::syntax(
                     span,
-                    message: format!("expected expression, found {}", describe(&tok.kind)),
-                });
+                    format!("expected expression, found {}", describe(&tok.kind)),
+                ));
             }
         };
         // A leaf atom has depth 1 (spec §16.4 depth budget); compound atoms set their own depth.

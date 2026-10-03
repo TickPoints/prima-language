@@ -33,7 +33,7 @@ fn newline_separated_statements_are_parse_error() {
     let err = Evaluator::new()
         .eval_value("let x = 1\nx + 1\n")
         .unwrap_err();
-    assert!(err.to_string().contains("E0011"), "error = {err}");
+    assert_eq!(err.code(), "E0011", "error = {err}");
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn pipeline_is_parse_error() {
     let err = Evaluator::new()
         .eval_value("let x = 1;\nx |> to_f64")
         .unwrap_err();
-    assert!(err.to_string().contains("E0010"), "error = {err}");
+    assert_eq!(err.code(), "E0010", "error = {err}");
 }
 
 #[test]

@@ -21,7 +21,7 @@ use crate::config::Config;
 use crate::error::RuntimeError;
 use crate::module::{ModuleGraph, ModuleUnit, ResolvedImport};
 
-use super::helpers::{DEFAULT_CONFIG, syntax_errors};
+use super::helpers::{DEFAULT_CONFIG, syntax_errors, unknown_function_error};
 use super::{Env, EnvRef, Evaluator, Flow, Function, HotState, NamespaceItem};
 
 impl Evaluator {
@@ -172,7 +172,10 @@ impl Evaluator {
             let leaked: &'static str = Box::leak(key.into_boxed_str());
             return Ok(Function::Native { name: leaked, call });
         }
-        crate::error::err(format!("unregistered `@builtin` function `{name}` (E0055)"))
+        Err(crate::error::coded(
+            "E0055",
+            format!("unregistered `@builtin` function `{name}`"),
+        ))
     }
 
     /// Bind a `@builtin(ON)` fn declaration (spec §18.4) to its implementation:
@@ -191,15 +194,17 @@ impl Evaluator {
     ) -> Result<Function, RuntimeError> {
         if level == 0 {
             if !body.stmts.is_empty() {
-                return crate::error::err(format!(
-                    "`@builtin` function `{name}` must not have a body (E0056)"
+                return Err(crate::error::coded(
+                    "E0056",
+                    format!("`@builtin` function `{name}` must not have a body"),
                 ));
             }
             return self.bind_builtin(name);
         }
         if body.stmts.is_empty() {
-            return crate::error::err(format!(
-                "`@builtin(O{level})` function `{name}` must have a body (E0056)"
+            return Err(crate::error::coded(
+                "E0056",
+                format!("`@builtin(O{level})` function `{name}` must have a body"),
             ));
         }
         let native = crate::stdlib::get_impl(&self.builtin_key(name));
@@ -215,7 +220,7 @@ impl Evaluator {
 
     /// Interpret a file as the root module (spec §15.3 module system plus the pre-imported `core`).
     pub fn eval_file(&mut self, path: &Path) -> Result<(), RuntimeError> {
-        let graph = ModuleGraph::load(path).map_err(RuntimeError::Message)?;
+        let graph = ModuleGraph::load(path)?;
         self.reset_config();
         self.module_items.clear();
         // First evaluate each module in dependency order and collect its public items (spec §15.2).
@@ -237,7 +242,7 @@ impl Evaluator {
     /// Like [`Evaluator::eval_file`] but retains the root environment, so a named function can be
     /// invoked afterwards (used by the C ABI export path, spec §18.4).
     pub fn eval_file_keep_env(&mut self, path: &Path) -> Result<EnvRef, RuntimeError> {
-        let graph = ModuleGraph::load(path).map_err(RuntimeError::Message)?;
+        let graph = ModuleGraph::load(path)?;
         self.reset_config();
         self.module_items.clear();
         for dep in &graph.deps {
@@ -267,7 +272,7 @@ impl Evaluator {
         let func = env
             .borrow()
             .get_func(name)
-            .ok_or_else(|| RuntimeError::Message(format!("unknown function `{name}`")))?;
+            .ok_or_else(|| unknown_function_error(env, name))?;
         self.apply_function(&func, args)
     }
 
@@ -284,7 +289,7 @@ impl Evaluator {
         let func = env
             .borrow()
             .get_func(name)
-            .ok_or_else(|| RuntimeError::Message(format!("unknown function `{name}`")))?;
+            .ok_or_else(|| unknown_function_error(env, name))?;
         match func.as_ref() {
             Function::Host {
                 params,
@@ -308,7 +313,7 @@ impl Evaluator {
         let func = env
             .borrow()
             .get_func(name)
-            .ok_or_else(|| RuntimeError::Message(format!("unknown function `{name}`")))?;
+            .ok_or_else(|| unknown_function_error(env, name))?;
         if let Some(v) = self.try_vm_call(&func, args.clone())? {
             return Ok(v);
         }
@@ -323,7 +328,7 @@ impl Evaluator {
         self.push_module_config(root.program.config.as_ref())?;
         for stmt in &root.program.stmts {
             if let Flow::Return(_) = self.eval_stmt(env, stmt)? {
-                return crate::error::err("`return` outside of a function");
+                return Err(crate::error::coded("E0080", "`return` outside of a function"));
             }
         }
         Ok(())
@@ -335,10 +340,13 @@ impl Evaluator {
         if let Some(cfg) = &unit.program.config {
             for e in &cfg.entries {
                 if e.name.value == "domain" || e.name.value == "undefined_handling" {
-                    return Err(RuntimeError::Message(format!(
-                        "polluting config `{}` is only allowed in the entry module",
-                        e.name.value
-                    )));
+                    return Err(RuntimeError::Coded {
+                        code: "E0021",
+                        message: format!(
+                            "polluting config `{}` is only allowed in the entry module",
+                            e.name.value
+                        ),
+                    });
                 }
             }
         }
@@ -481,7 +489,7 @@ impl Evaluator {
                         .cloned()
                         .or_else(|| crate::stdlib::get_namespace(&key))
                         .ok_or_else(|| {
-                            RuntimeError::Message(format!("module `{key}` is not loaded"))
+                            RuntimeError::Coded { code: "R0008", message: format!("module `{key}` is not loaded") }
                         })?;
                     for item in items.values() {
                         if let NamespaceItem::Class(def) = item {
@@ -493,7 +501,7 @@ impl Evaluator {
                         .map(|a| a.value.clone())
                         .unwrap_or_else(|| key.clone());
                     if env.borrow_mut().set_module(&ns, items) {
-                        return crate::error::err(format!("conflicting import: module `{ns}`"));
+                        return Err(crate::error::coded("E0031", format!("conflicting import: module `{ns}`")));
                     }
                 }
                 ImportKind::From {
@@ -505,35 +513,34 @@ impl Evaluator {
                         .cloned()
                         .or_else(|| crate::stdlib::get_namespace(&key))
                         .ok_or_else(|| {
-                            RuntimeError::Message(format!("module `{key}` is not loaded"))
+                            RuntimeError::Coded { code: "R0008", message: format!("module `{key}` is not loaded") }
                         })?;
                     for it in from_items {
                         match it {
                             ImportItem::Star => {
                                 for (name, item) in &module {
                                     if !bound.insert(name.clone()) {
-                                        return crate::error::err(format!(
-                                            "conflicting import: `{name}`"
-                                        ));
+                                        return Err(crate::error::coded("E0031", format!("conflicting import: `{name}`")));
                                     }
                                     self.bind_imported_item(env, name, item);
                                 }
                             }
                             ImportItem::Name { name, alias } => {
                                 let item = module.get(&name.value).cloned().ok_or_else(|| {
-                                    RuntimeError::Message(format!(
-                                        "module `{key}` has no public item `{}`",
-                                        name.value
-                                    ))
+                                    RuntimeError::Coded {
+                                        code: "R0008",
+                                        message: format!(
+                                            "module `{key}` has no public item `{}`",
+                                            name.value
+                                        ),
+                                    }
                                 })?;
                                 let target = alias
                                     .as_ref()
                                     .map(|a| a.value.clone())
                                     .unwrap_or_else(|| name.value.clone());
                                 if !bound.insert(target.clone()) {
-                                    return crate::error::err(format!(
-                                        "conflicting import: `{target}`"
-                                    ));
+                                    return Err(crate::error::coded("E0031", format!("conflicting import: `{target}`")));
                                 }
                                 self.bind_imported_item(env, &target, &item);
                             }
@@ -578,7 +585,7 @@ impl Evaluator {
         self.push_module_config(program.config.as_ref())?;
         for stmt in &program.stmts {
             if let Flow::Return(_) = self.eval_stmt(env, stmt)? {
-                return crate::error::err("`return` outside of a function");
+                return Err(crate::error::coded("E0080", "`return` outside of a function"));
             }
         }
         Ok(())
@@ -658,9 +665,12 @@ impl Evaluator {
                             .map(|e| e.to_string())
                             .collect::<Vec<_>>()
                             .join(", ");
-                        RuntimeError::Message(format!(
-                            "embedded stdlib module `{key}` failed to parse: {details}"
-                        ))
+                        RuntimeError::Coded {
+                            code: "R0008",
+                            message: format!(
+                                "embedded stdlib module `{key}` failed to parse: {details}"
+                            ),
+                        }
                     })?;
                     let unit = ModuleUnit {
                         path: path.clone(),
@@ -714,7 +724,7 @@ impl Evaluator {
             } else {
                 match self.eval_stmt(env, stmt)? {
                     Flow::Continue => {}
-                    Flow::Return(_) => return crate::error::err("`return` outside of a function"),
+                    Flow::Return(_) => return Err(crate::error::coded("E0080", "`return` outside of a function")),
                 }
             }
         }

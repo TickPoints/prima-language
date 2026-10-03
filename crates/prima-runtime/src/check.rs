@@ -18,10 +18,14 @@ pub struct TypeError {
     pub column: usize,
     /// Source span of the offending value, for caret rendering (spec §16.4).
     pub span: Span,
+    /// Spec appendix C.1 compile-time error code, e.g. `"E0050"` (spec §16.4).
+    pub code: &'static str,
     pub message: String,
     /// Diagnostic notes attached to the error (spec §16.4), e.g. the stdlib `@builtin` signature
     /// and definition location for `E0050` call-site violations.
     pub notes: Vec<String>,
+    /// An actionable `= help:` suggestion (spec §16.4), e.g. a `did you mean` for an unknown name.
+    pub help: Option<String>,
 }
 
 /// Static-check context: whether `?` (spec §16.3 `E0054`) is allowed — i.e. inside a `fn`/method
@@ -44,8 +48,10 @@ pub fn check_src(src: &str) -> Vec<TypeError> {
                         line,
                         column,
                         span: e.span,
+                        code: e.code,
                         message: e.message.clone(),
                         notes: Vec::new(),
+                        help: e.help.clone(),
                     }
                 })
                 .collect();
@@ -77,8 +83,10 @@ pub fn check_src_checked(src: &str) -> (Vec<TypeError>, Vec<SyntaxWarning>) {
                         line,
                         column,
                         span: e.span,
+                        code: e.code,
                         message: e.message.clone(),
                         notes: Vec::new(),
+                        help: e.help.clone(),
                     }
                 })
                 .collect();
@@ -131,8 +139,11 @@ mod tests {
     fn f64_annotation_rejects_symbolic_value() {
         let errs = check_src("let x: F64 = sqrt(2);");
         assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0].code, "E0050");
         assert!(errs[0].message.contains("F64"));
         assert!(errs[0].message.contains("Expr"));
+        let help = errs[0].help.as_deref().unwrap_or_default();
+        assert!(help.contains("to_f64"), "collapse hint expected, got: {help:?}");
     }
 
     #[test]
@@ -140,7 +151,7 @@ mod tests {
         crate::stdlib::register_module_source("checkdoc", DOC_SRC);
         let errs = check_src("import checkdoc; let x = checkdoc::inverse(1);");
         assert_eq!(errs.len(), 1, "expected one error, got {errs:?}");
-        assert!(errs[0].message.contains("E0050"), "got: {errs:?}");
+        assert_eq!(errs[0].code, "E0050", "got: {errs:?}");
         let notes = &errs[0].notes;
         assert!(
             notes.iter().any(|n| n.contains("checkdoc.pra:2:")),
@@ -186,6 +197,20 @@ mod tests {
         let errs = check_src("let x: =");
         assert_eq!(errs.len(), 1);
         assert!(!errs[0].message.is_empty());
+        // The syntax code is preserved structured rather than embedded in the message.
+        assert!(errs[0].code.starts_with('E'), "got code: {:?}", errs[0].code);
+    }
+
+    #[test]
+    fn e0040_offers_did_you_mean_help() {
+        let (errors, _) = check_src_checked("let value = 1; let x = vlaue;");
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0040");
+        let help = errors[0].help.as_deref().unwrap_or_default();
+        assert!(
+            help.contains("value"),
+            "expected a suggestion for `vlaue`, got: {help:?}"
+        );
     }
 
     #[test]
@@ -204,7 +229,7 @@ mod tests {
     fn try_operator_rejected_outside_result_fn() {
         let errs = check_src("let x = try_f64(\"a\")?;");
         assert_eq!(errs.len(), 1);
-        assert!(errs[0].message.contains("E0054"));
+        assert_eq!(errs[0].code, "E0054");
     }
 
     #[test]
@@ -221,7 +246,7 @@ mod tests {
     fn refutable_pattern_in_let_is_flagged() {
         let errs = check_src("let 0 = x;");
         assert_eq!(errs.len(), 1);
-        assert!(errs[0].message.contains("E0053"));
+        assert_eq!(errs[0].code, "E0053");
     }
 
     #[test]
@@ -305,7 +330,7 @@ mod tests {
     fn e0040_undefined_name_is_detected() {
         let (errors, _) = check_src_checked("let x = missing_name;");
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("E0040"), "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0040", "got: {errors:?}");
         assert!(errors[0].message.contains("missing_name"));
     }
 
@@ -328,7 +353,7 @@ mod tests {
     fn e0080_return_outside_fun_is_detected() {
         let (errors, _) = check_src_checked("return 1;");
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("E0080"), "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0080", "got: {errors:?}");
     }
 
     #[test]
@@ -341,7 +366,93 @@ mod tests {
     fn e0062_self_outside_method_is_detected() {
         let (errors, _) = check_src_checked("let x = self;");
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("E0062"), "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0062", "got: {errors:?}");
+    }
+
+    #[test]
+    fn e0041_duplicate_definition_is_detected() {
+        let (errors, _) = check_src_checked("fn dup() { }\nfn dup() { }");
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0041", "got: {errors:?}");
+        assert!(errors[0].message.contains("dup"));
+    }
+
+    #[test]
+    fn e0041_duplicate_parameter_is_detected() {
+        let (errors, _) =
+            check_src_checked("fn f(x: Integer, x: Integer) -> Integer { return x; }");
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0041", "got: {errors:?}");
+    }
+
+    #[test]
+    fn e0041_let_shadowing_is_allowed() {
+        let (errors, _) = check_src_checked("let x = 1;\nlet x = 2;\nprintln(x);");
+        assert!(errors.is_empty(), "got: {errors:?}");
+    }
+
+    #[test]
+    fn e0063_self_not_first_in_method_is_detected() {
+        let (errors, _) =
+            check_src_checked("class C { pub fn m(x: Integer, self) -> Integer { return x; } }");
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0063", "got: {errors:?}");
+    }
+
+    #[test]
+    fn e0081_op_overload_wrong_arity_is_detected() {
+        let errs = check_src(
+            "class V { pub x: F64 }\nimpl ops::Neg for V { fn neg(self, rhs) -> V { V { x: 0.0 } } }",
+        );
+        assert_eq!(errs.len(), 1, "got: {errs:?}");
+        assert_eq!(errs[0].code, "E0081", "got: {errs:?}");
+    }
+
+    #[test]
+    fn e0051_builtin_parameter_requires_type_annotation() {
+        let errs = check_src("@builtin fn sqrt(x);");
+        assert_eq!(errs.len(), 1, "got: {errs:?}");
+        assert_eq!(errs[0].code, "E0051", "got: {errs:?}");
+    }
+
+    #[test]
+    fn e0052_unknown_type_is_detected() {
+        let (errors, _) = check_src_checked("fn f(x: Foo) -> Integer { return 0; }");
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0052", "got: {errors:?}");
+        assert!(errors[0].message.contains("Foo"));
+    }
+
+    #[test]
+    fn e0052_declared_class_type_is_known() {
+        let (errors, _) =
+            check_src_checked("class Foo { pub x: Integer }\nfn f(v: Foo) -> Integer { return 0; }");
+        assert!(errors.is_empty(), "got: {errors:?}");
+    }
+
+    #[test]
+    fn e0052_let_annotation_is_checked_with_help() {
+        let (errors, _) = check_src_checked("let x: Strng = 1;");
+        assert_eq!(errors.len(), 1, "got: {errors:?}");
+        assert_eq!(errors[0].code, "E0052", "got: {errors:?}");
+        assert!(
+            errors[0]
+                .help
+                .as_deref()
+                .unwrap_or_default()
+                .contains("String"),
+            "expected a `String` suggestion: {:?}",
+            errors[0].help
+        );
+    }
+
+    #[test]
+    fn e0041_field_and_method_may_share_a_name() {
+        // A field and an accessor method are separate namespaces (spec §4.5), so this is legal.
+        let (errors, _) = check_src_checked(
+            "class C { pub total: Integer, pub fn total(self) -> Integer { self.total } }",
+        );
+        assert!(errors.is_empty(), "got: {errors:?}");
     }
 
     #[test]

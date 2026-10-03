@@ -227,16 +227,18 @@ pub(crate) fn check_parfor_body(body: &Block) -> Result<Vec<ParforStep>, Runtime
                         value: value.clone(),
                     }));
                 } else {
-                    return crate::error::err(
-                        "parfor iteration body may only assign to index slots `A[i]` (E0082)",
-                    );
+                    return Err(crate::error::coded(
+                        "E0082",
+                        "parfor iteration body may only assign to index slots `A[i]`",
+                    ));
                 }
             }
             Stmt::Expr(e) => steps.push(ParforStep::Eval(e.clone())),
             _ => {
-                return crate::error::err(
-                    "parfor iteration body must be side-effect free (E0082): only index-slot assignments and pure calls allowed",
-                );
+                return Err(crate::error::coded(
+                    "E0082",
+                    "parfor iteration body must be side-effect free: only index-slot assignments and pure calls allowed",
+                ));
             }
         }
     }
@@ -588,7 +590,12 @@ pub(crate) fn require_numeric_array(elems: &[Value]) -> Result<Vec<Number>, Runt
     for e in elems {
         match e {
             Value::Number(n) => out.push(n.clone()),
-            _ => return crate::error::err("array elements must be numeric (R0009)"),
+            _ => {
+                return Err(crate::error::coded(
+                    "R0009",
+                    "array elements must be numeric",
+                ));
+            }
         }
     }
     Ok(out)
@@ -822,8 +829,29 @@ pub(crate) fn literal_value(e: &Expr) -> Option<Value> {
     }
 }
 
+/// Build an `unknown function` error carrying a `did you mean` suggestion over the names visible
+/// in `env` (spec §16.4). Shared by every runtime call-resolution failure.
+pub(crate) fn unknown_function_error(env: &crate::eval::EnvRef, attempted: &str) -> RuntimeError {
+    let names = env.borrow().visible_names();
+    let err = RuntimeError::Message(format!("unknown function `{attempted}`"));
+    match prima_core::suggest::did_you_mean_help(attempted, &names) {
+        Some(help) => err.with_help(help),
+        None => err,
+    }
+}
+
 pub(crate) fn syntax_err(e: SyntaxError) -> RuntimeError {
-    RuntimeError::Message(format!("syntax error: {}", e.message))
+    // Preserve the syntax error's own code and help so `error[E00xx]` and `= help:` survive the
+    // bridge into runtime diagnostics (spec §16.4). The message is prefixed once; the code is
+    // carried structured, never re-embedded in the text.
+    let err = RuntimeError::Coded {
+        code: e.code,
+        message: format!("syntax error: {}", e.message),
+    };
+    match e.help {
+        Some(help) => err.with_help(help),
+        None => err,
+    }
 }
 
 pub(crate) fn syntax_errors(errors: Vec<SyntaxError>) -> RuntimeError {

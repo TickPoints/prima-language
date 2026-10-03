@@ -12,7 +12,7 @@ use prima_syntax::ast::{DocComment, Expr, ImportItem, ImportKind, Program, Spann
 use prima_syntax::parse;
 
 use super::TypeError;
-use super::error::push_err_with_note;
+use super::error::push_err_with_help;
 use super::infer::{assignable, infer, type_name};
 use super::line_col;
 
@@ -246,33 +246,43 @@ pub(crate) fn check_call_signature(
         .or_else(|| candidates.first())
         .expect("candidates is non-empty");
     if args.len() > chosen.params.len() {
-        push_err_with_note(
+        push_err_with_help(
             src,
             errors,
             call_span,
+            "E0050",
             format!(
-                "function `{name}` expects {} argument(s), got {} (E0050)",
+                "function `{name}` expects {} argument(s), got {}",
                 chosen.params.len(),
                 args.len()
             ),
-            sig_note(&name, chosen),
+            Some(sig_note(&name, chosen)),
+            Some(format!(
+                "call `{name}` with {} argument(s) as declared",
+                chosen.params.len()
+            )),
         );
         return;
     }
     for (i, arg) in args.iter().enumerate().take(chosen.params.len()) {
         let got = infer(arg, sigs);
         if !assignable(&chosen.params[i], &got) {
-            push_err_with_note(
+            let help = (got == "Expr").then(|| {
+                "the argument is symbolic; collapse it explicitly with `to_<type>(...)`".to_string()
+            });
+            push_err_with_help(
                 src,
                 errors,
                 arg.span,
+                "E0050",
                 format!(
-                    "argument {} of `{name}` expects {}, got {} (E0050)",
+                    "argument {} of `{name}` expects {}, got {}",
                     i + 1,
                     type_name(&chosen.params[i]),
                     got
                 ),
-                sig_note(&name, chosen),
+                Some(sig_note(&name, chosen)),
+                help,
             );
             return;
         }

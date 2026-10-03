@@ -269,6 +269,23 @@ impl Env {
             NamespaceItem::Class(_) => {}
         }
     }
+
+    /// Every binding name visible from this scope (functions, values, module aliases) along the
+    /// parent chain, used for `did you mean` suggestions on unknown-name runtime errors (spec §16.4).
+    pub(crate) fn visible_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        self.collect_names(&mut names);
+        names
+    }
+
+    fn collect_names(&self, out: &mut Vec<String>) {
+        out.extend(self.funcs.keys().cloned());
+        out.extend(self.values.keys().cloned());
+        out.extend(self.modules.keys().cloned());
+        if let Some(p) = &self.parent {
+            p.borrow().collect_names(out);
+        }
+    }
 }
 
 /// The broadcast backend a builtin-class method dispatches through (spec §18.1): read-only collection

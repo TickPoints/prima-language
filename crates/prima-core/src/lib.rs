@@ -6,6 +6,7 @@ pub mod number;
 pub mod opt;
 pub mod render;
 pub mod simplify;
+pub mod suggest;
 pub mod symbol;
 pub mod value;
 

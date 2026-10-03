@@ -2,35 +2,72 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use clap_complete::Shell;
 use prima_runtime::Evaluator;
 use prima_runtime::check::check_src_checked;
 use prima_syntax::parse_checked;
 
 mod cabi;
+mod completions;
 mod diagnostics;
 mod doc;
 mod doctest;
 mod fmt;
+mod newcmd;
+mod project;
 mod repl;
 mod testcmd;
+
+use diagnostics::{ColorMode, RenderOptions};
+
+/// `--color` policy (spec §20); auto-detect a terminal by default.
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+enum ColorArg {
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
+impl From<ColorArg> for ColorMode {
+    fn from(value: ColorArg) -> Self {
+        match value {
+            ColorArg::Auto => ColorMode::Auto,
+            ColorArg::Always => ColorMode::Always,
+            ColorArg::Never => ColorMode::Never,
+        }
+    }
+}
 
 /// Prima toolchain CLI (spec §20): `run`/`parse`/`compile`/`check`/`repl`/`fmt`/`test`/`doc`.
 #[derive(Parser)]
 #[command(name = "prima", version, about = "Prima language toolchain")]
-struct Cli {
+pub(crate) struct Cli {
+    /// Control colored diagnostic output.
+    #[arg(long, global = true, value_enum, default_value_t = ColorArg::Auto)]
+    color: ColorArg,
+    /// Suppress non-fatal warnings.
+    #[arg(long, short, global = true)]
+    quiet: bool,
+    /// Emit machine-readable NDJSON diagnostics on stderr (rustc `--message-format=json` style).
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Interpret a program (the file is the root module). Defaults to the project entry.
     Run {
-        file: PathBuf,
+        file: Option<PathBuf>,
     },
+    /// Dump the AST of a source file.
     Parse {
         file: PathBuf,
     },
+    /// Emit a C header or build a C-ABI shared library.
     Compile {
         file: PathBuf,
         #[arg(short, long)]
@@ -40,23 +77,28 @@ enum Command {
         #[arg(long)]
         emit_c_abi: bool,
     },
+    /// Start an interactive session.
     Repl,
+    /// Format source. Defaults to the project entry when no path is given.
     Fmt {
-        path: PathBuf,
+        path: Option<PathBuf>,
         #[arg(short, long)]
         write: bool,
         #[arg(long)]
         check: bool,
     },
+    /// Statically check a file. Defaults to the project entry when no path is given.
     Check {
-        file: PathBuf,
+        file: Option<PathBuf>,
         /// Promote the given warning codes (e.g. `W0005`) to errors (spec §16.5).
         #[arg(long = "deny")]
         deny: Vec<String>,
     },
+    /// Run every `*.pra` file under a directory (default: `src/` in a project, else `examples/`).
     Test {
         path: Option<PathBuf>,
     },
+    /// Generate Markdown docs from `///` comments. Defaults to the project entry.
     Doc {
         /// Source file to document (omitted with `--stdlib`).
         path: Option<PathBuf>,
@@ -74,11 +116,26 @@ enum Command {
         #[arg(long)]
         run: bool,
     },
+    /// Create a new project skeleton in `<name>/` (spec §20).
+    New {
+        name: String,
+    },
+    /// Create a project skeleton in the current directory (spec §20).
+    Init,
+    /// Generate a shell completion script to stdout.
+    Completions {
+        shell: Shell,
+    },
 }
 
 fn main() -> ExitCode {
     prima_stdlib::init();
     let cli = Cli::parse();
+    diagnostics::set_options(RenderOptions {
+        color: cli.color.into(),
+        json: cli.json,
+        quiet: cli.quiet,
+    });
     match dispatch(cli) {
         Ok(code) => code,
         Err(e) => report_anyhow(&e),
@@ -89,10 +146,13 @@ fn main() -> ExitCode {
 /// non-source errors (I/O, C-ABI build, etc.) carry a contextual `source` chain, while the textual
 /// diagnostics renderer (`diagnostics::*`) still owns source-level (syntax/type/runtime) output.
 fn dispatch(cli: Cli) -> Result<ExitCode> {
+    let cwd = std::env::current_dir().context("cannot determine the current directory")?;
     match cli.command {
-        Command::Run { file } => run_file(&file),
+        Command::Run { file } => run_file(&project::resolve_entry(file.as_deref(), &cwd)?),
         Command::Parse { file } => parse_file(&file),
-        Command::Check { file, deny } => check_file(&file, &deny),
+        Command::Check { file, deny } => {
+            check_file(&project::resolve_entry(file.as_deref(), &cwd)?, &deny)
+        }
         // `--emit-c-abi` also writes the header, so it takes precedence when both flags are set.
         Command::Compile {
             file,
@@ -113,9 +173,13 @@ fn dispatch(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::FAILURE)
         }
         Command::Repl => repl::run(),
-        Command::Fmt { path, write, check } => fmt::run(&path, write, check),
+        Command::Fmt { path, write, check } => {
+            let path = project::resolve_entry(path.as_deref(), &cwd)?;
+            fmt::run(&path, write, check)
+        }
         Command::Test { path } => {
-            testcmd::run(&path.unwrap_or_else(|| PathBuf::from(testcmd::DEFAULT_DIR)))
+            let dir = path.unwrap_or_else(|| project::resolve_test_dir(&cwd));
+            testcmd::run(&dir)
         }
         Command::Doc {
             path,
@@ -123,7 +187,17 @@ fn dispatch(cli: Cli) -> Result<ExitCode> {
             stdlib,
             test,
             run,
-        } => doc::run(path.as_deref(), output.as_deref(), stdlib, test, run),
+        } => {
+            let path = if stdlib || path.is_some() {
+                path
+            } else {
+                Some(project::resolve_entry(None, &cwd)?)
+            };
+            doc::run(path.as_deref(), output.as_deref(), stdlib, test, run)
+        }
+        Command::New { name } => newcmd::new_project(&name),
+        Command::Init => newcmd::init(),
+        Command::Completions { shell } => completions::run(shell),
     }
 }
 

@@ -89,8 +89,8 @@ fn unregistered_embedded_builtin_errors_e0055() {
     let err = Evaluator::new()
         .eval_value("import testembed3;")
         .unwrap_err();
+    assert_eq!(err.code(), "E0055", "expected E0055, got: {err}");
     let msg = format!("{err}");
-    assert!(msg.contains("E0055"), "expected E0055, got: {msg}");
     assert!(
         msg.contains("nope"),
         "expected the builtin name in the error, got: {msg}"

@@ -40,23 +40,23 @@ fn c_api_extern_render_header_is_valid_c() {
 
 #[test]
 fn non_pub_c_api_extern_is_e0072() {
-    let errs = messages("@c_api::extern\nfn hidden(a: c_api::int) { return a; }");
+    let errs = check_src("@c_api::extern\nfn hidden(a: c_api::int) -> c_api::int { return a; }");
     assert_eq!(errs.len(), 1, "expected exactly one error, got {errs:?}");
-    assert!(errs[0].contains("E0072"));
+    assert_eq!(errs[0].code, "E0072");
 }
 
 #[test]
 fn non_c_compatible_param_is_e0071() {
-    let errs = messages("@c_api::extern\npub fn bad(a: Integer) -> c_api::int { return 0; }");
+    let errs = check_src("@c_api::extern\npub fn bad(a: Integer) -> c_api::int { return 0; }");
     assert_eq!(errs.len(), 1, "expected exactly one error, got {errs:?}");
-    assert!(errs[0].contains("E0071"));
+    assert_eq!(errs[0].code, "E0071");
 }
 
 #[test]
 fn c_api_unit_as_parameter_is_e0071() {
-    let errs = messages("@c_api::extern\npub fn bad(u: c_api::unit) -> c_api::int { return 0; }");
+    let errs = check_src("@c_api::extern\npub fn bad(u: c_api::unit) -> c_api::int { return 0; }");
     assert_eq!(errs.len(), 1, "expected exactly one error, got {errs:?}");
-    assert!(errs[0].contains("E0071"));
+    assert_eq!(errs[0].code, "E0071");
 }
 
 #[test]
@@ -69,28 +69,28 @@ fn c_api_unit_return_is_allowed() {
 
 #[test]
 fn builtin_fn_with_body_is_e0056() {
-    let errs = messages("@builtin fn sqrt2(x) { return x; }");
+    let errs = check_src("@builtin fn sqrt2(x: F64) { return x; }");
     assert_eq!(errs.len(), 1, "expected exactly one error, got {errs:?}");
-    assert!(errs[0].contains("E0056"));
+    assert_eq!(errs[0].code, "E0056");
 }
 
 #[test]
 fn unregistered_builtin_fn_is_e0055() {
-    let errs = messages("@builtin fn zzzzz_unknown(x);");
+    let errs = check_src("@builtin fn zzzzz_unknown(x: F64);");
     assert_eq!(errs.len(), 1, "expected exactly one error, got {errs:?}");
-    assert!(errs[0].contains("E0055"));
-    assert!(errs[0].contains("zzzzz_unknown"));
+    assert_eq!(errs[0].code, "E0055");
+    assert!(errs[0].message.contains("zzzzz_unknown"));
 }
 
 #[test]
 fn registered_builtin_signature_only_passes() {
-    assert!(check_src("@builtin fn sqrt(x);").is_empty());
+    assert!(check_src("@builtin fn sqrt(x: F64);").is_empty());
 }
 
 #[test]
 fn builtin_class_is_e0055() {
-    let errs = messages("@builtin class Foo { x: Integer }");
+    let errs = check_src("@builtin class Foo { x: Integer }");
     assert_eq!(errs.len(), 1, "expected exactly one error, got {errs:?}");
-    assert!(errs[0].contains("E0055"));
-    assert!(errs[0].contains("Foo"));
+    assert_eq!(errs[0].code, "E0055");
+    assert!(errs[0].message.contains("Foo"));
 }

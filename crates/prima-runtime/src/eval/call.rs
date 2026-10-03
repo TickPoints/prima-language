@@ -73,10 +73,7 @@ impl Evaluator {
                     // `jit(...)` handle used as a callable (spec §19.2): dispatch through the registry.
                     return self.call_jit_function(id, arg_values);
                 } else {
-                    return Err(RuntimeError::Message(format!(
-                        "unknown function `{}`",
-                        path_key(segments)
-                    )));
+                    return Err(unknown_function_error(env, &path_key(segments)));
                 }
             }
             _ => return crate::error::err("invalid function call"),
@@ -272,11 +269,9 @@ impl Evaluator {
             return crate::error::err("`map`/`filter`/`reduce` expect (func, array[, init])");
         }
         let f = match &args[0].kind {
-            ExprKind::Path { segments } if segments.len() == 1 => {
-                self.resolve_func(env, segments).ok_or_else(|| {
-                    RuntimeError::Message(format!("unknown function `{}`", segments[0].value))
-                })?
-            }
+            ExprKind::Path { segments } if segments.len() == 1 => self
+                .resolve_func(env, segments)
+                .ok_or_else(|| unknown_function_error(env, &segments[0].value))?,
             ExprKind::Lambda { params, body } => Function::User {
                 params: params.clone(),
                 body: (**body).clone(),

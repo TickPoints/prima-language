@@ -55,15 +55,15 @@ impl Parser {
         if self.at(kind) {
             Ok(self.bump())
         } else {
-            Err(SyntaxError {
-                span: self.span(),
-                message: format!("expected {what}, found {}", describe(self.peek())),
-            })
+            Err(SyntaxError::syntax(
+                self.span(),
+                format!("expected {what}, found {}", describe(self.peek())),
+            ))
         }
     }
 
     pub(crate) fn err(&self, span: Span, message: String) -> SyntaxError {
-        SyntaxError { span, message }
+        SyntaxError::syntax(span, message)
     }
 
     /// Record a non-fatal warning (spec §16.5), e.g. the `W0006` `format` deprecation hint.
@@ -228,10 +228,12 @@ impl Parser {
         if matches!(self.peek_non_newline(), TokenKind::Eof | TokenKind::RBrace) {
             return Ok(());
         }
-        Err(self.err(
+        Err(SyntaxError::new(
+            "E0011",
             self.span(),
-            "expected `;` to separate statements (E0011); newline statement separation was removed in v2.3 (spec §4.2)".into(),
-        ))
+            "expected `;` to separate statements; newline statement separation was removed in v2.3 (spec §4.2)",
+        )
+        .with_help("terminate the statement with `;`"))
     }
 
     /// Terminator for block-level statements (spec §4.2): the trailing `;` is optional.
@@ -247,10 +249,10 @@ impl Parser {
                 value: s,
                 span: t.span,
             }),
-            _ => Err(SyntaxError {
-                span: t.span,
-                message: format!("expected {what}, found {}", describe(&t.kind)),
-            }),
+            _ => Err(SyntaxError::syntax(
+                t.span,
+                format!("expected {what}, found {}", describe(&t.kind)),
+            )),
         }
     }
 
@@ -262,10 +264,10 @@ impl Parser {
                 value: s,
                 span: t.span,
             }),
-            _ => Err(SyntaxError {
-                span: t.span,
-                message: format!("expected module path segment, found {}", describe(&t.kind)),
-            }),
+            _ => Err(SyntaxError::syntax(
+                t.span,
+                format!("expected module path segment, found {}", describe(&t.kind)),
+            )),
         }
     }
 
@@ -332,13 +334,20 @@ impl Parser {
                 }
                 TokenKind::KwConfig => {
                     if config.is_some() {
-                        return Err(self.err(self.span(), "duplicate `config` block".into()));
+                        return Err(SyntaxError::new(
+                            "E0020",
+                            self.span(),
+                            "duplicate `config` block",
+                        )
+                        .with_help("`config {}` must appear once, at the top of the file"));
                     }
                     if !imports.is_empty() || !stmts.is_empty() {
-                        return Err(self.err(
+                        return Err(SyntaxError::new(
+                            "E0020",
                             self.span(),
-                            "`config` must appear before `import` and statements".into(),
-                        ));
+                            "`config` must appear before `import` and statements",
+                        )
+                        .with_help("`config {}` must appear once, at the top of the file"));
                     }
                     config = Some(self.parse_config_block()?);
                 }
