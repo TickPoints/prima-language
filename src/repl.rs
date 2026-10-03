@@ -100,7 +100,7 @@ fn eval_entry(ev: &mut Evaluator, env: &EnvRef, printed: &Rc<RefCell<String>>, b
                 let _ = stdout.flush();
             }
         }
-        Err(e) => eprintln!("error: {e}"),
+        Err(e) => crate::diagnostics::report_runtime_error_line(&e),
     }
 }
 

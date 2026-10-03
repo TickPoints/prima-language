@@ -13,33 +13,46 @@ use super::TypeError;
 use super::infer::annot_name;
 use super::line_col;
 
-/// Push a located error, deriving line/column from the span (spec §16.4).
-pub(crate) fn push_err(src: &str, errors: &mut Vec<TypeError>, span: Span, message: String) {
-    let (line, column) = line_col(src, span.start);
-    errors.push(TypeError {
-        line,
-        column,
-        span,
-        message,
-        notes: Vec::new(),
-    });
-}
-
-/// Push a located error carrying a diagnostic note (spec §16.4).
-pub(crate) fn push_err_with_note(
+/// Push a located error with a spec appendix C.1 code and no extra diagnostics (spec §16.4).
+pub(crate) fn push_err(
     src: &str,
     errors: &mut Vec<TypeError>,
     span: Span,
+    code: &'static str,
     message: String,
-    note: String,
 ) {
     let (line, column) = line_col(src, span.start);
     errors.push(TypeError {
         line,
         column,
         span,
+        code,
         message,
-        notes: vec![note],
+        notes: Vec::new(),
+        help: None,
+    });
+}
+
+/// Push a located error carrying a diagnostic note and an actionable `= help:` suggestion
+/// (spec §16.4).
+pub(crate) fn push_err_with_help(
+    src: &str,
+    errors: &mut Vec<TypeError>,
+    span: Span,
+    code: &'static str,
+    message: String,
+    note: Option<String>,
+    help: Option<String>,
+) {
+    let (line, column) = line_col(src, span.start);
+    errors.push(TypeError {
+        line,
+        column,
+        span,
+        code,
+        message,
+        notes: note.into_iter().collect(),
+        help,
     });
 }
 

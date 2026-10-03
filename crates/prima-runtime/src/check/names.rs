@@ -17,8 +17,10 @@ use prima_syntax::ast::{
 };
 use prima_syntax::{Span, SyntaxWarning};
 
+use prima_core::suggest::did_you_mean_help;
+
 use super::TypeError;
-use super::line_col;
+use super::error::push_err_with_help;
 
 /// Names always bound at the top of any module (pre-imported `core` values/functions, control and
 /// collapse builtins, constructors). Never reported as undefined.
@@ -217,6 +219,20 @@ impl NameCtx {
                 return;
             }
         }
+    }
+
+    /// Every name visible from the current scope stack, used for `did you mean` suggestions on
+    /// `E0040 undefined_name` (spec §16.4).
+    fn candidate_names(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for s in &self.scopes {
+            for (name, _) in &s.binds {
+                if !out.contains(name) {
+                    out.push(name.clone());
+                }
+            }
+        }
+        out
     }
 }
 
@@ -457,14 +473,15 @@ fn check_stmt(src: &str, stmt: &Stmt, ctx: &mut NameCtx, errors: &mut Vec<TypeEr
         }
         Stmt::Return { value, span } => {
             if ctx.fn_depth == 0 {
-                let (line, column) = line_col(src, span.start);
-                errors.push(TypeError {
-                    line,
-                    column,
-                    span: *span,
-                    message: "`return` outside a function (E0080)".into(),
-                    notes: Vec::new(),
-                });
+                push_err_with_help(
+                    src,
+                    errors,
+                    *span,
+                    "E0080",
+                    "`return` outside a function".into(),
+                    None,
+                    Some("`return` is only valid inside a `fn` or method body".into()),
+                );
             }
             if let Some(e) = value {
                 check_expr(src, e, ctx, errors);
@@ -524,14 +541,16 @@ fn check_expr(src: &str, e: &Expr, ctx: &mut NameCtx, errors: &mut Vec<TypeError
         prima_syntax::ast::ExprKind::Path { segments } if segments.len() == 1 => {
             let name = segments[0].value.as_str();
             if !ctx.is_bound(name) {
-                let (line, column) = line_col(src, e.span.start);
-                errors.push(TypeError {
-                    line,
-                    column,
-                    span: e.span,
-                    message: format!("undefined name `{name}` (E0040)"),
-                    notes: Vec::new(),
-                });
+                let help = did_you_mean_help(name, ctx.candidate_names());
+                push_err_with_help(
+                    src,
+                    errors,
+                    e.span,
+                    "E0040",
+                    format!("undefined name `{name}`"),
+                    None,
+                    help,
+                );
             } else {
                 ctx.mark_used(name);
             }
@@ -539,28 +558,31 @@ fn check_expr(src: &str, e: &Expr, ctx: &mut NameCtx, errors: &mut Vec<TypeError
         prima_syntax::ast::ExprKind::Symbol(s) => {
             let name = s.value.as_str();
             if !ctx.is_bound(name) {
-                let (line, column) = line_col(src, s.span.start);
-                errors.push(TypeError {
-                    line,
-                    column,
-                    span: s.span,
-                    message: format!("undefined name `{name}` (E0040)"),
-                    notes: Vec::new(),
-                });
+                let help = did_you_mean_help(name, ctx.candidate_names());
+                push_err_with_help(
+                    src,
+                    errors,
+                    s.span,
+                    "E0040",
+                    format!("undefined name `{name}`"),
+                    None,
+                    help,
+                );
             } else {
                 ctx.mark_used(name);
             }
         }
         prima_syntax::ast::ExprKind::Self_ => {
             if ctx.fn_depth == 0 {
-                let (line, column) = line_col(src, e.span.start);
-                errors.push(TypeError {
-                    line,
-                    column,
-                    span: e.span,
-                    message: "`self` outside a method (E0062)".into(),
-                    notes: Vec::new(),
-                });
+                push_err_with_help(
+                    src,
+                    errors,
+                    e.span,
+                    "E0062",
+                    "`self` outside a method".into(),
+                    None,
+                    Some("`self` is only available inside a class method".into()),
+                );
             }
         }
         _ => check_expr_children(src, e, ctx, errors),

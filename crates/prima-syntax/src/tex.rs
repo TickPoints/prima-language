@@ -63,10 +63,7 @@ impl TexParser {
     }
 
     fn err(&self, message: &str) -> SyntaxError {
-        SyntaxError {
-            span: self.span(),
-            message: message.to_string(),
-        }
+        SyntaxError::syntax(self.span(), message)
     }
 
     fn binary(&self, op: BinOp, lhs: Expr, rhs: Expr) -> Expr {

@@ -38,7 +38,7 @@ It blends the best ideas of its predecessors:
 - **Symbolic differentiation** — `derivative`/`partial`/`grad`/`limit` built into core; forward and reverse-mode AD for compiled code.
 - **Parallelism** — `@parallel` broadcasting and `parfor` (rayon) with static side-effect checks.
 - **Standard library as typed `@builtin` modules** — each stdlib module is an embedded `.pra` signature file (`linalg`, `stats`, `io`, `plot`, `physics`, `sys`, `time`, `num`) whose `@builtin` declarations bind to Rust implementations; `prima check` validates call sites against those signatures (`E0050`).
-- **Toolchain** — `prima run` / `check` / `parse` / `compile` / `repl` / `fmt` / `test` / `doc`, with rustc-style colored diagnostics (`error[E00xx]: --> file:line:col`).
+- **Toolchain** — `prima run` / `check` / `parse` / `compile` / `repl` / `fmt` / `test` / `doc` / `new` / `init` / `completions`, rustc-style diagnostics (`error[E00xx]: --> file:line:col` with `= help:` suggestions), machine-readable `--json` (NDJSON), project-root discovery, and `--color`/`--quiet`.
 
 ## Install
 
@@ -88,16 +88,25 @@ println(derivative(x^2 + sin(x), x));// → 2 x + \cos(x)
 ## Toolchain
 
 ```text
-prima run    <file.pra>            interpret a program (file = root module)
-prima check  [--deny W####] file   static checks incl. stdlib call-site types
+prima run    [file.pra]            interpret a program (defaults to the project entry)
+prima check  [--deny W####] [file] static checks incl. stdlib call-site types
 prima parse  <file.pra>            dump the AST
 prima compile --emit-headers file  emit a C header for @c_api::extern exports
 prima compile --emit-c-abi file    build a shared library with the C-ABI exports
 prima repl                         interactive session (rustyline)
-prima fmt    [-w|--check] file     format source
-prima test   [dir]                 run every *.pra under dir (default examples/)
-prima doc    <file.pra> | --stdlib generate Markdown docs from /// comments
+prima fmt    [-w|--check] [file]   format source
+prima test   [dir]                 run every *.pra under dir (src/ in a project, else examples/)
+prima doc    [file.pra] | --stdlib generate Markdown docs from /// comments
+prima new    <name>                scaffold a project (spec §20 layout)
+prima init                         scaffold in the current directory
+prima completions <shell>          emit a shell completion script
+
+Global switches: --color auto|always|never  --json  --quiet
 ```
+
+Diagnostics render rustc-style as `error[E00xx]:` / `warning[W00xx]:` / `error[R00xx]:` with
+`--> file:line:col`, a caret, and targeted `= help:` suggestions; `--json` emits the same
+diagnostics as NDJSON on stderr for editors and CI.
 
 ## Documentation
 

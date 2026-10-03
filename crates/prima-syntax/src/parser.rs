@@ -29,12 +29,13 @@ const PARSE_STACK_SIZE: usize = 32 * 1024 * 1024;
 /// The `SyntaxError` raised when the nesting budget is exceeded (spec appendix C
 /// `E0012 expression_nesting_too_deep`, §16.4).
 pub(crate) fn nesting_error(span: Span) -> SyntaxError {
-    SyntaxError {
+    SyntaxError::new(
+        "E0012",
         span,
-        message: format!(
-            "expression nesting is too deep (E0012); the parser accepts at most {MAX_EXPR_DEPTH} levels"
+        format!(
+            "expression nesting is too deep; the parser accepts at most {MAX_EXPR_DEPTH} levels"
         ),
-    }
+    )
 }
 
 /// Hand-written recursive-descent + Pratt climbing parser (implementation plan §2.2), covering all appendix A BNF productions.
@@ -463,12 +464,12 @@ mod tests {
         );
         let errs = crate::parse("x = 1\ny = 2").unwrap_err();
         assert!(errs.iter().any(|e| {
-            e.message.contains("E0011")
+            e.code == "E0011"
                 && e.message
                     .contains("newline statement separation was removed")
         }));
         let errs = crate::parse("1\n2\n").unwrap_err();
-        assert!(errs.iter().any(|e| e.message.contains("E0011")));
+        assert!(errs.iter().any(|e| e.code == "E0011"));
     }
 
     #[test]
@@ -478,7 +479,7 @@ mod tests {
         let errs = crate::parse("a |> f").unwrap_err();
         assert!(
             errs.iter()
-                .any(|e| e.message.contains("E0010") && e.message.contains("pipeline was removed"))
+                .any(|e| e.code == "E0010" && e.message.contains("pipeline was removed"))
         );
         assert!(parse_err("let x = a |> f;"));
     }
@@ -582,9 +583,10 @@ mod tests {
         };
         assert_eq!(annotations.iter().map(|a| a.builtin_level()).max(), Some(0));
 
+        let errs = crate::parse("@builtin(O9) pub fn f() -> Integer;").unwrap_err();
         assert!(
-            parse_err("@builtin(O9) pub fn f() -> Integer;"),
-            "invalid tier is E0057"
+            errs.iter().any(|e| e.code == "E0057"),
+            "invalid tier must be E0057: {errs:?}"
         );
     }
 

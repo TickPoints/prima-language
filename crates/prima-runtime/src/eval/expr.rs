@@ -194,9 +194,9 @@ impl Evaluator {
     ) -> Result<Value, RuntimeError> {
         let v = self.eval_expr(env, lhs)?;
         let func = match &rhs.kind {
-            ExprKind::Path { segments } => self.resolve_func(env, segments).ok_or_else(|| {
-                RuntimeError::Message(format!("unknown function `{}`", path_key(segments)))
-            })?,
+            ExprKind::Path { segments } => self
+                .resolve_func(env, segments)
+                .ok_or_else(|| unknown_function_error(env, &path_key(segments)))?,
             _ => return crate::error::err("`@.` right-hand side must be a function"),
         };
         if matches!(v, Value::Array(_)) {

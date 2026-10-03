@@ -8,6 +8,7 @@ use super::helpers::{
     path_key, unalias_array_cycles, value_contains_array_buffer, with_notes,
 };
 use super::*;
+use prima_core::suggest::did_you_mean_help;
 
 impl Evaluator {
     /// Resolve a class name: `T` (local registry) or `mod::T` (module export, spec §15.2).
@@ -494,10 +495,19 @@ impl Evaluator {
         let mut out_fields: HashMap<String, Value> = HashMap::new();
         for fv in fields {
             if !def.fields.contains_key(&fv.name.value) {
-                return crate::error::err(format!(
-                    "unknown field `{}` in `{}` literal",
-                    fv.name.value, name.value
-                ));
+                let err = crate::error::coded(
+                    "E0060",
+                    format!(
+                        "unknown field `{}` in `{}` literal",
+                        fv.name.value, name.value
+                    ),
+                );
+                // Suggest the nearest declared field (spec §16.4).
+                let help = did_you_mean_help(&fv.name.value, def.fields.keys());
+                return Err(match help {
+                    Some(h) => err.with_help(h),
+                    None => err,
+                });
             }
             let v = match &fv.value {
                 Some(e) => self.eval_expr(env, e)?,
@@ -535,9 +545,9 @@ impl Evaluator {
         }
         for f in def.fields.keys() {
             if !out_fields.contains_key(f) {
-                return crate::error::err(format!(
-                    "missing field `{f}` in `{}` literal",
-                    name.value
+                return Err(crate::error::coded(
+                    "E0061",
+                    format!("missing field `{f}` in `{}` literal", name.value),
                 ));
             }
         }
@@ -620,21 +630,30 @@ impl Evaluator {
                     };
                     // Validation (spec §18.4): `E0055` unregistered `@builtin`, `E0056` wrong body.
                     if is_builtin && level == 0 && body.is_some() {
-                        return crate::error::err(format!(
-                            "`@builtin` method `{}` of `{}` must not have a body (E0056)",
-                            mname.value, def.name
+                        return Err(crate::error::coded(
+                            "E0056",
+                            format!(
+                                "`@builtin` method `{}` of `{}` must not have a body",
+                                mname.value, def.name
+                            ),
                         ));
                     }
                     if is_builtin && level > 0 && body.is_none() {
-                        return crate::error::err(format!(
-                            "`@builtin(O{level})` method `{}` of `{}` must have a `.pra` fallback body (E0056)",
-                            mname.value, def.name
+                        return Err(crate::error::coded(
+                            "E0056",
+                            format!(
+                                "`@builtin(O{level})` method `{}` of `{}` must have a `.pra` fallback body",
+                                mname.value, def.name
+                            ),
                         ));
                     }
                     if body.is_none() && native.is_none() && nature == MethodNature::Plain {
-                        return crate::error::err(format!(
-                            "unregistered `@builtin` method `{}` of `{}` (E0055)",
-                            mname.value, def.name
+                        return Err(crate::error::coded(
+                            "E0055",
+                            format!(
+                                "unregistered `@builtin` method `{}` of `{}`",
+                                mname.value, def.name
+                            ),
                         ));
                     }
                     def.methods.insert(
@@ -802,7 +821,7 @@ impl Evaluator {
                 arity(1)?;
                 match t.iter().position(|e| self.value_eq(e, &args[0])) {
                     Some(i) => Ok(Value::Number(Number::from(i as i64))),
-                    None => crate::error::err("element not found"),
+                    None => Err(crate::error::coded("R0013", "element not found")),
                 }
             }
             "first" => {
@@ -911,7 +930,7 @@ impl Evaluator {
                 arity(1)?;
                 match a.with(|items| items.iter().position(|e| self.value_eq(e, &args[0]))) {
                     Some(i) => Ok(Value::Number(Number::from(i as i64))),
-                    None => crate::error::err("element not found"),
+                    None => Err(crate::error::coded("R0013", "element not found")),
                 }
             }
             "count" => {
@@ -1252,7 +1271,7 @@ impl Evaluator {
                     .into_iter()
                     .next()
                     .ok_or_else(|| {
-                        RuntimeError::Message("`Dict.popitem` on an empty dict".into())
+                        crate::error::coded("R0014", "`Dict.popitem` on an empty dict")
                     })?;
                 let v = d.remove(&k).unwrap();
                 Value::Tuple(vec![k.to_value(), v])
@@ -1370,7 +1389,7 @@ impl Evaluator {
             "remove" => {
                 arity(1)?;
                 if !s.remove(&key(0)?) {
-                    return crate::error::err("element not found");
+                    return Err(crate::error::coded("R0013", "element not found"));
                 }
                 Value::Nil
             }

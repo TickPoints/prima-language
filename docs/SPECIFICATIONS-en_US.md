@@ -2426,8 +2426,9 @@ prima_project/                      # project root
 Provided by the `prima` CLI:
 
 ```bash
-# interpreted execution
+# interpreted execution (when FILE is omitted, search upward for the project root and run its src/main.pra)
 prima run src/main.pra
+prima run                        # inside a project: same as `prima run src/main.pra`
 
 # AOT compilation
 prima compile src/main.pra -o outputs/build/myapp
@@ -2435,20 +2436,36 @@ prima compile src/main.pra -o outputs/build/myapp
 # interactive REPL
 prima repl
 
-# format code
+# format code (with no PATH, targets the project entry)
 prima fmt src/
+prima fmt --write                # inside a project: formats src/main.pra
 
-# type checking (without executing)
+# type checking (without executing; with no FILE, targets the project entry)
 prima check src/main.pra
 
-# testing
+# testing (default: src/ inside a project, otherwise examples/)
 prima test
 
 # Documentation generation (v2.2: parses the `///`/`//!` doc comments, covering the project and the built-in standard library)
 prima doc                        # outputs Markdown to stdout
 prima doc -o docs/api.md         # writes to a file
 prima doc --stdlib               # outputs only the built-in standard library (including core/string.pra, etc.) documentation
+
+# project scaffolding (writes prima.toml/config.toml/README/src/main.pra/.gitignore per this section)
+prima new my_project
+prima init                       # initialize the current directory
+
+# emit a shell completion script (bash/zsh/fish/powershell/elvish) to stdout
+prima completions bash
 ```
+
+**Global switches** (apply to every subcommand):
+
+- `--color auto|always|never`: diagnostic coloring (default `auto`, color only on a terminal).
+- `--json`: emit diagnostics as **rustc-style NDJSON**, one object per line on stderr (fields `severity`/`code`/`message`/`spans`/`notes`/`help`), keeping the program's own stdout clean for editors and CI; `--json` implies no color.
+- `--quiet` / `-q`: suppress non-fatal warnings (errors are still printed).
+
+**Project-root discovery**: the file argument of `run`/`check`/`fmt`/`doc` may be omitted; the CLI then searches upward from the current directory for the nearest directory holding `prima.toml` or `src/main.pra` and uses it as the project root, with `src/main.pra` as the entry. `test` scans `src/` inside a project, otherwise falls back to `examples/`.
 
 ---
 

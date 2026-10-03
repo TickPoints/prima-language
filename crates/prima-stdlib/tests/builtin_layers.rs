@@ -47,5 +47,5 @@ fn builtin_o0_signature_only_requires_registered_impl() {
     let err = Evaluator::new()
         .eval_value("@builtin\npub fn not_a_real_builtin() -> Integer;")
         .unwrap_err();
-    assert!(err.to_string().contains("E0055"), "got: {err}");
+    assert_eq!(err.code(), "E0055", "got: {err}");
 }

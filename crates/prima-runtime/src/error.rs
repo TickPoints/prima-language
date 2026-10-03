@@ -16,6 +16,15 @@ pub enum RuntimeError {
     Type(String),
     #[error("collapse error: {0}")]
     Collapse(String),
+    /// A structured runtime error carrying its spec appendix C.2 code (spec §16.4). Used where the
+    /// concrete category has no dedicated variant (underflow, dimension mismatch, I/O, import,
+    /// missing key, not-found, empty collection) or where a precise code must override the
+    /// category default.
+    #[error("{message}")]
+    Coded {
+        code: &'static str,
+        message: String,
+    },
     /// Wraps an error with the source span of the statement/expression being evaluated,
     /// so diagnostics can point at the offending location (spec §16.4).
     #[error("{error}")]
@@ -45,8 +54,45 @@ impl RuntimeError {
             RuntimeError::Domain(_) => "Domain",
             RuntimeError::Type(_) => "Type",
             RuntimeError::Collapse(_) => "Collapse",
+            // `Coded` is a general-purpose message carrier, so it maps to the `Message` category.
+            RuntimeError::Coded { .. } => "Message",
             RuntimeError::Located { error, .. } => error.kind(),
             RuntimeError::WithNotes { error, .. } => error.kind(),
+        }
+    }
+
+    /// The spec appendix C.2 runtime error code (spec §16.4). Concrete categories map to their
+    /// `R####` code; `Coded` carries an explicit one; wrappers delegate to the error they enclose.
+    pub fn code(&self) -> &'static str {
+        match self {
+            RuntimeError::Message(_) => "R0011",
+            RuntimeError::Overflow(_) => "R0001",
+            RuntimeError::IndexOutOfBounds(_) => "R0003",
+            RuntimeError::Undefined(_) => "R0006",
+            RuntimeError::Domain(_) => "R0005",
+            RuntimeError::Type(_) => "R0009",
+            RuntimeError::Collapse(_) => "R0010",
+            RuntimeError::Coded { code, .. } => code,
+            RuntimeError::Located { error, .. } => error.code(),
+            RuntimeError::WithNotes { error, .. } => error.code(),
+        }
+    }
+
+    /// Wrap this error with a `= help:` suggestion (spec §16.4), keeping any notes already attached.
+    pub fn with_help(self, help: impl Into<String>) -> RuntimeError {
+        RuntimeError::WithNotes {
+            notes: Vec::new(),
+            help: Some(help.into()),
+            error: Box::new(self),
+        }
+    }
+
+    /// Wrap this error with a `= note:` line (spec §16.4).
+    pub fn with_note(self, note: impl Into<String>) -> RuntimeError {
+        RuntimeError::WithNotes {
+            notes: vec![note.into()],
+            help: None,
+            error: Box::new(self),
         }
     }
 
@@ -116,6 +162,15 @@ pub fn err<T>(message: impl Into<String>) -> Result<T, RuntimeError> {
     Err(RuntimeError::Message(message.into()))
 }
 
+/// Build a [`RuntimeError::Coded`] for a spec appendix C.2 category that has no dedicated variant
+/// (underflow, dimension mismatch, I/O, import, key-not-found, not-found, empty collection).
+pub(crate) fn coded(code: &'static str, message: impl Into<String>) -> RuntimeError {
+    RuntimeError::Coded {
+        code,
+        message: message.into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +230,27 @@ mod tests {
         };
         assert_eq!(e.help(), None);
         assert_eq!(e.notes(), vec!["n".to_string()]);
+    }
+
+    #[test]
+    fn code_maps_categories_and_delegates_through_wrappers() {
+        assert_eq!(RuntimeError::Message("m".into()).code(), "R0011");
+        assert_eq!(RuntimeError::Overflow("o".into()).code(), "R0001");
+        assert_eq!(RuntimeError::IndexOutOfBounds("i".into()).code(), "R0003");
+        assert_eq!(RuntimeError::Undefined("u".into()).code(), "R0006");
+        assert_eq!(RuntimeError::Domain("d".into()).code(), "R0005");
+        assert_eq!(RuntimeError::Type("t".into()).code(), "R0009");
+        assert_eq!(RuntimeError::Collapse("c".into()).code(), "R0010");
+        let coded = RuntimeError::Coded {
+            code: "R0014",
+            message: "empty".into(),
+        };
+        assert_eq!(coded.code(), "R0014");
+        // `Coded` stays in the `Message` `kind` category for `catch` matching.
+        assert_eq!(coded.kind(), "Message");
+        // `Located`/`WithNotes` delegate to the enclosed error's code.
+        assert_eq!(located(coded.clone()).code(), "R0014");
+        assert_eq!(coded.clone().with_help("h").code(), "R0014");
+        assert_eq!(coded.with_note("n").code(), "R0014");
     }
 }

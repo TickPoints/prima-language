@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Structured diagnostic codes (spec §16.4, appendix C).** Every compiler and runtime diagnostic
+  now carries a first-class code and renders rustc-style as `error[E0011]:` / `warning[W0003]:` /
+  `error[R0005]:` instead of burying the code in the message text. `SyntaxError`/`TypeError` gained
+  `code`/`help` fields and `RuntimeError` gained `code()` plus a `Coded` variant, so the
+  `E####`/`R####` tables in appendix C are now enforced by the implementation.
+- **Actionable suggestions.** `did you mean ...?` now covers undefined names (`E0040`), unknown
+  types (`E0052`), unknown/missing fields (`E0060`/`E0061`), unknown config keys (`E0022`),
+  `@builtin` optimization tiers (`E0057`), call-site arity, and method-name typos, alongside
+  rule-based hints (for example the explicit-collapse hint for `Expr`/numeric mismatches).
+- **`--json` machine-readable diagnostics.** All diagnostics can be emitted as rustc-style NDJSON
+  on stderr (`severity`/`code`/`message`/`spans`/`notes`/`help`), keeping the program's stdout clean
+  for editors and CI.
+- **`--color auto|always|never` and `--quiet`/`-q`** global switches.
+- **Project scaffolding**: `prima new <name>` and `prima init` write the spec §20 layout
+  (`prima.toml` / `config.toml` / `README.md` / `.gitignore` / `src/main.pra`).
+- **Project-root discovery**: `prima run` / `check` / `fmt` / `doc` accept an omitted file and use
+  the nearest ancestor `prima.toml` (or `src/main.pra`); `prima test` defaults to `src/` inside a
+  project.
+- **`prima completions <shell>`** emits a shell completion script via `clap_complete`.
+
+### Changed
+
+- REPL errors now print the structured `error[CODE]:` header, and location-less runtime errors keep
+  their `R####` code.
+
 ## [0.4.1-alpha] - 2026-09-13
 
 ### Performance

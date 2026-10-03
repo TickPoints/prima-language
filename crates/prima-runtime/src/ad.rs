@@ -195,8 +195,8 @@ impl Tape {
         consts.insert(builtins.e, std::f64::consts::E);
         consts.insert(builtins.pi, std::f64::consts::PI);
         consts.insert(builtins.tau, std::f64::consts::TAU);
-        consts.insert(builtins.gamma, 0.577_215_664_901_532_9);
-        consts.insert(builtins.phi, 1.618_033_988_749_895);
+        consts.insert(builtins.gamma, std::f64::consts::EULER_GAMMA);
+        consts.insert(builtins.phi, std::f64::consts::GOLDEN_RATIO);
 
         let mut builder = Builder {
             pool,

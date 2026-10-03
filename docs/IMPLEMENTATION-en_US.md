@@ -151,6 +151,10 @@ pub struct SourceLocation { pub file: Arc<PathBuf>, pub line: usize, pub column:
 
 §16.4's `error[E00xx]: ...` / `warning[W00xx]: ...` format is rendered by `codespan-reporting`; error codes (§16.4/appendix C) prefix the diagnostic titles (`E`/`R`/`W` + four-digit number). The `Error` enum (§16.1) is derived with `thiserror`, and its `location` field is filled automatically from the current execution frame when the interpreter raises an error.
 
+**Structured codes and suggestions (current implementation)**: `SyntaxError`/`TypeError` each carry `code: &'static str` and `help: Option<String>`; `RuntimeError` exposes `code()` (mapping variants to `R####`) and a `Coded { code, message }` variant, so the appendix C `E####`/`R####` tables are part of the data model rather than text buried in the message. The renderer (root `src/diagnostics.rs`) prints the `error[CODE]:` / `warning[CODE]:` header from those fields. `prima_core::suggest` offers a dependency-free `did_you_mean` (edit distance plus prefix/case heuristics) and attaches `= help:` suggestions for undefined names (`E0040`), unknown types (`E0052`), unknown/missing fields (`E0060`/`E0061`), unknown policy keys (`E0022`), `@builtin` optimization tiers (`E0057`), call-site arity, and method-name typos; type mismatches (`E0050`) get a rule-based explicit-collapse hint.
+
+**CLI ergonomics (current implementation)**: the root package adds global switches `--color auto|always|never`, `--json` (rustc-style NDJSON on stderr: `severity`/`code`/`message`/`spans`/`notes`/`help`), and `--quiet`; new `prima new <name>` / `prima init` scaffolding and `prima completions <shell>`; and project-root discovery (`prima.toml` or `src/main.pra`, §20) when `run`/`check`/`fmt`/`doc` omit the file argument.
+
 **Warning collection**: `DiagnosticCollector` collects both errors and warnings; warnings do not block compilation, and `prima check --deny W0005` can escalate a given warning to an error (tooling layer). The `W0001` (newline separation) and `W0002` (`|>` pipeline) codes were removed in v2.3 along with the corresponding deprecated features.
 
 ### 4.2 AST (prima-syntax)

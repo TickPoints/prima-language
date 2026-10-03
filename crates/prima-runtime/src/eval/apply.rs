@@ -83,7 +83,7 @@ impl Evaluator {
                         })?;
                         d.get(&key)
                             .cloned()
-                            .ok_or_else(|| RuntimeError::Message("key not found".into()))
+                            .ok_or_else(|| crate::error::coded("R0012", "key not found"))
                     }
                     IndexItem::Slice { .. } => crate::error::err("cannot slice a dict"),
                 }
@@ -306,9 +306,9 @@ impl Evaluator {
             let ExprKind::Path { segments } = &tc.callee.kind else {
                 return self.eval_block_tail(&call_env, &cbody);
             };
-            let next = self.resolve_func(&call_env, segments).ok_or_else(|| {
-                RuntimeError::Message(format!("unknown function `{}`", path_key(segments)))
-            })?;
+            let next = self
+                .resolve_func(&call_env, segments)
+                .ok_or_else(|| unknown_function_error(&call_env, &path_key(segments)))?;
             let nargs: Vec<Value> = tc
                 .args
                 .iter()
@@ -355,12 +355,15 @@ impl Evaluator {
                     len = a.len();
                     first = false;
                 } else if a.len() != len {
-                    return crate::error::err("dimension mismatch in broadcast");
+                    return Err(crate::error::coded("R0004", "dimension mismatch in broadcast"));
                 }
             }
         }
         if len == 0 {
-            return crate::error::err("cannot broadcast over an empty array");
+            return Err(crate::error::coded(
+                "R0014",
+                "cannot broadcast over an empty array",
+            ));
         }
         if let Function::User {
             params,
@@ -383,20 +386,28 @@ impl Evaluator {
                         match a.get(i) {
                             Some(Value::Number(n)) => cargs.push(Value::Number(n)),
                             _ => {
-                                return crate::error::err("cannot broadcast a non-numeric element");
+                                return Err(crate::error::coded(
+                                    "R0009",
+                                    "cannot broadcast a non-numeric element",
+                                ));
                             }
                         }
                     }
                 } else {
                     match v {
                         Value::Number(_) => cargs.push(v.clone()),
-                        _ => return crate::error::err("cannot broadcast a non-numeric scalar"),
+                        _ => {
+                            return Err(crate::error::coded(
+                                "R0009",
+                                "cannot broadcast a non-numeric scalar",
+                            ));
+                        }
                     }
                 }
             }
             match self.apply_function(func, cargs)? {
                 Value::Number(n) => results.push(Value::Number(n)),
-                _ => return crate::error::err("broadcast result must be numeric"),
+                _ => return Err(crate::error::coded("R0009", "broadcast result must be numeric")),
             }
         }
         Ok(Value::Array(results.into()))
@@ -427,22 +438,25 @@ impl Evaluator {
                             match a.get(i) {
                                 Some(Value::Number(n)) => cargs.push(Value::Number(n)),
                                 _ => {
-                                    return Err(RuntimeError::Message(
-                                        "cannot broadcast a non-numeric element".into(),
+                                    return Err(crate::error::coded(
+                                        "R0009",
+                                        "cannot broadcast a non-numeric element",
                                     ));
                                 }
                             }
                         } else {
-                            return Err(RuntimeError::Message(
-                                "cannot broadcast a non-numeric scalar".into(),
+                            return Err(crate::error::coded(
+                                "R0009",
+                                "cannot broadcast a non-numeric scalar",
                             ));
                         }
                     } else {
                         match v {
                             Value::Number(_) => cargs.push(v.clone()),
                             _ => {
-                                return Err(RuntimeError::Message(
-                                    "cannot broadcast a non-numeric scalar".into(),
+                                return Err(crate::error::coded(
+                                    "R0009",
+                                    "cannot broadcast a non-numeric scalar",
                                 ));
                             }
                         }
@@ -455,9 +469,7 @@ impl Evaluator {
                 }
                 match ev.eval_expr(&call_env, &body_owned)? {
                     Value::Number(n) => Ok(n),
-                    _ => Err(RuntimeError::Message(
-                        "broadcast result must be numeric".into(),
-                    )),
+                    _ => Err(crate::error::coded("R0009", "broadcast result must be numeric")),
                 }
             })
             .collect();
@@ -491,10 +503,10 @@ impl Evaluator {
         let out: Vec<Value> = match (a, b) {
             (Value::Array(av), Value::Array(bv)) => {
                 if av.len() != bv.len() {
-                    return crate::error::err("dimension mismatch in array operation");
+                    return Err(crate::error::coded("R0004", "dimension mismatch in array operation"));
                 }
                 if av.is_empty() {
-                    return crate::error::err("cannot operate on an empty array");
+                    return Err(crate::error::coded("R0014", "cannot operate on an empty array"));
                 }
                 let av = av.with(require_numeric_array)?;
                 let bv = bv.with(require_numeric_array)?;
@@ -505,7 +517,7 @@ impl Evaluator {
                 for (x, y) in av.into_iter().zip(bv) {
                     match self.eval_number_binary(op, x, y)? {
                         Value::Number(n) => out.push(Value::Number(n)),
-                        _ => return crate::error::err("array operation result must be numeric"),
+                        _ => return Err(crate::error::coded("R0009", "array operation result must be numeric")),
                     }
                 }
                 out
@@ -513,7 +525,7 @@ impl Evaluator {
             (Value::Array(av), other) => {
                 let scalar = self.scalar_for_broadcast(other)?;
                 if av.is_empty() {
-                    return crate::error::err("cannot operate on an empty array");
+                    return Err(crate::error::coded("R0014", "cannot operate on an empty array"));
                 }
                 let av = av.with(require_numeric_array)?;
                 if let Some(v) = self.try_simd_scalar(op, &av, &scalar) {
@@ -523,7 +535,7 @@ impl Evaluator {
                 for x in av {
                     match self.eval_number_binary(op, x, scalar.clone())? {
                         Value::Number(n) => out.push(Value::Number(n)),
-                        _ => return crate::error::err("array operation result must be numeric"),
+                        _ => return Err(crate::error::coded("R0009", "array operation result must be numeric")),
                     }
                 }
                 out
@@ -531,7 +543,7 @@ impl Evaluator {
             (other, Value::Array(bv)) => {
                 let scalar = self.scalar_for_broadcast(other)?;
                 if bv.is_empty() {
-                    return crate::error::err("cannot operate on an empty array");
+                    return Err(crate::error::coded("R0014", "cannot operate on an empty array"));
                 }
                 let bv = bv.with(require_numeric_array)?;
                 if let Some(v) = self.try_simd_scalar_left(op, &scalar, &bv) {
@@ -541,7 +553,7 @@ impl Evaluator {
                 for y in bv {
                     match self.eval_number_binary(op, scalar.clone(), y)? {
                         Value::Number(n) => out.push(Value::Number(n)),
-                        _ => return crate::error::err("array operation result must be numeric"),
+                        _ => return Err(crate::error::coded("R0009", "array operation result must be numeric")),
                     }
                 }
                 out

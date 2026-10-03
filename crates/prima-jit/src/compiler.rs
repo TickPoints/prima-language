@@ -119,9 +119,9 @@ fn emit_symbol(
     } else if s == builtins.inf {
         Some(f64::INFINITY)
     } else if s == builtins.gamma {
-        Some(0.577_215_664_901_532_9)
+        Some(std::f64::consts::EULER_GAMMA)
     } else if s == builtins.phi {
-        Some(1.618_033_988_749_895)
+        Some(std::f64::consts::GOLDEN_RATIO)
     } else {
         None
     };

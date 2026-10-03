@@ -195,10 +195,11 @@ impl<'a> Lexer<'a> {
                                 kind: TokenKind::TexStr(v),
                                 span: Span::new(start as u32, self.pos as u32),
                             }),
-                            Err(message) => errors.push(SyntaxError {
-                                span: Span::new(start as u32, self.pos as u32),
+                            Err(message) => errors.push(SyntaxError::new(
+                                "E0001",
+                                Span::new(start as u32, self.pos as u32),
                                 message,
-                            }),
+                            )),
                         }
                     } else {
                         tokens.push(Token {
@@ -223,10 +224,11 @@ impl<'a> Lexer<'a> {
                             span: Span::new(start as u32, self.pos as u32),
                         });
                     }
-                    Err(message) => errors.push(SyntaxError {
-                        span: Span::new(start as u32, self.pos as u32),
+                    Err(message) => errors.push(SyntaxError::new(
+                        "E0001",
+                        Span::new(start as u32, self.pos as u32),
                         message,
-                    }),
+                    )),
                 },
                 Class::String => {
                     self.bump();
@@ -239,10 +241,11 @@ impl<'a> Lexer<'a> {
                             },
                             span: Span::new(start as u32, self.pos as u32),
                         }),
-                        Err(message) => errors.push(SyntaxError {
-                            span: Span::new(start as u32, self.pos as u32),
+                        Err(message) => errors.push(SyntaxError::new(
+                            "E0001",
+                            Span::new(start as u32, self.pos as u32),
                             message,
-                        }),
+                        )),
                     }
                 }
                 Class::RawString => {
@@ -257,10 +260,11 @@ impl<'a> Lexer<'a> {
                             },
                             span: Span::new(start as u32, self.pos as u32),
                         }),
-                        Err(message) => errors.push(SyntaxError {
-                            span: Span::new(start as u32, self.pos as u32),
+                        Err(message) => errors.push(SyntaxError::new(
+                            "E0001",
+                            Span::new(start as u32, self.pos as u32),
                             message,
-                        }),
+                        )),
                     }
                 }
                 Class::FString => {
@@ -271,10 +275,11 @@ impl<'a> Lexer<'a> {
                             kind: TokenKind::FStr(parts),
                             span: Span::new(start as u32, self.pos as u32),
                         }),
-                        Err(message) => errors.push(SyntaxError {
-                            span: Span::new(start as u32, self.pos as u32),
+                        Err(message) => errors.push(SyntaxError::new(
+                            "E0001",
+                            Span::new(start as u32, self.pos as u32),
                             message,
-                        }),
+                        )),
                     }
                 }
                 Class::RawFString => {
@@ -285,10 +290,11 @@ impl<'a> Lexer<'a> {
                             kind: TokenKind::FStr(parts),
                             span: Span::new(start as u32, self.pos as u32),
                         }),
-                        Err(message) => errors.push(SyntaxError {
-                            span: Span::new(start as u32, self.pos as u32),
+                        Err(message) => errors.push(SyntaxError::new(
+                            "E0001",
+                            Span::new(start as u32, self.pos as u32),
                             message,
-                        }),
+                        )),
                     }
                 }
                 Class::Char => match self.read_single_quoted() {
@@ -304,10 +310,11 @@ impl<'a> Lexer<'a> {
                         },
                         span: Span::new(start as u32, self.pos as u32),
                     }),
-                    Err(message) => errors.push(SyntaxError {
-                        span: Span::new(start as u32, self.pos as u32),
+                    Err(message) => errors.push(SyntaxError::new(
+                        "E0001",
+                        Span::new(start as u32, self.pos as u32),
                         message,
-                    }),
+                    )),
                 },
                 Class::Symbol => {
                     self.bump();
@@ -317,10 +324,11 @@ impl<'a> Lexer<'a> {
                             span: Span::new(start as u32, self.pos as u32),
                         });
                     } else {
-                        errors.push(SyntaxError {
-                            span: Span::new(start as u32, self.pos as u32),
-                            message: "expected an identifier after `\\`".into(),
-                        });
+                        errors.push(SyntaxError::new(
+                            "E0001",
+                            Span::new(start as u32, self.pos as u32),
+                            "expected an identifier after `\\`",
+                        ));
                     }
                 }
                 Class::SetMinus => {
@@ -353,10 +361,11 @@ impl<'a> Lexer<'a> {
                 }
                 Class::Comment => {
                     if let Some(message) = self.skip_comment() {
-                        errors.push(SyntaxError {
-                            span: Span::new(start as u32, self.pos as u32),
+                        errors.push(SyntaxError::new(
+                            "E0001",
+                            Span::new(start as u32, self.pos as u32),
                             message,
-                        });
+                        ));
                     }
                 }
                 Class::Punct => match self.operator() {
@@ -366,10 +375,11 @@ impl<'a> Lexer<'a> {
                     }),
                     Err(message) => {
                         self.bump();
-                        errors.push(SyntaxError {
-                            span: Span::new(start as u32, self.pos as u32),
+                        errors.push(SyntaxError::new(
+                            "E0001",
+                            Span::new(start as u32, self.pos as u32),
                             message,
-                        });
+                        ));
                     }
                 },
             }

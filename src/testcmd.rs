@@ -8,9 +8,6 @@ use std::process::ExitCode;
 use anyhow::Context;
 use prima_runtime::Evaluator;
 
-/// Default test root when no path is given (spec §20 tool command).
-pub const DEFAULT_DIR: &str = "examples";
-
 /// Run all `.pra` files under `dir` (recursively, sorted). Prints `ok`/`FAIL` per
 /// file and a summary; exits failure if any file failed or the directory is empty.
 pub fn run(dir: &Path) -> anyhow::Result<ExitCode> {

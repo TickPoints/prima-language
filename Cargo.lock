@@ -255,6 +255,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap_complete"
+version = "4.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "037e2a1a92236d0aff7e845093f64661d6df4c02c9fcc61a60e9e1d736fa392f"
+dependencies = [
+ "clap",
+]
+
+[[package]]
 name = "clap_derive"
 version = "4.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1128,6 +1137,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "clap",
+ "clap_complete",
  "codespan-reporting",
  "criterion",
  "insta",
@@ -1141,6 +1151,7 @@ dependencies = [
  "prima-syntax",
  "proptest",
  "rustyline",
+ "serde_json",
  "tempfile",
 ]
 
@@ -1176,6 +1187,7 @@ dependencies = [
 name = "prima-syntax"
 version = "0.4.1-alpha"
 dependencies = [
+ "prima-core",
  "thiserror",
  "unicode-ident",
 ]

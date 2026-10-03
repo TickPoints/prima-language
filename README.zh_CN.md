@@ -38,7 +38,7 @@ Prima 是一门面向科学计算的语言与工具链，把**符号层放在第
 - **符号微分** —— `derivative`/`partial`/`grad`/`limit` 内置于 core；前向与反向模式自动微分，可直接进入编译代码。
 - **并行** —— `@parallel` 广播与 `parfor`（rayon），带静态副作用检查。
 - **带类型签名的 `@builtin` 标准库** —— 每个 stdlib 模块是内嵌的 `.pra` 签名文件（`linalg`、`stats`、`io`、`plot`、`physics`、`sys`、`time`、`num`），`@builtin` 声明绑定到 Rust 实现；`prima check` 依据这些签名校验调用点（`E0050`）。
-- **工具链** —— `prima run` / `check` / `parse` / `compile` / `repl` / `fmt` / `test` / `doc`，rustc 风格彩色诊断（`error[E00xx]: --> file:line:col`）。
+- **工具链** —— `prima run` / `check` / `parse` / `compile` / `repl` / `fmt` / `test` / `doc` / `new` / `init` / `completions`，rustc 风格诊断（`error[E00xx]: --> file:line:col`，附 `= help:` 建议）、机器可读的 `--json`（NDJSON）、项目根发现，以及 `--color`/`--quiet`。
 
 ## 安装
 
@@ -88,16 +88,25 @@ println(derivative(x^2 + sin(x), x));// → 2 x + \cos(x)
 ## 工具链
 
 ```text
-prima run    <file.pra>            解释执行程序（文件即根模块）
-prima check  [--deny W####] file   静态检查（含 stdlib 调用点类型）
+prima run    [file.pra]            解释执行程序（缺省为项目入口）
+prima check  [--deny W####] [file] 静态检查（含 stdlib 调用点类型）
 prima parse  <file.pra>            dump AST
 prima compile --emit-headers file  为 @c_api::extern 导出生成 C 头文件
 prima compile --emit-c-abi file    构建含 C-ABI 导出的共享库
 prima repl                         交互式会话（rustyline）
-prima fmt    [-w|--check] file     源码格式化
-prima test   [dir]                 运行目录下所有 *.pra（默认 examples/）
-prima doc    <file.pra> | --stdlib 依据 /// 注释生成 Markdown 文档
+prima fmt    [-w|--check] [file]   源码格式化
+prima test   [dir]                 运行目录下所有 *.pra（项目内 src/，否则 examples/）
+prima doc    [file.pra] | --stdlib 依据 /// 注释生成 Markdown 文档
+prima new    <name>                生成项目骨架（规范 §20 目录约定）
+prima init                         在当前目录生成项目骨架
+prima completions <shell>          生成 shell 补全脚本
+
+全局开关：--color auto|always|never  --json  --quiet
 ```
+
+诊断以 rustc 风格呈现为 `error[E00xx]:` / `warning[W00xx]:` / `error[R00xx]:`，附
+`--> file:line:col`、脱字符与针对性的 `= help:` 建议；`--json` 将同样的诊断以 NDJSON
+逐行输出到 stderr，供编辑器与 CI 消费。
 
 ## 文档
 
