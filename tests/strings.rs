@@ -9,7 +9,7 @@ fn eval(src: &str) -> Value {
 
 fn eval_str(src: &str) -> String {
     match eval(src) {
-        Value::String(s) => s,
+        Value::String(s) => s.to_string(),
         other => panic!("expected String, got {other:?}"),
     }
 }
@@ -191,7 +191,7 @@ fn insert_is_result_checked() {
 
 #[test]
 fn string_associated_new() {
-    assert_eq!(eval("String::new()"), Value::String(String::new()));
+    assert_eq!(eval("String::new()"), Value::String(String::new().into()));
 }
 
 #[test]
@@ -259,7 +259,7 @@ fn string_method_basics() {
         eval("let s = \"hi\";\ns.insert(9, \"o\")"),
         Value::Result(Err(_))
     ));
-    assert_eq!(eval("String::new()"), Value::String(String::new()));
+    assert_eq!(eval("String::new()"), Value::String(String::new().into()));
 }
 
 #[test]

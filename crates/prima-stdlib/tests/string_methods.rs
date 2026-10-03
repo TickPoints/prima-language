@@ -14,7 +14,7 @@ fn eval(src: &str) -> Value {
 
 fn eval_str(src: &str) -> String {
     match eval(src) {
-        Value::String(s) => s,
+        Value::String(s) => s.to_string(),
         other => panic!("expected String for {src:?}, got {other:?}"),
     }
 }
@@ -168,19 +168,19 @@ fn prefix_suffix_and_partition() {
     assert_eq!(eval_str(r#""hello".removesuffix("zz")"#), "hello");
     assert_eq!(
         eval(r#""hello world".partition(" ")"#),
-        Value::Tuple(vec![s("hello"), s(" "), s("world")])
+        Value::Tuple(vec![s("hello"), s(" "), s("world")].into())
     );
     assert_eq!(
         eval(r#""hello".partition("x")"#),
-        Value::Tuple(vec![s("hello"), s(""), s("")])
+        Value::Tuple(vec![s("hello"), s(""), s("")].into())
     );
     assert_eq!(
         eval(r#""hello world".rpartition("o")"#),
-        Value::Tuple(vec![s("hello w"), s("o"), s("rld")])
+        Value::Tuple(vec![s("hello w"), s("o"), s("rld")].into())
     );
     assert_eq!(
         eval(r#""hello".rpartition("x")"#),
-        Value::Tuple(vec![s(""), s(""), s("hello")])
+        Value::Tuple(vec![s(""), s(""), s("hello")].into())
     );
 }
 

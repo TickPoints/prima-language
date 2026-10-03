@@ -38,7 +38,7 @@ fn int_arg(args: &[Value], i: usize, fname: &str) -> Result<BigInt, RuntimeError
 
 fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeError> {
     match args.get(i) {
-        Some(Value::String(s)) => Ok(s.clone()),
+        Some(Value::String(s)) => Ok(s.to_string()),
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a string, got {other:?}"
         ))),
@@ -155,7 +155,7 @@ fn to_base(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 2, "num::to_base")?;
     let n = int_arg(args, 0, "num::to_base")?;
     let radix = radix_arg(args, 1, "num::to_base")?;
-    Ok(Value::String(n.to_str_radix(radix)))
+    Ok(Value::String(n.to_str_radix(radix).into()))
 }
 
 fn from_base(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {

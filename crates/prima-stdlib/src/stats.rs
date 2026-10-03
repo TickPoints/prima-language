@@ -362,7 +362,7 @@ fn dist_arg(
     match args.get(i) {
         Some(Value::Dict(m)) => {
             let kind = match m.get(&ValueKey::Str("kind".into())) {
-                Some(Value::String(s)) => s.clone(),
+                Some(Value::String(s)) => s.to_string(),
                 _ => {
                     return Err(RuntimeError::Type(format!(
                         "`{fname}` descriptor lacks a `\"kind\"` string"

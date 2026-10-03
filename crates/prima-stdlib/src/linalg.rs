@@ -393,20 +393,18 @@ fn lu(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "linalg::lu")?;
     let m = as_matrix(&args[0], "linalg::lu")?;
     let lu = m.clone().lu();
-    Ok(Value::Tuple(vec![
-        matrix_value(&lu.l()),
-        matrix_value(&lu.u()),
-    ]))
+    Ok(Value::Tuple(
+        vec![matrix_value(&lu.l()), matrix_value(&lu.u())].into(),
+    ))
 }
 
 fn qr(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "linalg::qr")?;
     let m = as_matrix(&args[0], "linalg::qr")?;
     let qr = m.clone().qr();
-    Ok(Value::Tuple(vec![
-        matrix_value(&qr.q()),
-        matrix_value(&qr.r()),
-    ]))
+    Ok(Value::Tuple(
+        vec![matrix_value(&qr.q()), matrix_value(&qr.r())].into(),
+    ))
 }
 
 fn svd(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -421,11 +419,14 @@ fn svd(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
         .v_t
         .as_ref()
         .ok_or_else(|| type_err("linalg::svd", "failed to compute Vt"))?;
-    Ok(Value::Tuple(vec![
-        matrix_value(u),
-        vector_value(&svd.singular_values),
-        matrix_value(vt),
-    ]))
+    Ok(Value::Tuple(
+        vec![
+            matrix_value(u),
+            vector_value(&svd.singular_values),
+            matrix_value(vt),
+        ]
+        .into(),
+    ))
 }
 
 fn eigen(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -433,10 +434,13 @@ fn eigen(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     let m = as_matrix(&args[0], "linalg::eigen")?;
     require_square(&m, "linalg::eigen")?;
     let eig = m.clone().symmetric_eigen();
-    Ok(Value::Tuple(vec![
-        vector_value(&eig.eigenvalues),
-        matrix_value(&eig.eigenvectors),
-    ]))
+    Ok(Value::Tuple(
+        vec![
+            vector_value(&eig.eigenvalues),
+            matrix_value(&eig.eigenvectors),
+        ]
+        .into(),
+    ))
 }
 
 fn cholesky(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {

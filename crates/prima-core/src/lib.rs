@@ -14,7 +14,7 @@ pub use builtins::BuiltinSymbols;
 pub use collapse::{collapse_value, numeric_value};
 pub use error::CoreError;
 pub use expr_pool::{ExprData, ExprId, ExprPool};
-pub use number::{Number, Real};
+pub use number::{Complex, Number, Real};
 pub use render::{render_latex, render_number};
 pub use simplify::simplify;
 pub use symbol::{SymbolId, SymbolTable};

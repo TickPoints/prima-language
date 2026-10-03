@@ -869,13 +869,20 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 > P3 池化 VM 帧/操作数栈缓冲；P5 补充字典索引赋值、切片赋值与字典/集合字面量的 VM 编译（字典/集合
 > 变异方法仍回退 AST）。**P2（`Value` 瘦身至 24B）未实施**：JIT 已覆盖热点数值循环，跨 ~250 处
 > `Number::Real`/`Real` 的机械改造收益有限而风险高，保留为后续可选项。
+>
+> **第三轮落地结果（P2）**：`Number` 瘦身至 16B、`Value` 至 24B 已完成，语义零变化：`Complex`
+> 收为单装箱指针（`Number::Complex(Box<Complex>)`，`Number::from_complex`/`as_complex_parts`），
+> `Value::String`/`Error` 改 `Box<str>`、`Tuple` 改 `Box<[Value]>`（16B 胖指针，无额外分配），
+> 并以编译期 `const` 断言锁定尺寸。**修正原估计**：无需扁平化 `Real` —— `Complex` 装箱后，`Real`
+> 变体（16B）的判别式 niche 恰好承载 `Number` 标签，故 `Number` 直接到 16B，改动面远小于「~250
+> 处 `Number::Real` 机械改造」；默认整函数 JIT 路径不变，解释器路径无回归（`benches/RESULTS.md`）。
 
 ### 8.1 性能优化（下一轮）
 
 | 项 | 内容 | 预期收益 | 说明 |
 |---|---|---|---|
 | P1 | 寄存器式/非装箱数值通道：热点算术不经过 `Value`（槽位直接持有 unboxed `f64`/`i64`，或按类型特化的指令组），需编译期类型推断或运行期反 Box 化 | sieve/poly/pi 类内核 2–5× | 剩余差距的结构性修复；与现有 AST 解释器保持结果一致（vm_parity 扩展） |
-| P2 | `Value` 进一步瘦身至 24B：`Real` 扁平化为 `Number::F64/F32/BigFloat` 变体（`Number` 24B→16B）、`Value::String` 装箱 | 全内核 15–20% | 机械性改造、语义零变化；`String` 装箱为每次字符串构造增加一次小分配，需基准核对字符串密集负载 |
+| P2 | ~~`Value` 瘦身至 24B~~ **已落地（第三轮）**：`Complex` 收为单装箱指针（`Number` 24B→16B），`Value::String`/`Error`→`Box<str>`、`Tuple`→`Box<[Value]>`（`Value` 32B→24B）；无需扁平化 `Real` | 尺寸断言锁定；解释器路径无回归 | 机械性改造、语义零变化；16B 胖指针不增加分配，字符串密集负载基准核对 |
 | P3 | 用户函数调用开销：每次调用进入 VM 都新建 `Vm`（frames/stack 分配）；引入可复用调用栈或调用约定 | 递归/互调内核 2–3× | 微基准：用户 `fn` 调用 ≈335ns/次（含 `Vm` 构造与参数绑定） |
 | P4 | `ArrayVal::with_mut` 的 `Arc strong_count` + `RwLock` 每操作开销（~70–90ns；Python list ≈40ns）：唯一持有快通道（去锁，需重新论证 `Send/Sync`）或批量变异指令 | sieve/dot 1.5–2× | parfor 与 VM/AST 共享数组时的正确性必须有回归覆盖 |
 | P5 | VM 子集继续扩充：多维索引 `M[.., 1]`、切片赋值、字典/集合变异方法（目前 `Method` 层整体回退） | 真实代码覆盖率 | 减少整函数回退 AST；回退判别已区分「不支持」与「运行期错误」 |

@@ -109,7 +109,7 @@ impl Evaluator {
                     .into_iter()
                     .map(|g| self.value_from_expr(self.simplify_current(g)))
                     .collect();
-                Ok(Value::Tuple(vals))
+                Ok(Value::Tuple(vals.into()))
             }
             Builtin::Limit => {
                 if args.len() != 3 {

@@ -120,8 +120,8 @@ fn convenience_functions() {
         eval("enumerate([\"a\", \"b\"])"),
         Value::Array(
             vec![
-                Value::Tuple(vec![n(0), Value::String("a".into())]),
-                Value::Tuple(vec![n(1), Value::String("b".into())]),
+                Value::Tuple(vec![n(0), Value::String("a".into())].into()),
+                Value::Tuple(vec![n(1), Value::String("b".into())].into()),
             ]
             .into()
         )
@@ -130,8 +130,8 @@ fn convenience_functions() {
         eval("zip([1, 2], [\"a\", \"b\"])"),
         Value::Array(
             vec![
-                Value::Tuple(vec![n(1), Value::String("a".into())]),
-                Value::Tuple(vec![n(2), Value::String("b".into())]),
+                Value::Tuple(vec![n(1), Value::String("a".into())].into()),
+                Value::Tuple(vec![n(2), Value::String("b".into())].into()),
             ]
             .into()
         )

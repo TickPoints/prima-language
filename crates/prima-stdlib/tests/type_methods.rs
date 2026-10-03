@@ -15,7 +15,7 @@ fn eval(src: &str) -> Value {
 
 fn eval_str(src: &str) -> String {
     match eval(src) {
-        Value::String(s) => s,
+        Value::String(s) => s.to_string(),
         other => panic!("expected String for {src:?}, got {other:?}"),
     }
 }
@@ -122,7 +122,7 @@ fn dict_methods() {
     );
     assert_eq!(
         eval("let d = { \"a\": 1 };\nd.popitem()"),
-        Value::Tuple(vec![Value::String("a".into()), n(1)])
+        Value::Tuple(vec![Value::String("a".into()), n(1)].into())
     );
     assert_eq!(
         eval("let d = { \"a\": 1, \"b\": 2 };\nd.remove(\"a\")"),

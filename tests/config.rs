@@ -54,9 +54,9 @@ fn broadcast_op_works_when_disabled() {
 fn negative_base_fractional_pow_domain() {
     let v = eval("(-1)^0.5");
     match v {
-        Value::Number(Number::Complex { re, im }) => {
-            assert_eq!(*re, Number::from(0));
-            assert_eq!(im.to_f64_lossy(), 1.0);
+        Value::Number(Number::Complex(c)) => {
+            assert_eq!(c.re, Number::from(0));
+            assert_eq!(c.im.to_f64_lossy(), 1.0);
         }
         other => panic!("expected Complex, got {other:?}"),
     }

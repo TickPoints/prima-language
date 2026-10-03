@@ -69,7 +69,7 @@ fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
 
 fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeError> {
     match args.get(i) {
-        Some(Value::String(s)) => Ok(s.clone()),
+        Some(Value::String(s)) => Ok(s.to_string()),
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a string, got {other:?}"
         ))),
@@ -98,7 +98,7 @@ fn optional_string(
     fname: &str,
 ) -> Result<String, RuntimeError> {
     match args.get(i) {
-        Some(Value::String(s)) => Ok(s.clone()),
+        Some(Value::String(s)) => Ok(s.to_string()),
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a string, got {other:?}"
         ))),

@@ -265,7 +265,7 @@ fn builtin_class(v: &Value) -> &'static str {
 fn synthetic_receiver_expr(receiver: &Value, span: prima_syntax::Span) -> Expr {
     let kind = match receiver {
         Value::String(s) => ExprKind::Literal(Literal::String {
-            value: s.clone(),
+            value: s.to_string(),
             quote: StringQuote::Double,
             raw: false,
         }),

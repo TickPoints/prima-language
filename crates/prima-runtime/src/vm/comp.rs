@@ -1148,7 +1148,7 @@ fn literal_to_value(lit: &Literal) -> Option<prima_core::Value> {
             s.parse().ok()?,
         )))),
         Literal::Bool(b) => Some(prima_core::Value::Bool(*b)),
-        Literal::String { value, .. } => Some(prima_core::Value::String(value.clone())),
+        Literal::String { value, .. } => Some(prima_core::Value::String(value.clone().into())),
         Literal::Char(c) => Some(prima_core::Value::Char(*c)),
         _ => None,
     }

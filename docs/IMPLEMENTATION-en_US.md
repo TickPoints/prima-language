@@ -875,13 +875,22 @@ All remaining design (three-world architecture, Number tower, ExprPool, the thre
 > assignment and dict/set literals in the VM (dict/set mutating *methods* still fall back). **P2
 > (slim `Value` to 24B) is deferred**: the JIT already covers hot numeric loops, and the
 > mechanical ~250-site `Number::Real`/`Real` change has limited upside and high regression risk.
+>
+> **Third round (P2)**: `Number` is now 16B and `Value` 24B, semantics unchanged. `Complex` became a
+> single boxed pointer (`Number::Complex(Box<Complex>)`, built with `Number::from_complex` / read
+> with `as_complex_parts`), and `Value::String`/`Error` became `Box<str>` and `Tuple` `Box<[Value]>`
+> (16-byte fat pointers, no extra allocation), with compile-time `const` assertions pinning both
+> sizes. **Correcting the earlier estimate**: flattening `Real` was unnecessary — with `Complex`
+> boxed, the `Real` variant's spare discriminants host the `Number` tag, so `Number` reaches 16
+> bytes with a far smaller change than the "~250 `Number::Real` sites"; the default whole-function
+> JIT path is unchanged and interpreted paths show no regression (`benches/RESULTS.md`).
 
 ### 8.1 Performance (next round)
 
 | # | Item | Expected payoff | Notes |
 |---|---|---|---|
 | P1 | Register-style / unboxed numeric channel: hot arithmetic bypasses `Value` (slots hold unboxed `f64`/`i64` directly, or type-specialized instruction groups), requiring compile-time type inference or runtime de-boxing | 2–5× on sieve/poly/pi-class kernels | The structural fix for the remaining gap; results must stay identical to the AST interpreter (extend vm_parity) |
-| P2 | Slim `Value` further to 24B: flatten `Real` into `Number::F64/F32/BigFloat` variants (Number 24B→16B), box `Value::String` | 15–20% on all kernels | Mechanical, semantics unchanged; boxing `String` adds one small allocation per string construction — benchmark string-heavy workloads |
+| P2 | ~~Slim `Value` to 24B~~ **Landed (third round)**: `Complex` boxed as a single pointer (Number 24B→16B), `Value::String`/`Error`→`Box<str>`, `Tuple`→`Box<[Value]>` (Value 32B→24B); no `Real` flattening needed | size pinned by compile-time assertions; interpreted paths show no regression | Mechanical, semantics unchanged; the 16-byte fat pointers add no allocation — string-heavy benchmarks checked |
 | P3 | User-function call overhead: each call builds a fresh `Vm` (frames/stack allocations); introduce a reusable call stack or calling convention | 2–3× on recursion/call-heavy kernels | Micro-benchmark: a user `fn` call costs ≈335ns (including `Vm` construction and parameter binding) |
 | P4 | Per-op `Arc strong_count` + `RwLock` cost in `ArrayVal::with_mut` (~70–90ns; Python list ≈40ns): uniquely-held fast path (lock-free, must re-justify `Send/Sync`) or batched mutation instructions | 1.5–2× on sieve/dot | Correctness with arrays shared between parfor/VM/AST needs regression coverage |
 | P5 | Grow the VM subset: multi-dimensional indexing `M[.., 1]`, slice assignment, dict/set mutating methods (currently a whole-op fallback at `Method`) | Real-code coverage | Fewer whole-function AST fallbacks; the fallback discriminator already separates "unsupported" from "runtime error" |

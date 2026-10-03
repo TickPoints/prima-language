@@ -175,7 +175,7 @@ impl Evaluator {
             ExprKind::Tuple(items) => {
                 let vals: Result<Vec<Value>, RuntimeError> =
                     items.iter().map(|it| self.eval_expr(env, it)).collect();
-                Ok(Value::Tuple(vals?))
+                Ok(Value::Tuple(vals?.into()))
             }
             ExprKind::Lambda { .. } => {
                 crate::error::err("lambda must be assigned to a variable to be callable")
@@ -221,7 +221,7 @@ impl Evaluator {
         match kind {
             CompKind::Array => Ok(Value::Array(values.into())),
             // Tuple comprehension is eager here (documented deviation from the spec's lazy generator).
-            CompKind::Tuple => Ok(Value::Tuple(values)),
+            CompKind::Tuple => Ok(Value::Tuple(values.into())),
             CompKind::Set => {
                 let mut s: HashSet<ValueKey> = HashSet::new();
                 for v in values {
@@ -269,7 +269,7 @@ impl Evaluator {
                     };
                     let k = self.eval_expr(env, key)?;
                     let v = self.eval_expr(env, value)?;
-                    values.push(Value::Tuple(vec![k, v]));
+                    values.push(Value::Tuple(vec![k, v].into()));
                 } else {
                     values.push(self.eval_expr(env, output)?);
                 }
@@ -317,7 +317,7 @@ impl Evaluator {
                 .collect()),
             Value::Set(s) => Ok(self.sorted_set_values(s)),
             Value::String(s) => Ok(s.chars().map(Value::Char).collect()),
-            Value::Tuple(items) => Ok(items.clone()),
+            Value::Tuple(items) => Ok(items.to_vec()),
             other => crate::error::err(format!("not iterable: {}", value_type_name(other))),
         }
     }
@@ -350,7 +350,7 @@ impl Evaluator {
                     .map_err(|_| RuntimeError::Message("invalid float literal".into()))?;
                 Ok(Value::Number(Number::from(f)))
             }
-            Literal::String { value, .. } => Ok(Value::String(value.clone())),
+            Literal::String { value, .. } => Ok(Value::String(value.clone().into())),
             Literal::Char(c) => Ok(Value::Char(*c)),
             Literal::Bool(b) => Ok(Value::Bool(*b)),
             Literal::Tex(s) => {
@@ -380,7 +380,7 @@ impl Evaluator {
                 }
             }
         }
-        Ok(Value::String(out))
+        Ok(Value::String(out.into()))
     }
 
     /// `Undefined` strictness (spec §6.2): it must not participate in any operation; any input errors immediately (no propagation).
@@ -480,7 +480,7 @@ impl Evaluator {
                 Ok(Value::Bool(s.contains(&key)))
             }
             Value::String(s) => match a {
-                Value::String(x) => Ok(Value::Bool(s.contains(&x))),
+                Value::String(x) => Ok(Value::Bool(s.contains(x.as_ref()))),
                 _ => crate::error::err("`in` on a string requires a string operand"),
             },
             other => crate::error::err(format!(
@@ -638,10 +638,10 @@ impl Evaluator {
                 }
                 Domain::Complex if y.to_f64_lossy() == 0.5 => {
                     let m = x.to_f64_lossy().abs().sqrt();
-                    return Ok(Value::Number(Number::Complex {
-                        re: Box::new(Number::from(0)),
-                        im: Box::new(Number::Real(Real::F64(m))),
-                    }));
+                    return Ok(Value::Number(Number::from_complex(
+                        Number::from(0),
+                        Number::Real(Real::F64(m)),
+                    )));
                 }
                 _ => {}
             }

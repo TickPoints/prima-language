@@ -33,7 +33,7 @@ fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
 
 fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeError> {
     match args.get(i) {
-        Some(Value::String(s)) => Ok(s.clone()),
+        Some(Value::String(s)) => Ok(s.to_string()),
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a string, got {other:?}"
         ))),
@@ -56,7 +56,7 @@ fn array_arg(v: &Value, fname: &str, i: usize) -> Result<Vec<Value>, RuntimeErro
 /// A `String`-typed element of an array (type error otherwise).
 fn array_string(elem: &Value, fname: &str, what: &str) -> Result<String, RuntimeError> {
     match elem {
-        Value::String(s) => Ok(s.clone()),
+        Value::String(s) => Ok(s.to_string()),
         other => Err(RuntimeError::Type(format!(
             "`{fname}` {what} must be a string, got {other:?}"
         ))),
@@ -95,7 +95,7 @@ fn read_file(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError>
     arity(args, 1, "io::read_file")?;
     let path = string_arg(args, 0, "io::read_file")?;
     Ok(match fs::read_to_string(&path) {
-        Ok(s) => ok(Value::String(s)),
+        Ok(s) => ok(Value::String(s.into())),
         Err(e) => err(format!("cannot read `{path}`: {e}")),
     })
 }
@@ -129,7 +129,7 @@ fn read_lines(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError
             ok(Value::Array(
                 lines
                     .iter()
-                    .map(|l| Value::String(l.clone()))
+                    .map(|l| Value::String(l.clone().into()))
                     .collect::<Vec<Value>>()
                     .into(),
             ))
@@ -162,7 +162,7 @@ fn json_to_value(v: serde_json::Value) -> Value {
                 Value::Number(Number::from(n.as_f64().unwrap_or(0.0)))
             }
         }
-        serde_json::Value::String(s) => Value::String(s),
+        serde_json::Value::String(s) => Value::String(s.into()),
         serde_json::Value::Array(items) => Value::Array(
             items
                 .into_iter()
@@ -186,7 +186,7 @@ fn value_to_json(v: &Value) -> Result<serde_json::Value, String> {
     match v {
         Value::Nil => Ok(serde_json::Value::Null),
         Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
-        Value::String(s) => Ok(serde_json::Value::String(s.clone())),
+        Value::String(s) => Ok(serde_json::Value::String(s.to_string())),
         Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Ok(serde_json::Value::Number(i.into()))
@@ -232,7 +232,7 @@ fn json_stringify(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeE
     arity(args, 1, "io::json_stringify")?;
     let v = args[0].clone();
     let j = value_to_json(&v).map_err(RuntimeError::Message)?;
-    Ok(ok(Value::String(j.to_string())))
+    Ok(ok(Value::String(j.to_string().into())))
 }
 
 fn read_json(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -381,7 +381,7 @@ fn csv_parse(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError>
                 .map(|r| {
                     Value::Array(
                         r.into_iter()
-                            .map(Value::String)
+                            .map(|s| Value::String(s.into()))
                             .collect::<Vec<Value>>()
                             .into(),
                     )
@@ -409,7 +409,7 @@ fn csv_stringify(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeEr
         }
         out_rows.push(out_row);
     }
-    Ok(ok(Value::String(csv_stringify_text(&out_rows))))
+    Ok(ok(Value::String(csv_stringify_text(&out_rows).into())))
 }
 
 fn read_csv(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -422,7 +422,7 @@ fn read_csv(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> 
                     .map(|r| {
                         Value::Array(
                             r.into_iter()
-                                .map(Value::String)
+                                .map(|s| Value::String(s.into()))
                                 .collect::<Vec<Value>>()
                                 .into(),
                         )

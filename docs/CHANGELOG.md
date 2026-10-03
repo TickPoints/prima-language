@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`Number` slimmed to 16 bytes and `Value` to 24 bytes (spec §5/§6.1).** The interpreter/VM
+  hot-path value types lost their oversized payloads with semantics unchanged. `Number::Complex`
+  is now a single boxed pointer (`Number::Complex(Box<Complex>)`, built via `Number::from_complex`
+  and read via `Number::as_complex_parts`); previously its two inline `Box` fields formed a
+  16-byte payload with no spare niche, forcing the enum tag out to 24 bytes. `Value::String` and
+  `Value::Error` now hold `Box<str>` instead of `String`, and `Value::Tuple` holds `Box<[Value]>`
+  instead of `Vec<Value>` — 16-byte fat pointers rather than 24-byte headers, with no extra
+  allocation (construction goes through `into_boxed_str`/`into_boxed_slice`). Compile-time
+  `const _: () = assert!(...)` guards pin both sizes so a future variant cannot silently regrow
+  the hot path. Note: flattening the `Real` enum was **not** needed — with `Complex` boxed the
+  `Real` variant's spare discriminants host the `Number` tag, so `Number` reaches 16 bytes without
+  touching the ~500 `Number::Real(…)` sites. The default whole-function JIT path is unchanged;
+  `benches/RESULTS.md` was regenerated (interpreted paths within run-to-run noise).
+
 ## [0.4.2] - 2026-10-03
 
 ### Added

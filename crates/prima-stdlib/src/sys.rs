@@ -20,7 +20,7 @@ fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
 
 fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeError> {
     match args.get(i) {
-        Some(Value::String(s)) => Ok(s.clone()),
+        Some(Value::String(s)) => Ok(s.to_string()),
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a string, got {other:?}"
         ))),
@@ -58,7 +58,7 @@ fn path_join(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError>
     let a = string_arg(args, 0, "sys::path::join")?;
     let b = string_arg(args, 1, "sys::path::join")?;
     let sep = std::path::MAIN_SEPARATOR;
-    Ok(Value::String(format!("{a}{sep}{b}")))
+    Ok(Value::String(format!("{a}{sep}{b}").into()))
 }
 
 fn path_file_name(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -66,7 +66,7 @@ fn path_file_name(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeE
     let p = string_arg(args, 0, "sys::path::file_name")?;
     match Path::new(&p).file_name() {
         Some(n) if !n.is_empty() => Ok(Value::Option(Some(Box::new(Value::String(
-            n.to_string_lossy().into_owned(),
+            n.to_string_lossy().into_owned().into(),
         ))))),
         _ => Ok(Value::Option(None)),
     }
@@ -77,7 +77,7 @@ fn path_extension(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeE
     let p = string_arg(args, 0, "sys::path::extension")?;
     match Path::new(&p).extension() {
         Some(e) => Ok(Value::Option(Some(Box::new(Value::String(
-            e.to_string_lossy().into_owned(),
+            e.to_string_lossy().into_owned().into(),
         ))))),
         None => Ok(Value::Option(None)),
     }
@@ -88,7 +88,7 @@ fn path_parent(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErro
     let p = string_arg(args, 0, "sys::path::parent")?;
     match Path::new(&p).parent() {
         Some(par) => Ok(Value::Option(Some(Box::new(Value::String(
-            par.to_string_lossy().into_owned(),
+            par.to_string_lossy().into_owned().into(),
         ))))),
         None => Ok(Value::Option(None)),
     }
@@ -105,7 +105,7 @@ fn path_canonicalize(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, Runti
     let p = string_arg(args, 0, "sys::path::canonicalize")?;
     match std::fs::canonicalize(&p) {
         Ok(c) => Ok(Value::Result(Ok(Box::new(Value::String(
-            c.to_string_lossy().into_owned(),
+            c.to_string_lossy().into_owned().into(),
         ))))),
         Err(e) => Ok(Value::Result(Err(Box::new(format!(
             "cannot canonicalize `{p}`: {e}"
@@ -119,7 +119,7 @@ fn env_home_dir(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErr
     Ok(std::env::var_os(key)
         .map(|h| {
             Value::Option(Some(Box::new(Value::String(
-                h.to_string_lossy().into_owned(),
+                h.to_string_lossy().into_owned().into(),
             ))))
         })
         .unwrap_or(Value::Option(None)))
@@ -129,7 +129,7 @@ fn env_get(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "sys::env::get")?;
     let name = string_arg(args, 0, "sys::env::get")?;
     match std::env::var(&name) {
-        Ok(v) => Ok(Value::Option(Some(Box::new(Value::String(v))))),
+        Ok(v) => Ok(Value::Option(Some(Box::new(Value::String(v.into()))))),
         Err(_) => Ok(Value::Option(None)),
     }
 }
@@ -139,7 +139,7 @@ fn env_args(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> 
     Ok(Value::Array(
         std::env::args()
             .skip(1)
-            .map(Value::String)
+            .map(|s| Value::String(s.into()))
             .collect::<Vec<Value>>()
             .into(),
     ))
@@ -148,20 +148,20 @@ fn env_args(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> 
 fn env_current_dir(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 0, "sys::env::current_dir")?;
     match std::env::current_dir() {
-        Ok(d) => Ok(Value::String(d.to_string_lossy().into_owned())),
+        Ok(d) => Ok(Value::String(d.to_string_lossy().into_owned().into())),
         // Mirror `input`/`read_line` I/O-error policy: no panic, return an empty string.
-        Err(_) => Ok(Value::String(String::new())),
+        Err(_) => Ok(Value::String(String::new().into())),
     }
 }
 
 fn os_name(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 0, "sys::os::name")?;
-    Ok(Value::String(std::env::consts::OS.to_string()))
+    Ok(Value::String(std::env::consts::OS.to_string().into()))
 }
 
 fn os_arch(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 0, "sys::os::arch")?;
-    Ok(Value::String(std::env::consts::ARCH.to_string()))
+    Ok(Value::String(std::env::consts::ARCH.to_string().into()))
 }
 
 fn os_exit(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
