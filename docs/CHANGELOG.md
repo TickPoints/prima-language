@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2-alpha] - 2026-10-04
+
+### Fixed
+
+- **Release workflow no longer tears down successful builds.** A single failing matrix target used
+  to run `gh run cancel`, which cancelled every other in-progress build and left the GitHub Release
+  with no assets. That step is gone: with `fail-fast: false` each target now builds and uploads
+  independently, so every target that does build still contributes its binary and checksum. The
+  release job is also idempotent — it creates the release, or updates it when a partial run is
+  re-run — instead of aborting because the release already exists.
+
 ## [0.5.1] - 2026-10-03
 
 ### Fixed
