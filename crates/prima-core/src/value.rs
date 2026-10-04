@@ -175,9 +175,13 @@ pub enum Value {
 }
 
 // Size guard (spec §5 interpreter/VM hot path): `Value` is cloned/moved on every stack operation
-// and must stay 24 bytes. The largest payloads are `Number` (16) and `Result` (16); `String`,
-// `Error` and `Tuple` use 16-byte fat pointers (`Box<str>` / `Box<[Value]>`) for exactly this.
-const _: () = assert!(std::mem::size_of::<Value>() == 24);
+// and must stay a single machine-word-tagged payload — 24 bytes on 64-bit, 16 bytes on 32-bit
+// (there `Number`'s spare discriminants host the `Value` tag). The largest payload is `Number`
+// (16 bytes on both); `String`, `Error` and `Tuple` use pointer-sized fat pointers
+// (`Box<str>` / `Box<[Value]>`) and `Dict`/`Set`/`Result` are boxed for exactly this.
+const _: () = assert!(
+    std::mem::size_of::<Value>() == if std::mem::size_of::<usize>() == 8 { 24 } else { 16 }
+);
 
 /// Hashable key for `Dict`/`Set` (spec §11.6): a value-semantic, immutable subset of `Value` —
 /// numbers (canonicalized), strings, chars, bools, and symbol/expr handles.
