@@ -2,11 +2,15 @@
 #
 # Pushing a tag (e.g. `v0.1.1`) triggers:
 #   1. a "release" job that validates the tag against the root package version,
-#      extracts the matching section from docs/CHANGELOG.md and creates a
-#      GitHub Release with it as the body (falling back to [Unreleased]);
+#      extracts the matching section from docs/CHANGELOG.md and creates (or, on a
+#      re-run, updates) the GitHub Release with it as the body (falling back to
+#      [Unreleased]); the create/update is idempotent so a partially-failed run
+#      can be retried.
 #   2. a "build" job that compiles `prima` for every Rust Tier-1 platform plus
 #      selected Tier-2-with-host-tools platforms and attaches the binaries +
-#      SHA-256 checksums to that Release.
+#      SHA-256 checksums to that Release. Each matrix target is independent
+#      (`fail-fast: false`): one target failing must never terminate the others,
+#      so every target that does build still contributes its assets.
 #
 # Tier-1: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc,
 # aarch64-pc-windows-msvc, x86_64-apple-darwin, aarch64-apple-darwin.
@@ -33,7 +37,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 concurrency:
   group: release
@@ -44,7 +47,7 @@ env:
 
 jobs:
   release:
-    name: Create GitHub release
+    name: Create or update GitHub release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,13 +69,21 @@ jobs:
           python3 .github/scripts/release_notes.py "$TAG" > /tmp/release_notes.md
           echo "notes_file=/tmp/release_notes.md" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub release
+      - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }}" \
-            --notes-file "${{ steps.notes.outputs.notes_file }}"
+          # Idempotent: a re-run after a partial failure must not abort here.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --title "$TAG" \
+              --notes-file "${{ steps.notes.outputs.notes_file }}"
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file "${{ steps.notes.outputs.notes_file }}"
+          fi
 
   build:
     name: ${{ matrix.target }}
@@ -204,9 +215,3 @@ jobs:
             "${{ steps.package.outputs.artifact }}" \
             "${{ steps.package.outputs.artifact }}.sha256" \
             --clobber
-
-      - name: Cancel workflow on failure
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run cancel "${{ github.run_id }}" || true
