@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-04
+
+### Fixed
+
+- **32-bit builds no longer fail the `Value` size guard.** The `prima-core` compile-time assertion
+  pinned `Value` at 24 bytes, the size it takes on 64-bit targets. On 32-bit targets (e.g.
+  `armv7-unknown-linux-gnueabihf`) the tag packs into `Number`'s spare discriminants and `Value` is
+  16 bytes, so the release build aborted with `E0080`. The guard is now pointer-width aware
+  (24 bytes on 64-bit, 16 on 32-bit) while still catching any growth of the hot-path value.
+
 ## [0.5.2-alpha] - 2026-10-04
 
 ### Fixed
