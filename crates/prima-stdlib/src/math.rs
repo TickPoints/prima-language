@@ -191,7 +191,7 @@ fn factor(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
         d += &two;
     }
     if m > BigInt::from(1) {
-        factor_large(&m, &mut factors);
+        factor_large(&m, &mut factors)?;
     }
     factors.sort();
     Ok(Value::Array(
@@ -201,38 +201,47 @@ fn factor(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
 
 /// Upper bound for trial division before switching to Pollard rho.
 const SMALL_FACTOR_LIMIT: i64 = 10_000;
+/// Largest remainder retried by trial division when the bounded rho search fails (~10^6 steps).
+const MAX_RHO_FALLBACK: i64 = 1_000_000_000_000;
 /// Miller–Rabin bases: deterministic for `n < 2^64`, a strong probabilistic set above.
 const MR_BASES: &[u64] = &[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53];
 
 /// Split `n` (with all small factors removed) into primes, appending to `out`.
-fn factor_large(n: &BigInt, out: &mut Vec<BigInt>) {
+fn factor_large(n: &BigInt, out: &mut Vec<BigInt>) -> Result<(), RuntimeError> {
     let one = BigInt::from(1);
     if *n == one {
-        return;
+        return Ok(());
     }
     if is_probable_prime(n) {
         out.push(n.clone());
-        return;
+        return Ok(());
     }
     match pollard_rho(n) {
         Some(d) if d > one && &d < n => {
-            factor_large(&d, out);
-            factor_large(&(n / &d), out);
+            factor_large(&d, out)?;
+            factor_large(&(n / &d), out)?;
+            Ok(())
         }
-        // The rho search is capped; falling back to trial division keeps the result correct for
-        // pathological inputs at the cost of time rather than correctness.
+        // The rho search is capped. Fall back to trial division only for small remainders; a huge
+        // input that defeats the search budget errors instead of hanging.
         _ => {
+            if *n > BigInt::from(MAX_RHO_FALLBACK) {
+                return Err(RuntimeError::Message(
+                    "`math::factor` exceeded its factorization search budget".into(),
+                ));
+            }
             let two = BigInt::from(2);
             let mut d = BigInt::from(2);
             while &d * &d <= *n {
                 if n % &d == BigInt::from(0) {
-                    factor_large(&d, out);
-                    factor_large(&(n / &d), out);
-                    return;
+                    factor_large(&d, out)?;
+                    factor_large(&(n / &d), out)?;
+                    return Ok(());
                 }
                 d += &two;
             }
             out.push(n.clone());
+            Ok(())
         }
     }
 }

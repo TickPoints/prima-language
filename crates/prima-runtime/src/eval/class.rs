@@ -1524,9 +1524,12 @@ impl Evaluator {
                 ));
             }
         };
+        let next = count.checked_add(1).ok_or_else(|| {
+            RuntimeError::Overflow("`Arc` reference count overflowed".into())
+        })?;
         instance
             .fields
-            .insert("count".into(), Value::Number(Number::from(count + 1)));
+            .insert("count".into(), Value::Number(Number::from(next)));
         Ok(arc)
     }
 

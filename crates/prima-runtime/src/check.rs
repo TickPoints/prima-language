@@ -124,7 +124,8 @@ pub fn check_src_checked(src: &str) -> (Vec<TypeError>, Vec<SyntaxWarning>) {
 /// config keys (`E0022`), import resolution (`E0030`/`E0032`), and warnings (`W0003`/`W0004`).
 ///
 /// Imports are resolved relative to the file's directory, but dependencies are not recursively
-/// checked: each module reports its own diagnostics when it is the checked entry point.
+/// checked: each module reports its own diagnostics when it is the checked entry point. Embedded
+/// stdlib modules are visible only after `prima_stdlib::init()`, as with the module loader.
 pub fn check_path_checked(
     file: &Path,
     src: &str,
