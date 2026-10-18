@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-18
+
 ### Added
 
 - **Compile-time diagnostics for configuration and imports.** `prima check` now reports `E0022`
