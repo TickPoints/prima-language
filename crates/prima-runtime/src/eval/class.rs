@@ -39,6 +39,15 @@ impl Evaluator {
         method_name: &str,
         args: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
+        crate::error::catch_propagate(self.call_associated_inner(def, method_name, args))
+    }
+
+    fn call_associated_inner(
+        &mut self,
+        def: &ClassDef,
+        method_name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
         let method = match def.methods.get(method_name) {
             Some(m) => m.clone(),
             None => {
@@ -363,6 +372,15 @@ impl Evaluator {
 
     /// Call a method: `self` is bound to the receiver (a shallow copy — same instance handle, spec §12.3).
     pub(crate) fn call_method(
+        &mut self,
+        method: &MethodDef,
+        receiver: Value,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        crate::error::catch_propagate(self.call_method_inner(method, receiver, args))
+    }
+
+    fn call_method_inner(
         &mut self,
         method: &MethodDef,
         receiver: Value,

@@ -124,14 +124,19 @@ impl Evaluator {
             }
             ExprKind::Index { base, index } => self.eval_index(env, base, index),
             ExprKind::Try(inner) => {
-                // `?` operator (spec §16.3): propagates `Err`/`None` as a runtime error (checked statically in `check`).
+                // `?` operator (spec §16.3): `Err`/`None` return early from the enclosing function
+                // with that value. The propagation is carried as a non-local marker and caught at
+                // the function-call boundary (`catch_propagate`), so nested expressions and spans
+                // pass it through untouched.
                 let v = self.eval_expr(env, inner)?;
                 match v {
                     Value::Result(Ok(v)) => Ok(*v),
-                    Value::Result(Err(m)) => Err(RuntimeError::Message(*m)),
+                    Value::Result(Err(m)) => Err(RuntimeError::Propagate(Box::new(
+                        Value::Result(Err(m)),
+                    ))),
                     Value::Option(Some(v)) => Ok(*v),
                     Value::Option(None) => {
-                        Err(RuntimeError::Message("`?` on a `None` value".into()))
+                        Err(RuntimeError::Propagate(Box::new(Value::Option(None))))
                     }
                     other => crate::error::err(format!(
                         "`?` expects a `Result` or `Option`, got {}",

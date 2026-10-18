@@ -1,3 +1,5 @@
+use prima_core::Value;
+
 /// Runtime error (spec §16): structured categories so `try/catch` can filter by type (spec §16.3),
 /// carrying a human-readable message. The complete fields of the structured `Error` enum (§16.1) are deferred to a later release.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -16,6 +18,10 @@ pub enum RuntimeError {
     Type(String),
     #[error("collapse error: {0}")]
     Collapse(String),
+    /// Internal `?` propagation (spec §16.3): carries the value the enclosing function must return
+    /// (`Err(..)`/`None`). Caught at function-call boundaries and never rendered as a diagnostic.
+    #[error("propagated `?` value")]
+    Propagate(Box<Value>),
     /// A structured runtime error carrying its spec appendix C.2 code (spec §16.4). Used where the
     /// concrete category has no dedicated variant (underflow, dimension mismatch, I/O, import,
     /// missing key, not-found, empty collection) or where a precise code must override the
@@ -51,6 +57,7 @@ impl RuntimeError {
             RuntimeError::Domain(_) => "Domain",
             RuntimeError::Type(_) => "Type",
             RuntimeError::Collapse(_) => "Collapse",
+            RuntimeError::Propagate(_) => "Message",
             // `Coded` is a general-purpose message carrier, so it maps to the `Message` category.
             RuntimeError::Coded { .. } => "Message",
             RuntimeError::Located { error, .. } => error.kind(),
@@ -69,6 +76,7 @@ impl RuntimeError {
             RuntimeError::Domain(_) => "R0005",
             RuntimeError::Type(_) => "R0009",
             RuntimeError::Collapse(_) => "R0010",
+            RuntimeError::Propagate(_) => "R0011",
             RuntimeError::Coded { code, .. } => code,
             RuntimeError::Located { error, .. } => error.code(),
             RuntimeError::WithNotes { error, .. } => error.code(),
@@ -147,11 +155,24 @@ impl RuntimeError {
 /// Attach a source span to an error unless it already carries one (keep the deepest/most precise).
 pub(crate) fn attach_span(e: RuntimeError, span: prima_syntax::Span) -> RuntimeError {
     match e {
-        RuntimeError::Located { .. } => e,
+        // `?` propagation is non-local control flow, not a diagnostic: keep it unwrapped so the
+        // call boundary can recognise it after passing through nested expressions.
+        RuntimeError::Located { .. } | RuntimeError::Propagate(_) => e,
         other => RuntimeError::Located {
             span,
             error: Box::new(other),
         },
+    }
+}
+
+/// Catch an internal `?` propagation at a function boundary (spec §16.3): the carried value is the
+/// result of the enclosing `Result`/`Option`-returning function.
+pub(crate) fn catch_propagate(
+    result: Result<Value, RuntimeError>,
+) -> Result<Value, RuntimeError> {
+    match result {
+        Err(RuntimeError::Propagate(value)) => Ok(*value),
+        other => other,
     }
 }
 

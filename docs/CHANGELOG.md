@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`?` now returns early from the enclosing `Result`/`Option` function.** Previously `?` on `None`
+  raised `R0011` and `?` on `Err` raised a runtime error, so `fn f() -> Option<T> { let x =
+  xs.get(0)?; Some(x) }` failed instead of returning `None`. The `Err`/`None` value is now carried
+  by an internal propagation marker and caught at function-call boundaries, matching spec §16.3.
+
 - **`prima check` now agrees with the evaluator on valid symbolic code.** Unbound single-segment
   identifiers in value position are free symbolic variables (as the evaluator already treated
   them), so `prima check examples/` is clean except the intentionally broken example; only

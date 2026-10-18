@@ -296,7 +296,7 @@ impl Evaluator {
                 body,
                 env: f_env,
                 ..
-            } => self.apply_host(params, body, f_env, args),
+            } => crate::error::catch_propagate(self.apply_host(params, body, f_env, args)),
             _ => self.apply_function(&func, args),
         }
     }
