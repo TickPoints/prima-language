@@ -125,12 +125,10 @@ fn try_operator_unwraps_ok() {
 
 #[test]
 fn try_operator_propagates_none() {
-    let err = Evaluator::new()
-        .eval_value(
-            "fn g() -> Option<Integer> {\n    let x = get([1], 5)?;\n    return Some(x);\n}\ng()",
-        )
-        .unwrap_err();
-    assert!(err.to_string().contains("None"), "unexpected error: {err}");
+    // `?` on `None` returns `None` from the enclosing Option-returning function (spec §16.3).
+    let v =
+        eval("fn g() -> Option<Integer> {\n    let x = get([1], 5)?;\n    return Some(x);\n}\ng()");
+    assert_eq!(v, Value::Option(None));
 }
 
 #[test]
