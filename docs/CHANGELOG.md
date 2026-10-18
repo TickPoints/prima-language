@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Compile-time diagnostics for configuration and imports.** `prima check` now reports `E0022`
+  for unknown `config` / `with config` keys (with a `did you mean` suggestion backed by the same
+  key table the runtime uses), `E0030` for imports that resolve to no module (embedded stdlib →
+  hosted namespace → filesystem, matching the module loader), and `E0032` for `from`-imports or
+  qualified access to items that exist but are not `pub`. Dependencies are not recursively
+  checked; the runtime keeps `R0008` as the fallback for dynamic load failures.
+
+- **`W0004 unreachable_code`.** Statements after a `return` in the same block are reported as a
+  warning (spec §16.5).
+
+- **Diagnostics code-table guard.** A test pins the appendix C code set and covers the four codes
+  added in this release, so the document and the implementation cannot drift silently.
+
 ## [0.5.2] - 2026-10-04
 
 ### Fixed

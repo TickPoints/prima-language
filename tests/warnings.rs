@@ -2,6 +2,7 @@
 // removed in v2.3 and are now hard parse errors (E0011/E0010); `W0006` (removed `format`
 // function) and `W0005` (operator-overload use) remain configurable warnings.
 use prima_runtime::Evaluator;
+use prima_runtime::check::check_src_checked;
 
 fn warnings_of(src: &str) -> Vec<String> {
     let mut ev = Evaluator::new();
@@ -75,6 +76,25 @@ fn overload_policy_allow_silences_w0005() {
 fn overload_policy_deny_errors() {
     let src = "class V { pub x: F64 }\nimpl ops::Add for V {\n    fn add(self, rhs) -> V { V { x: self.x } }\n}\nwith config { overload_policy := deny } {\n    let a = V { x: 1 };\n    a + a\n}";
     assert!(Evaluator::new().eval_value(src).is_err());
+}
+
+#[test]
+fn w0004_unreachable_statement_after_return() {
+    let (errors, warnings) = check_src_checked("fn f() -> Integer { return 1; let x = 2; }");
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    assert!(
+        warnings.iter().any(|w| w.code == "W0004"),
+        "warnings: {warnings:?}"
+    );
+}
+
+#[test]
+fn w0004_not_reported_when_return_is_last() {
+    let (_, warnings) = check_src_checked("fn f() -> Integer { return 1; }");
+    assert!(
+        warnings.iter().all(|w| w.code != "W0004"),
+        "warnings: {warnings:?}"
+    );
 }
 
 #[test]

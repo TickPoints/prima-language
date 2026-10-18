@@ -1,15 +1,20 @@
 //! Static source checking (spec §6.3 / §16.2 compile-time errors): collect type errors from a
 //! program. The walkers live in child modules (`signature`/`error`/`collect`/`infer`).
 
+use std::path::Path;
+
 use prima_syntax::Span;
 use prima_syntax::{SyntaxWarning, parse};
 
 mod collect;
+mod config;
 mod depth;
 mod error;
+mod imports;
 mod infer;
 mod names;
 mod signature;
+mod unreachable;
 
 /// A statically decidable type error (located via `--> file:line:col` per spec §16.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,8 +106,64 @@ pub fn check_src_checked(src: &str) -> (Vec<TypeError>, Vec<SyntaxWarning>) {
     for stmt in &program.stmts {
         collect::collect_stmt_errors(src, stmt, &mut errors, ctx, false, &sigs);
     }
-    names::check_program_names(src, &program, &mut errors, &mut warnings);
+    names::check_program_names(
+        src,
+        &program,
+        &imports::ModuleMap::new(),
+        &mut errors,
+        &mut warnings,
+    );
+    config::check_program_config(src, &program, &mut errors);
+    unreachable::check_program_unreachable(&program, &mut warnings);
     errors.sort_by_key(|e| (e.line, e.column));
+    warnings.sort_by_key(|w| w.span.start);
+    (errors, warnings)
+}
+
+/// Statically check a source file at `file` (spec §6.3/§15.3/§16.5): type errors, name errors,
+/// config keys (`E0022`), import resolution (`E0030`/`E0032`), and warnings (`W0003`/`W0004`).
+///
+/// Imports are resolved relative to the file's directory, but dependencies are not recursively
+/// checked: each module reports its own diagnostics when it is the checked entry point.
+pub fn check_path_checked(
+    file: &Path,
+    src: &str,
+) -> (Vec<TypeError>, Vec<SyntaxWarning>) {
+    let program = match parse(src) {
+        Ok(program) => program,
+        Err(syntax_errors) => {
+            let errors = syntax_errors
+                .iter()
+                .map(|e| {
+                    let (line, column) = line_col(src, e.span.start);
+                    TypeError {
+                        line,
+                        column,
+                        span: e.span,
+                        code: e.code,
+                        message: e.message.clone(),
+                        notes: Vec::new(),
+                        help: e.help.clone(),
+                    }
+                })
+                .collect();
+            return (errors, Vec::new());
+        }
+    };
+
+    let sigs = signature::build_signature_table(&program);
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let modules = imports::check_imports(src, file, &program, &mut errors);
+    let ctx = Ctx { allow_try: false };
+    for stmt in &program.stmts {
+        collect::collect_stmt_errors(src, stmt, &mut errors, ctx, false, &sigs);
+    }
+    names::check_program_names(src, &program, &modules, &mut errors, &mut warnings);
+    config::check_program_config(src, &program, &mut errors);
+    unreachable::check_program_unreachable(&program, &mut warnings);
+    errors.sort_by_key(|e| (e.line, e.column));
+    warnings.sort_by_key(|w| w.span.start);
     (errors, warnings)
 }
 

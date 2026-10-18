@@ -152,6 +152,8 @@ pub struct SourceLocation { pub file: Arc<PathBuf>, pub line: usize, pub column:
 
 **结构化错误码与建议（当前实现）**：`SyntaxError`/`TypeError` 各自携带 `code: &'static str` 与 `help: Option<String>`；`RuntimeError` 提供 `code()`（按变体映射 `R####`）与 `Coded { code, message }` 变体，使附录 C 的 `E####`/`R####` 成为数据结构的一部分，而非嵌在消息文本里。渲染层（根包 `src/diagnostics.rs`）据此输出 `error[CODE]:` / `warning[CODE]:` 头部。`prima_core::suggest` 提供无外部依赖的 `did_you_mean`（编辑距离 + 前缀/大小写启发式），在未定义名（`E0040`）、未知类型（`E0052`）、未知/缺失字段（`E0060`/`E0061`）、未知策略键（`E0022`）、`@builtin` 优化等级（`E0057`）、调用点参数个数与方法名等处生成 `= help:` 建议；类型不匹配（`E0050`）走规则化的显式坍塌提示。
 
+**静态诊断收口（v0.6.0）**：`prima check` 新增四项编译期检查——`E0022`（未知 `config`/`with config` 键，键表与运行时共用 `config::KNOWN_KEYS`）、`E0030`（import 解析不到，按内嵌 stdlib → 宿主命名空间 → 文件系统的顺序复用模块加载器的解析规则）、`E0032`（`from` 导入或限定访问引用了存在但非 `pub` 的项）、`W0004`（同一块内 `return` 之后的语句）。检查只解析根文件的 import，不递归检查依赖源码；运行时仍以 `R0008` 兜底动态加载失败。
+
 **CLI 人性化（当前实现）**：根包新增全局开关 `--color auto|always|never`、`--json`（stderr 上的 rustc 风格 NDJSON：`severity`/`code`/`message`/`spans`/`notes`/`help`）、`--quiet`；新增 `prima new <name>` / `prima init` 脚手架、`prima completions <shell>`，以及 `run`/`check`/`fmt`/`doc` 省略文件参数时的项目根发现（`prima.toml` 或 `src/main.pra`，§20）。
 
 **警告收集**：`DiagnosticCollector` 同时收集错误与警告；警告不阻止编译，`prima check --deny W0005` 可将指定警告升级为错误（工具层）。`W0001`（换行分隔）与 `W0002`（`|>` 管道）两码随对应弃用特性在 v2.3 移除而删除。
