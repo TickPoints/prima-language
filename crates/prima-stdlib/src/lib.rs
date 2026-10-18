@@ -14,6 +14,8 @@ pub mod linalg;
 #[cfg(feature = "advanced")]
 pub mod math;
 #[cfg(feature = "core")]
+pub mod mem;
+#[cfg(feature = "core")]
 mod native_docs;
 #[cfg(feature = "core")]
 pub mod num;
@@ -42,6 +44,7 @@ pub fn init() {
     #[cfg(feature = "core")]
     {
         prima_runtime::stdlib::register_module_source("num", include_str!("modules/num.pra"));
+        prima_runtime::stdlib::register_module_source("mem", include_str!("modules/mem.pra"));
         // builtin-class method modules (spec §18.1): the `class` definitions the runtime loads
         // lazily when a builtin value method is called, and that `prima doc --stdlib` lists
         // offline (spec §20).
@@ -79,6 +82,7 @@ pub fn init() {
             include_str!("modules/result.pra"),
         );
         num::register();
+        mem::register();
         string::register();
         collections::register();
         // doc registry for the builtin classes (spec §4.1/§16.4)

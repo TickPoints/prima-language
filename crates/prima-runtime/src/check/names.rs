@@ -24,6 +24,7 @@ use prima_core::suggest::did_you_mean_help;
 
 use super::TypeError;
 use super::error::push_err_with_help;
+use super::imports::ModuleMap;
 
 /// Names always bound at the top of any module (pre-imported `core` values/functions, control and
 /// collapse builtins, constructors). Never reported as undefined.
@@ -195,6 +196,8 @@ impl Scope {
 struct NameCtx {
     scopes: Vec<Scope>,
     fn_depth: usize,
+    /// Imported module prefix → declared/public item names, for qualified-access checks (`E0032`).
+    modules: ModuleMap,
 }
 
 impl NameCtx {
@@ -206,6 +209,7 @@ impl NameCtx {
         NameCtx {
             scopes: vec![root],
             fn_depth: 0,
+            modules: ModuleMap::new(),
         }
     }
 
@@ -283,10 +287,12 @@ fn collect_unused(ctx: &NameCtx) -> Vec<(String, Span)> {
 pub(crate) fn check_program_names(
     src: &str,
     program: &prima_syntax::ast::Program,
+    modules: &ModuleMap,
     errors: &mut Vec<TypeError>,
     warnings: &mut Vec<SyntaxWarning>,
 ) {
     let mut ctx = NameCtx::new();
+    ctx.modules = modules.clone();
     let known = collect_known_types(program);
     check_block(src, &program.stmts, &mut ctx, errors, &known);
     for (name, span) in collect_unused(&ctx) {
@@ -416,7 +422,6 @@ fn check_stmt(
                             );
                         }
                         check_type(ty, known, src, errors);
-                        ctx.bind(&fname.value, fname.span);
                     }
                     ClassMemberKind::Method {
                         name: mname,
@@ -436,7 +441,6 @@ fn check_stmt(
                                 Some("rename one of the definitions".into()),
                             );
                         }
-                        ctx.bind(&mname.value, mname.span);
                         check_self_position(src, params, errors);
                         if let Some(t) = ret {
                             check_type(t, known, src, errors);
@@ -675,41 +679,25 @@ fn check_expr(
     known: &HashSet<String>,
 ) {
     match &e.kind {
-        // A single-segment path is a variable reference (or a known root name).
+        // A single-segment path is a variable reference. An unbound name in value position is a
+        // free symbolic variable (`grad(x^2 + y^2)`), which the evaluator turns into a symbol, so
+        // it is not an error; unknown *functions* are still `E0040` in call position.
         prima_syntax::ast::ExprKind::Path { segments } if segments.len() == 1 => {
             let name = segments[0].value.as_str();
-            if !ctx.is_bound(name) {
-                let help = did_you_mean_help(name, ctx.candidate_names());
-                push_err_with_help(
-                    src,
-                    errors,
-                    e.span,
-                    "E0040",
-                    format!("undefined name `{name}`"),
-                    None,
-                    help,
-                );
-            } else {
+            if ctx.is_bound(name) {
                 ctx.mark_used(name);
             }
         }
-        prima_syntax::ast::ExprKind::Symbol(s) => {
-            let name = s.value.as_str();
-            if !ctx.is_bound(name) {
-                let help = did_you_mean_help(name, ctx.candidate_names());
-                push_err_with_help(
-                    src,
-                    errors,
-                    s.span,
-                    "E0040",
-                    format!("undefined name `{name}`"),
-                    None,
-                    help,
-                );
-            } else {
-                ctx.mark_used(name);
-            }
+        // A multi-segment path may be a qualified module item (`module::item`): check it against
+        // the imported module's public set (`E0032` private / `E0040` missing).
+        prima_syntax::ast::ExprKind::Path { segments } if segments.len() > 1 => {
+            // The leading segment may be a class or module name (`Point::new`); count it as used so
+            // the unused-binding warning does not fire on valid associated calls.
+            ctx.mark_used(&segments[0].value);
+            check_qualified_access(src, segments, ctx, errors);
         }
+        // `\pi`-style symbol literals are symbolic values by construction, never undefined names.
+        prima_syntax::ast::ExprKind::Symbol(_) => {}
         prima_syntax::ast::ExprKind::Self_ => {
             if ctx.fn_depth == 0 {
                 push_err_with_help(
@@ -724,6 +712,58 @@ fn check_expr(
             }
         }
         _ => check_expr_children(src, e, ctx, errors, known),
+    }
+}
+
+/// Check a qualified path `prefix::item` against the imported module's public items (spec §15.2).
+///
+/// Only exact one-level access is checked (`import m; m::item`): a deeper path may traverse a
+/// nested module that the root file did not import, which this single-file checker cannot resolve.
+fn check_qualified_access(
+    src: &str,
+    segments: &[Spanned<String>],
+    ctx: &NameCtx,
+    errors: &mut Vec<TypeError>,
+) {
+    let Some((prefix, exports)) = ctx.modules.iter().find(|(prefix, _)| {
+        segments.len() == prefix.len() + 1
+            && segments
+                .iter()
+                .take(prefix.len())
+                .map(|s| &s.value)
+                .eq(prefix.iter())
+    }) else {
+        return;
+    };
+    let item = &segments[prefix.len()];
+    if exports.public.contains(&item.value) {
+        return;
+    }
+    let module = prefix.join("::");
+    if exports.all.contains(&item.value) {
+        push_err_with_help(
+            src,
+            errors,
+            item.span,
+            "E0032",
+            format!("`{}` is private in module `{module}`", item.value),
+            None,
+            Some(format!(
+                "mark `{}` as `pub` in `{module}` to access it",
+                item.value
+            )),
+        );
+    } else {
+        let help = did_you_mean_help(&item.value, exports.public.iter().chain(exports.all.iter()));
+        push_err_with_help(
+            src,
+            errors,
+            item.span,
+            "E0040",
+            format!("module `{module}` has no item `{}`", item.value),
+            None,
+            help,
+        );
     }
 }
 
@@ -747,7 +787,26 @@ fn check_expr_children(
             }
         }
         ExprKind::Call { callee, args } => {
-            check_expr(src, callee, ctx, errors, known);
+            // Call position requires a callable: an unbound bare name is `E0040`, unlike a free
+            // symbolic variable in value position.
+            if let ExprKind::Path { segments } = &callee.kind
+                && segments.len() == 1
+                && !ctx.is_bound(&segments[0].value)
+            {
+                let name = &segments[0].value;
+                let help = did_you_mean_help(name, ctx.candidate_names());
+                push_err_with_help(
+                    src,
+                    errors,
+                    callee.span,
+                    "E0040",
+                    format!("undefined function `{name}`"),
+                    None,
+                    help,
+                );
+            } else {
+                check_expr(src, callee, ctx, errors, known);
+            }
             for a in args {
                 check_expr(src, a, ctx, errors, known);
             }

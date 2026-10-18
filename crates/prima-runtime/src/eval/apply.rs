@@ -105,7 +105,17 @@ impl Evaluator {
         }
     }
 
+    /// Apply a function value, turning an internal `?` propagation into this call's result value
+    /// (spec §16.3): the enclosing `Result`/`Option` function returns `Err(..)`/`None`.
     pub(crate) fn apply_function(
+        &mut self,
+        func: &Function,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        crate::error::catch_propagate(self.apply_function_inner(func, args))
+    }
+
+    fn apply_function_inner(
         &mut self,
         func: &Function,
         args: Vec<Value>,

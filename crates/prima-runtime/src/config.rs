@@ -118,6 +118,22 @@ impl Default for Config {
     }
 }
 
+/// Every strategy key accepted by `config {}` / `with config {}` (spec §13.2). Shared with the
+/// static checker so an unknown key is `E0022` at compile time rather than a runtime failure.
+pub const KNOWN_KEYS: &[&str] = &[
+    "domain",
+    "undefined_handling",
+    "fraction",
+    "broadcast",
+    "loop_optimization",
+    "simplify_level",
+    "opt_level",
+    "num_to_big",
+    "print_format",
+    "overload_policy",
+    "vm",
+];
+
 impl Config {
     /// Apply the entries of `config {}` to the current configuration (spec §13.2 policy table).
     pub fn apply(&mut self, entries: &[ConfigEntry]) -> Result<(), RuntimeError> {

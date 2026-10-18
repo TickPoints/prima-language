@@ -1,0 +1,13 @@
+import mem;
+
+// `mem::Arc` counts explicit clones only (spec §12.3).
+let a = mem::Arc::new(42);
+println(a.strong_count());        // 1
+
+let b = a.clone();
+println(b.strong_count());        // 2
+
+let shared = a;                   // handle sharing: does not count
+println(shared.strong_count());   // 2
+
+println(f"payload = {a.get()}");  // 42

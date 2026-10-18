@@ -1,15 +1,20 @@
 //! Static source checking (spec §6.3 / §16.2 compile-time errors): collect type errors from a
 //! program. The walkers live in child modules (`signature`/`error`/`collect`/`infer`).
 
+use std::path::Path;
+
 use prima_syntax::Span;
 use prima_syntax::{SyntaxWarning, parse};
 
 mod collect;
+mod config;
 mod depth;
 mod error;
+mod imports;
 mod infer;
 mod names;
 mod signature;
+mod unreachable;
 
 /// A statically decidable type error (located via `--> file:line:col` per spec §16.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,8 +106,62 @@ pub fn check_src_checked(src: &str) -> (Vec<TypeError>, Vec<SyntaxWarning>) {
     for stmt in &program.stmts {
         collect::collect_stmt_errors(src, stmt, &mut errors, ctx, false, &sigs);
     }
-    names::check_program_names(src, &program, &mut errors, &mut warnings);
+    names::check_program_names(
+        src,
+        &program,
+        &imports::ModuleMap::new(),
+        &mut errors,
+        &mut warnings,
+    );
+    config::check_program_config(src, &program, &mut errors);
+    unreachable::check_program_unreachable(&program, &mut warnings);
     errors.sort_by_key(|e| (e.line, e.column));
+    warnings.sort_by_key(|w| w.span.start);
+    (errors, warnings)
+}
+
+/// Statically check a source file at `file` (spec §6.3/§15.3/§16.5): type errors, name errors,
+/// config keys (`E0022`), import resolution (`E0030`/`E0032`), and warnings (`W0003`/`W0004`).
+///
+/// Imports are resolved relative to the file's directory, but dependencies are not recursively
+/// checked: each module reports its own diagnostics when it is the checked entry point. Embedded
+/// stdlib modules are visible only after `prima_stdlib::init()`, as with the module loader.
+pub fn check_path_checked(file: &Path, src: &str) -> (Vec<TypeError>, Vec<SyntaxWarning>) {
+    let program = match parse(src) {
+        Ok(program) => program,
+        Err(syntax_errors) => {
+            let errors = syntax_errors
+                .iter()
+                .map(|e| {
+                    let (line, column) = line_col(src, e.span.start);
+                    TypeError {
+                        line,
+                        column,
+                        span: e.span,
+                        code: e.code,
+                        message: e.message.clone(),
+                        notes: Vec::new(),
+                        help: e.help.clone(),
+                    }
+                })
+                .collect();
+            return (errors, Vec::new());
+        }
+    };
+
+    let sigs = signature::build_signature_table(&program);
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let modules = imports::check_imports(src, file, &program, &mut errors);
+    let ctx = Ctx { allow_try: false };
+    for stmt in &program.stmts {
+        collect::collect_stmt_errors(src, stmt, &mut errors, ctx, false, &sigs);
+    }
+    names::check_program_names(src, &program, &modules, &mut errors, &mut warnings);
+    config::check_program_config(src, &program, &mut errors);
+    unreachable::check_program_unreachable(&program, &mut warnings);
+    errors.sort_by_key(|e| (e.line, e.column));
+    warnings.sort_by_key(|w| w.span.start);
     (errors, warnings)
 }
 
@@ -210,7 +269,7 @@ mod tests {
 
     #[test]
     fn e0040_offers_did_you_mean_help() {
-        let (errors, _) = check_src_checked("let value = 1; let x = vlaue;");
+        let (errors, _) = check_src_checked("let value = 1; let x = vlaue();");
         assert_eq!(errors.len(), 1, "got: {errors:?}");
         assert_eq!(errors[0].code, "E0040");
         let help = errors[0].help.as_deref().unwrap_or_default();
@@ -254,6 +313,14 @@ mod tests {
         let errs = check_src("let 0 = x;");
         assert_eq!(errs.len(), 1);
         assert_eq!(errs[0].code, "E0053");
+    }
+
+    #[test]
+    fn struct_pattern_binding_is_irrefutable_in_let() {
+        let errs = check_src(
+            "class Point { x: Integer, y: Integer }\nlet p = Point { x: 1, y: 2 };\nlet Point { x, y } = p;",
+        );
+        assert!(errs.is_empty(), "struct patterns are irrefutable: {errs:?}");
     }
 
     #[test]
@@ -335,7 +402,7 @@ mod tests {
 
     #[test]
     fn e0040_undefined_name_is_detected() {
-        let (errors, _) = check_src_checked("let x = missing_name;");
+        let (errors, _) = check_src_checked("let x = missing_name();");
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].code, "E0040", "got: {errors:?}");
         assert!(errors[0].message.contains("missing_name"));
@@ -348,6 +415,25 @@ mod tests {
             errors.is_empty(),
             "core names must not be reported undefined: {errors:?}"
         );
+    }
+
+    #[test]
+    fn free_symbolic_variables_are_not_undefined() {
+        // The evaluator turns unbound value-position names into symbols (`grad(x^2 + y^2)`).
+        let (errors, _) = check_src_checked(
+            "let e = x^2 + y;\nlet g = grad(x^2 + y^2);\nprintln(e);\nprintln(g);",
+        );
+        assert!(
+            errors.is_empty(),
+            "free symbols must be allowed: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_method_is_not_an_undefined_name() {
+        // Method names are resolved at runtime and are out of scope for `E0040`.
+        let (errors, _) = check_src_checked("import mem;\nlet a = mem::Arc::new(1);\n1;");
+        assert!(errors.is_empty(), "got: {errors:?}");
     }
 
     #[test]
@@ -470,6 +556,19 @@ mod tests {
             .iter()
             .any(|w| w.code == "W0003" && w.message.contains("unused"));
         assert!(has, "warnings: {warnings:?}");
+    }
+
+    #[test]
+    fn w0003_class_and_method_names_are_not_unused_bindings() {
+        let (errors, warnings) = check_src_checked(
+            "class Point { x: Integer, y: Integer, pub fn new(x: Integer, y: Integer) -> Self { Point { x, y } } }\n\
+             let p = Point::new(1, 2);\nlet Point { x, y } = p;\nprintln(x + y);",
+        );
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        assert!(
+            warnings.iter().all(|w| w.code != "W0003"),
+            "class and method names must not be unused bindings: {warnings:?}"
+        );
     }
 
     #[test]

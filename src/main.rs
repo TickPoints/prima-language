@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use prima_runtime::Evaluator;
-use prima_runtime::check::check_src_checked;
+use prima_runtime::check::check_path_checked;
 use prima_syntax::parse_checked;
 
 mod cabi;
@@ -236,7 +236,7 @@ fn check_file(file: &Path, deny: &[String]) -> Result<ExitCode> {
 
     // Static check (spec §6.3/§16.2): type errors plus compiler-collected warnings (e.g. `W0003`
     // unused binding). Parse-time warnings from `parse_checked` are merged with these.
-    let (errors, check_warnings) = check_src_checked(&source);
+    let (errors, check_warnings) = check_path_checked(file, &source);
     // The visitor warnings may carry zero-width spans; filter those that overlap the file.
     let mut warnings = parse_warnings;
     warnings.extend(check_warnings);

@@ -37,7 +37,7 @@ It blends the best ideas of its predecessors:
 - **Rust-style semantics** — `Result`/`Option` with `?`, `match`/`if let`/`while let`, full patterns and destructuring, classes with `pub`/`pub(mod)` visibility, `;`-terminated statements.
 - **Symbolic differentiation** — `derivative`/`partial`/`grad`/`limit` built into core; forward and reverse-mode AD for compiled code.
 - **Parallelism** — `@parallel` broadcasting and `parfor` (rayon) with static side-effect checks.
-- **Standard library as typed `@builtin` modules** — each stdlib module is an embedded `.pra` signature file (`linalg`, `stats`, `io`, `plot`, `physics`, `sys`, `time`, `num`) whose `@builtin` declarations bind to Rust implementations; `prima check` validates call sites against those signatures (`E0050`).
+- **Standard library as typed `@builtin` modules** — each stdlib module is an embedded `.pra` signature file (`linalg`, `stats`, `io`, `plot`, `physics`, `sys`, `time`, `num`, `math`, `mem`, `render`) whose `@builtin` declarations bind to Rust implementations; `prima check` validates call sites against those signatures (`E0050`).
 - **Toolchain** — `prima run` / `check` / `parse` / `compile` / `repl` / `fmt` / `test` / `doc` / `new` / `init` / `completions`, rustc-style diagnostics (`error[E00xx]: --> file:line:col` with `= help:` suggestions), machine-readable `--json` (NDJSON), project-root discovery, and `--color`/`--quiet`.
 
 ## Install
@@ -58,7 +58,7 @@ Or build from source:
 
 ```bash
 # The `prima` binary defaults to `full` (every stdlib tier); the `prima-stdlib` library
-# baseline stays the lean `core` (built-in classes + `num`). A lean binary is
+# baseline stays the lean `core` (built-in classes + `num` + `mem`). A lean binary is
 # `cargo build --no-default-features --features core`. Tiers: `core` / `system` (`io`,`time`,`sys`)
 # / `advanced` (`linalg`,`stats`,`math`,`physics`,`plot`) / `render` (formula rendering).
 cargo install --git https://github.com/TickPoints/prima-language prima-language

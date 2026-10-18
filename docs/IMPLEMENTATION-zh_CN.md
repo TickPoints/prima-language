@@ -33,8 +33,8 @@
  测试 | cargo test + `insta` 1.48（快照）+ `assert_cmd` 2.2（CLI）+ `proptest`（解析器属性测试） | — | — | 见 §5 每阶段验收 |
  基准 | `criterion` | 0.8 | — | 化简引擎、JIT 触发阈值调优 |
  绘图（stdlib 阶段） | `plotly` | 0.14 | 自绘 SVG | §十八 plot 模块，SVG 起步 |
- 公式图像渲染（v2.2 render 模块） | 手写 SVG + `resvg`/`tiny-skia` | 最新稳定 | — | §十八 render：ExprDAG → SVG →（可选）PNG 光栅化 |
- 终端公式渲染（v2.2 feature） | 复用手写 Unicode/ASCII 渲染器 | — | — | `term-render` cargo feature 开启 `print` 的终端公式渲染（§十八 render） |
+ 公式图像渲染（v2.2 render 模块） | 手写 SVG + `resvg`/`tiny-skia` | 最新稳定 | — | §十八 render：ExprDAG → SVG →（可选）PNG 光栅化（PNG 为 Phase 13 计划） |
+ 终端公式渲染（v2.2 feature） | 复用手写 Unicode/ASCII 渲染器 | — | — | `term-render` cargo feature 开启 `print` 的终端公式渲染（§十八 render；Phase 13 计划） |
  文档生成（v2.2 `prima doc`） | 手写 Markdown 渲染（解析 `///`/`//!`） | — | `comrak` | 输出 Markdown；无生成步骤（§2.2 原则） |
  宿主层内存（§4.12） | **引用计数**（`Rc<RefCell>` + `mem::Arc`） | — | `gc-arena` / `shifgrethor` | 循环引用由用户显式处理（`mem::Arc`）；确定性优先 |
  JIT（Phase 5） | `cranelift-codegen` | 最新稳定 | `inkwell`（LLVM） | §2.4 / §5 |
@@ -151,6 +151,10 @@ pub struct SourceLocation { pub file: Arc<PathBuf>, pub line: usize, pub column:
 §16.4 的 `error[E00xx]: ...` / `warning[W00xx]: ...` 格式由 `codespan-reporting` 渲染；错误码（§16.4/附录 C）作为诊断标题前缀（`E`/`R`/`W` + 四位编号）。`Error` 枚举（§16.1）用 `thiserror` derive，其中 `location` 字段在解释器抛错时由当前执行帧自动填充。
 
 **结构化错误码与建议（当前实现）**：`SyntaxError`/`TypeError` 各自携带 `code: &'static str` 与 `help: Option<String>`；`RuntimeError` 提供 `code()`（按变体映射 `R####`）与 `Coded { code, message }` 变体，使附录 C 的 `E####`/`R####` 成为数据结构的一部分，而非嵌在消息文本里。渲染层（根包 `src/diagnostics.rs`）据此输出 `error[CODE]:` / `warning[CODE]:` 头部。`prima_core::suggest` 提供无外部依赖的 `did_you_mean`（编辑距离 + 前缀/大小写启发式），在未定义名（`E0040`）、未知类型（`E0052`）、未知/缺失字段（`E0060`/`E0061`）、未知策略键（`E0022`）、`@builtin` 优化等级（`E0057`）、调用点参数个数与方法名等处生成 `= help:` 建议；类型不匹配（`E0050`）走规则化的显式坍塌提示。
+
+**检查器与求值器一致性（v0.6.0）**：值位置未绑定的单段标识符按自由符号变量处理（不报 `E0040`），调用位置仍未定义名；仅含绑定字段的结构模式在 `let` 中视为不可反驳（与求值器同规则），类名/方法名不再计入 `W0003` 的未使用绑定。
+
+**静态诊断收口（v0.6.0）**：`prima check` 新增四项编译期检查——`E0022`（未知 `config`/`with config` 键，键表与运行时共用 `config::KNOWN_KEYS`）、`E0030`（import 解析不到，按内嵌 stdlib → 宿主命名空间 → 文件系统的顺序复用模块加载器的解析规则）、`E0032`（`from` 导入或限定访问引用了存在但非 `pub` 的项）、`W0004`（同一块内 `return` 之后的语句）。检查只解析根文件的 import，不递归检查依赖源码；运行时仍以 `R0008` 兜底动态加载失败。
 
 **CLI 人性化（当前实现）**：根包新增全局开关 `--color auto|always|never`、`--json`（stderr 上的 rustc 风格 NDJSON：`severity`/`code`/`message`/`spans`/`notes`/`help`）、`--quiet`；新增 `prima new <name>` / `prima init` 脚手架、`prima completions <shell>`，以及 `run`/`check`/`fmt`/`doc` 省略文件参数时的项目根发现（`prima.toml` 或 `src/main.pra`，§20）。
 
@@ -436,7 +440,7 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 - LaTeX 是 MVP 门槛（§19.1 里程碑 1）：`\sqrt{2} + \pi` 级输出；`tex"..."` 字面量解析为渲染树（内嵌小型 TeX 解析器，Phase 1 先支持 MVP 子集，逐步扩充）。
 - 规范 §7 强调「内置符号独立于 TeX，TeX 仅是视图」：`ExprDAG → (LaTeX|Unicode|ASCII)` 是纯视图转换，反向（`tex"..."` → DAG）才是解析，二者解耦。
-- **v2.2 复用**：f-string 插值、`render` 模块（`to_svg`/`to_png`/`to_terminal`）与 `print` 的终端公式渲染（cargo feature `term-render`）都复用这三个后端，仅改变输出目标。
+- **v2.2 复用**：f-string 插值、`render` 模块（`to_svg`/`to_png`/`to_terminal`）与 `print` 的终端公式渲染（cargo feature `term-render`）都复用这三个后端，仅改变输出目标；其中 `to_png` 与 `term-render` 为 Phase 13 计划。
 
 ### 4.10 错误模型汇总
 
@@ -466,7 +470,7 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 ---
 
-## 5. 实施路线图（Phase 0 → 12）
+## 5. 实施路线图（Phase 0 → 13）
 
 每个 Phase 结束都有可运行的验收命令。Phase 0–10 已全部落地（落地记录见各 Phase 末尾「落地」块）；Phase 11–12 为规划中。Phase 0–2 已按 v1.x 落地；v2.0 变更分布在各 Phase 的增量任务中，见各 Phase 的「v2.0 增量」小节。
 
@@ -742,12 +746,12 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 > **Phase 11 分块落地记录（进行中）**：
 >
 > - **stdlib 四层 feature（前置）**：`core`/`system`/`advanced`/`render` + `full`，隔离重依赖；`prima` 二进制默认 `full`，`prima-stdlib` 库基线 `core`（精简二进制用 `--no-default-features --features <tier>`），CI `--all-features` 且逐层 `check`。详见 §7「v2.3+ 工具链 ADR」。
-> - **`math` 已落地**（`advanced`）：`gcd`/`lcm`/`factor`/`primes`/`crt`/`mod_pow` + 多项式（`poly_eval`/`poly_add`/`poly_mul`/`poly_derivative`/`poly_roots`，Durand–Kerner）+ `continued_fraction`。**偏差**：`factor` 用确定性试除（Pollard rho 仅列为大数可选优化，未实现）；`taylor(f,x,x0,n)` 未实现（需调用点拦截，超出 builtin 参数求值模型）；`primes` 为唯一 `@builtin(O1)` 分层（`factor` 因 `n<=0` 报错无法在 `.pra` 回退中表达而保持 O0）。`num::gcd/lcm` 与 `math::gcd/lcm` 共用实现。
-> - **`sys` 扩展已落地**（`system`）：`sys::process`（`run`/`exit_code`，平台 shell）、`sys::fs`（`exists`/`is_file`/`is_dir`/`size`/`read_dir`/`metadata`）、`sys::term`（`size`/`is_tty`）；raw 模式未实现。**偏差**：`sys::fs::metadata` 返回 `Result<Dict,String>`（附录 B.7 草图为 `Option<Dict>`）、`sys::term::size` 返回 `Dict{rows,cols}`（草图为元组）——以 `.pra` 文档为方法清单唯一来源（§十八 管理原则）。
+> - **`math` 已落地**（`advanced`）：`gcd`/`lcm`/`factor`/`primes`/`crt`/`mod_pow` + 多项式（`poly_eval`/`poly_add`/`poly_mul`/`poly_derivative`/`poly_roots`，Durand–Kerner）+ `continued_fraction`。**偏差**：`factor` 在小 n 上走确定性试除，大数走 Miller–Rabin + Brent-Pollard rho（结果仍升序）；`taylor(f,x,x0,n)` 列入 Phase 13（需调用点拦截，超出 builtin 参数求值模型）；`primes` 为唯一 `@builtin(O1)` 分层（`factor` 因 `n<=0` 报错无法在 `.pra` 回退中表达而保持 O0）。`num::gcd/lcm` 与 `math::gcd/lcm` 共用实现。
+> - **`sys` 扩展已落地**（`system`）：`sys::process`（`run`/`exit_code`，平台 shell）、`sys::fs`（`exists`/`is_file`/`is_dir`/`size`/`read_dir`/`metadata`）、`sys::term`（`size`/`is_tty`）；raw 模式列入 Phase 13。**偏差**：`sys::fs::metadata` 返回 `Result<Dict,String>`（附录 B.7 草图为 `Option<Dict>`）、`sys::term::size` 返回 `Dict{rows,cols}`（草图为元组）——以 `.pra` 文档为方法清单唯一来源（§十八 管理原则）。
 > - **`physics` 已落地**（`advanced`）：由宿主命名空间改为内嵌 `.pra` 模块，CODATA 2022 常数改为带类型的 `pub const`（SI 精确值保留 `Integer`/`Rational`），新增 Rust `@builtin` 初等公式（运动学/力学/简谐/热学/电磁基础）与 `Vector3` Class。**偏差**：`ideal_gas_pressure(n, T, V)` 用玻尔兹曼常数（`n·k_B·T/V`）；另补规范附录 B.7 示例 `simple_pendulum(L, g)`（小角度周期）。
 > - **`plot` 扩展已落地**（`advanced`）：`heatmap`（viridis 色条）/`contour`（marching squares）/`hist`；网格非法即 `RuntimeError`，`NaN`/`Inf` 跳过。
-> - **`render` 已落地**（`render` tier）：`to_svg`（core LaTeX → RaTeX `parse`/`layout`/`to_display_list`/`render_to_svg`，`embed-fonts` 自包含 SVG）+ `to_terminal`（LaTeX→Unicode 转写）。**偏差**：`to_png` 与 `print` 终端公式渲染 `term-render` feature 未实现。
-> - **待落地**：`mem::Arc`（Phase 12）；`math::taylor`、`factor` 的 Pollard rho、`sys::term` raw 模式、`render::to_png`/`term-render` 列为后续可选项。
+> - **`render` 已落地**（`render` tier）：`to_svg`（core LaTeX → RaTeX `parse`/`layout`/`to_display_list`/`render_to_svg`，`embed-fonts` 自包含 SVG）+ `to_terminal`（LaTeX→Unicode 转写）。**偏差**：`to_png` 与 `print` 终端公式渲染 `term-render` feature 列入 Phase 13。
+> - **收口（v0.6.0）**：`mem::Arc` 已落地（Phase 12）；`factor` 的 Pollard rho 已落地；`math::taylor`、`sys::term` raw 模式、`render::to_png`/`term-render` 列入 Phase 13（v0.7，见下）。
 
 ### Phase 12：`mem::Arc` 显式引用计数（规范 §12.3/12.4，优先级 low）
 
@@ -762,7 +766,29 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
   cargo test -p prima-stdlib       # mem::Arc 行为测试
   ```
 
-> **v2.2 分块总序**：Phase 6（f-string）→ 7（doc）→ 8（opt_level，item 4 前置）→ 9（`@builtin(ON)`）→ 10（String）→ 11（stdlib 扩充）→ 12（`mem::Arc`）。各块验收独立；块与块之间的共享文件冲突由主会话按 §「大型任务工作方式」收口。
+> **Phase 12 落地记录（v0.6.0）**：`mem` 是 `core` 层的内嵌模块（`modules/mem.pra` + `src/mem.rs`）；`Arc` 是普通类，`count` 字段由 runtime 提供的窄接口维护，不新增 `Value` 变体。计数语义见规范 §12.3：`new` 初始为 1，`clone` 显式加一，`get` 取回载荷，`strong_count` 读取计数；`let b = a` 是句柄共享、不计数。无析构钩子，计数单调不减。四个方法均有 `///` 文档，`prima doc --stdlib` 可见。
+
+> **v2.2 分块总序**：Phase 6（f-string）→ 7（doc）→ 8（opt_level，item 4 前置）→ 9（`@builtin(ON)`）→ 10（String）→ 11（stdlib 扩充）→ 12（`mem::Arc`）→ 13（标准库收尾）。各块验收独立；块与块之间的共享文件冲突由主会话按 §「大型任务工作方式」收口。
+
+### Phase 13：标准库收尾（v0.7，规范 §18.6，优先级 normal）
+
+**对应工作项 8**（v0.6.0 收口时列入下一步的四项能力；其余标准库项已完成）。
+
+- **`math::taylor(f, x, x0, n)`**：在 `eval_call` 调用点拦截（与 `derivative`/`map` 同层），不对 `f` 求值；接受 MFn 名、lambda 或表达式，按 `f^(k)(x0)/k!` 生成截断到 `n` 阶的符号多项式。`n < 0` 或非整数报错；结果沿用 `simplify` 的规范形。验收：`taylor(sin(x), x, 0, 5)` 化简为 `x - x^3/6 + x^5/120`，并与逐阶 `derivative` 的结果一致。
+- **`sys::term` raw 模式**：新增 `sys::term::raw_mode(enable: Bool) -> Result<Nil, String>` 与 `is_raw() -> Bool`；Unix 走 termios、Windows 走控制台模式，失败返回 `Result` 而非 panic。宿主层无析构钩子，文档要求显式恢复；REPL 与 `term-render` 不自动开启。
+- **`render::to_png`**：`render` tier 引入光栅化依赖（`resvg`/`tiny-skia`），把 RaTeX 的布局结果栅格化为 PNG；返回字节数组或写入路径，具体签名在落地时以 `render.pra` 的 `///` 文档定稿（以 `.pra` 为方法清单唯一来源）。
+- **`term-render` cargo feature**：根包与 stdlib 增加 feature；runtime 提供 `set_term_formula_renderer` 钩子，stdlib 在 feature 开启时注册 `render::to_terminal` 后端，`print`/`println` 输出 `Expr` 时按 `print_format` 策略选择终端公式渲染（非 TTY 回退 LaTeX）。
+
+**验收**：
+
+```text
+cargo test -p prima-stdlib --test math --test render --test sys_time_num
+cargo build --features term-render
+cargo run -- run examples/taylor.pra
+cargo run -- run examples/render.pra
+```
+
+> **Phase 13 状态**：尚未开始（v0.7 目标）。这四项在 v0.6.0 明确保留为下一步，不作为已完成能力对外宣称。
 
 ---
 

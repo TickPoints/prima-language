@@ -339,6 +339,15 @@ fn vm_slice_assignment_matches_ast() {
     assert_eq!(vm, Value::Number(Number::from(57)));
 }
 
+/// Indexed compound assignment (`a[i % 4] += i`) matches the AST for array literals.
+#[test]
+fn vm_index_compound_assignment_matches_ast() {
+    let kernel = "pub fn main(n: Integer) -> Integer { let mut a = [0, 0, 0, 0]; let mut i = 0; while i < n { a[i % 4] += i; i += 1; } a[0] + a[1] + a[2] + a[3] }";
+    let ast = call(kernel, vec![int(10)], false);
+    let vm = call(kernel, vec![int(10)], true);
+    assert_eq!(ast, vm, "indexed compound assignment");
+}
+
 /// An out-of-range array read is an error in both paths (the JIT deopts, the interpreter reports).
 #[test]
 fn jit_out_of_bounds_errors_like_ast() {

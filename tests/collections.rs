@@ -557,3 +557,35 @@ fn empty_array_broadcast_and_empty_reduce_errors() {
     assert!(eval_err("let f(x) = x^2;\nf([])"));
     assert!(eval_err("let f(x) = x;\nf([\"a\"])"));
 }
+
+#[test]
+fn array_index_out_of_range_errors() {
+    assert!(eval_err("[1, 2][2]"));
+    assert!(eval_err("[1, 2][-3]"));
+    assert!(eval_err("let a = [1];\na[1] = 2;"));
+}
+
+#[test]
+fn dict_update_keeps_one_entry_per_key() {
+    let v = eval("let mut d = {\"a\": 1};\nd[\"a\"] = 2;\n(len(d), d[\"a\"])");
+    assert_eq!(
+        v,
+        Value::Tuple(
+            vec![
+                Value::Number(Number::from(1)),
+                Value::Number(Number::from(2))
+            ]
+            .into_boxed_slice()
+        )
+    );
+}
+
+#[test]
+fn unhashable_dict_key_is_rejected() {
+    assert!(eval_err("let mut d = {};\nd[[1]] = 2;"));
+}
+
+#[test]
+fn set_literal_dedups_repeated_elements() {
+    assert_eq!(eval("len({1, 2, 2, 1, 3})"), Value::Number(Number::from(3)));
+}

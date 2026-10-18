@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-18
+
+### Added
+
+- **Compile-time diagnostics for configuration and imports.** `prima check` now reports `E0022`
+  for unknown `config` / `with config` keys (with a `did you mean` suggestion backed by the same
+  key table the runtime uses), `E0030` for imports that resolve to no module (embedded stdlib →
+  hosted namespace → filesystem, matching the module loader), and `E0032` for `from`-imports or
+  qualified access to items that exist but are not `pub`. Dependencies are not recursively
+  checked; the runtime keeps `R0008` as the fallback for dynamic load failures.
+
+- **`W0004 unreachable_code`.** Statements after a `return` in the same block are reported as a
+  warning (spec §16.5).
+
+- **Diagnostics code-table guard.** A test pins the appendix C code set and covers the four codes
+  added in this release, so the document and the implementation cannot drift silently.
+
+- **`mem::Arc` explicit reference counting (spec §12.3/§12.4).** `import mem;` now provides
+  `mem::Arc::new(x)`, `a.clone()`, `a.get()`, and `a.strong_count()`. The count starts at 1 and is
+  raised only by an explicit `clone`; ordinary class-instance copies (`let b = a`) share the handle
+  without changing it, and the count never decreases because the host layer has no destructor hooks.
+  The four methods carry `///` docs and appear in `prima doc --stdlib`.
+
+- **Pollard rho for `math::factor`.** After stripping factors up to 10,000 by trial division,
+  `factor` uses Miller–Rabin plus Brent's Pollard rho, so large semiprimes no longer require
+  `sqrt(n)` divisions. Results stay ascending with multiplicity, and the bounded search falls back
+  to trial division rather than returning a wrong answer.
+
+### Fixed
+
+- **`?` now returns early from the enclosing `Result`/`Option` function.** Previously `?` on `None`
+  raised `R0011` and `?` on `Err` raised a runtime error, so `fn f() -> Option<T> { let x =
+  xs.get(0)?; Some(x) }` failed instead of returning `None`. The `Err`/`None` value is now carried
+  by an internal propagation marker and caught at function-call boundaries, matching spec §16.3.
+
+- **`prima check` now agrees with the evaluator on valid symbolic code.** Unbound single-segment
+  identifiers in value position are free symbolic variables (as the evaluator already treated
+  them), so `prima check examples/` is clean except the intentionally broken example; only
+  call-position names are undefined. Struct patterns with binding-only fields are irrefutable in
+  `let` (no spurious `E0053`), and class or method names no longer produce `W0003`.
+
 ## [0.5.2] - 2026-10-04
 
 ### Fixed

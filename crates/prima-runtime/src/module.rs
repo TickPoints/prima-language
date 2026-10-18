@@ -134,7 +134,7 @@ impl Loader {
         for imp in &program.imports {
             let segments = import_segments(imp);
             let key = segments.join("::");
-            match self.resolve_import(dir, &segments) {
+            match resolve_import(dir, &segments) {
                 Resolution::File(resolved) => {
                     let target = fs::canonicalize(&resolved).map_err(|e| {
                         io_err(format!(
@@ -220,27 +220,6 @@ impl Loader {
         })
     }
 
-    /// Resolve one import path: (1) an embedded stdlib signature source, (2) a registered Rust-hosted
-    /// namespace, (3) a filesystem file relative to the importing module, else `None`
-    /// (spec §18.4 / §18 / §15.3). Registered stdlib paths take precedence over local files — like
-    /// Rust's `std`, a stdlib module name is reserved (a local `linalg.pra` cannot shadow `import linalg`).
-    fn resolve_import(&self, dir: &Path, segments: &[String]) -> Resolution {
-        let key = segments.join("::");
-        if crate::stdlib::get_module_source(&key).is_some() {
-            Resolution::Embedded {
-                path: segments.to_vec(),
-            }
-        } else if crate::stdlib::has_namespace(&key) {
-            Resolution::Host {
-                path: segments.to_vec(),
-            }
-        } else if let Some(file) = resolve(dir, segments) {
-            Resolution::File(file)
-        } else {
-            Resolution::None
-        }
-    }
-
     /// Build the cycle error message, e.g. `import cycle: a -> a::b -> a`.
     fn cycle_error(&self, idx: usize) -> String {
         let mut chain: Vec<String> = self.stack[idx..]
@@ -273,9 +252,33 @@ fn resolve(dir: &Path, segments: &[String]) -> Option<PathBuf> {
     }
 }
 
+/// Resolve one import path: (1) an embedded stdlib signature source, (2) a registered Rust-hosted
+/// namespace, (3) a filesystem file relative to the importing module, else `None`
+/// (spec §18.4 / §18 / §15.3). Registered stdlib paths take precedence over local files — like
+/// Rust's `std`, a stdlib module name is reserved (a local `linalg.pra` cannot shadow `import linalg`).
+///
+/// Public within the crate so the static checker (`check::imports`, `E0030`) resolves imports the
+/// same way the module loader does.
+pub(crate) fn resolve_import(dir: &Path, segments: &[String]) -> Resolution {
+    let key = segments.join("::");
+    if crate::stdlib::get_module_source(&key).is_some() {
+        Resolution::Embedded {
+            path: segments.to_vec(),
+        }
+    } else if crate::stdlib::has_namespace(&key) {
+        Resolution::Host {
+            path: segments.to_vec(),
+        }
+    } else if let Some(file) = resolve(dir, segments) {
+        Resolution::File(file)
+    } else {
+        Resolution::None
+    }
+}
+
 /// One resolved import target (spec §15.3 / §18.4 / §18): a file, an embedded stdlib signature
 /// source, a Rust-hosted namespace, or nothing.
-enum Resolution {
+pub(crate) enum Resolution {
     File(PathBuf),
     Embedded { path: Vec<String> },
     Host { path: Vec<String> },

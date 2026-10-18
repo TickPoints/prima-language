@@ -897,6 +897,7 @@ let s_eval = to_f64(s);        // 此时才数值求值（需 n 已绑定具体�
 ### 10.1 求值语义
 
 - **符号求值**：`f(x) = x^2 + 6; f(0)` → 化简后精确结果，不自动数值化。
+- **自由变量**：值位置未绑定的单段标识符视为自由符号变量（如 `grad(x^2 + y^2)` 中的 `x`/`y`，`\pi` 等符号字面量同）；`E0040` 只用于调用位置等必须绑定可调用值的场合。
 - **数值求值**：经 §九 坍缩后。
 - **循环公式优化**（`loop_optimization := true` 默认开）：`sum(1..n) i → n(n+1)/2`。
 
@@ -1248,7 +1249,8 @@ let d: Number = 0;            // 显式类型注解
 - **深拷贝**：当方法**返回基本值字段**（`Expr`/`Number`/`String` 等标量/不可变值）时，传出的值独立持有（这些基本值本身不可变，深拷贝即复制句柄/缓冲）。返回类实例则保持共享。
 - **结构字面量**：`Test { a, b }` 创建新实例（拥有新字段值）。
 - **无手动所有权语法**：不暴露 `&` / `move` 等 Rust 风格借用语法（保留 `let mut` 表明可变绑定）。可变类字段修改可通过显式构造新实例或 `mut self` 方法实现。
-- **循环引用**：引用计数无法回收含循环引用的实例；需要确定性生命周期或跨 FFI 保持存活时，使用标准库 `mem::Arc`（打包一层显式引用计数，`mem::Arc::new(x)`/`x.strong_count()`）。
+- **循环引用**：引用计数无法回收含循环引用的实例；需要确定性生命周期或跨 FFI 保持存活时，使用标准库 `mem::Arc`（显式引用计数，需 `import mem;`）。
+- **`mem::Arc`（v0.6）**：`mem::Arc::new(x)` 创建持有 `x` 的句柄（初始计数 1）；`a.clone()` 返回同一载荷并把计数加一；`a.get()` 取回载荷（基本值按值拷贝，类实例仍为共享句柄）；`a.strong_count()` 返回当前计数。计数 = 1 + 显式 `clone` 次数，**单调不减**（无析构钩子，§12.4）；`let b = a` 属于类实例句柄共享，不增加显式计数。
 - **`ExprId` 是 `Copy` 值句柄**，自然共享；底层 `ExprPool` 只读并发安全。
 
 ### 12.4 内存策略
@@ -2124,11 +2126,13 @@ with config { overload_policy := deny } {    // 使用即报错
 ### 18.6 标准库扩展（v2.2）
 
 > 以下模块**方法级清单以各自内嵌 `.pra` 模块的 `///` 文档注释为准**（§十八 管理原则）；此处给出职责范畴与关键实现取向。
+>
+> 标注 **（v0.7 计划）** 的条目为 v0.6 尚未提供、列入 Phase 13 的目标能力；未标注条目已在 v0.6 落地。
 
 **`math` 数值工具**：
 
 - 整数算法：**因式分解**（试除/ Pollard rho）、**素数筛**、`gcd`/`lcm`/CRT（中国剩余定理）、整数幂余。
-- 多项式与级数：**Taylor 展开**（`taylor(f, x, x0, n)` → 截断幂级数）、多项式加减乘除/求值/求根、连分数。
+- 多项式与级数：**Taylor 展开**（`taylor(f, x, x0, n)` → 截断幂级数，v0.7 计划）、多项式加减乘除/求值/求根、连分数。
 - 一般以 `.pra` 书写，热点（如大数因式分解核心）用 `@builtin(ON)` 分层到 Rust（§18.4）。
 
 **`physics` 常用公式与 Class**：
@@ -2139,15 +2143,15 @@ with config { overload_policy := deny } {    // 使用即报错
 
 **`sys` 系统交互扩展**：
 
-- 进程：`sys::process`（运行命令、退出码、输出捕获）、`sys::fs`（文件元数据、目录遍历）、`sys::term`（终端尺寸、raw 模式）等子模块，沿用 §18.2 的全路径绑定约定。
+- 进程：`sys::process`（运行命令、退出码、输出捕获）、`sys::fs`（文件元数据、目录遍历）、`sys::term`（终端尺寸；raw 模式为 v0.7 计划）等子模块，沿用 §18.2 的全路径绑定约定。
 
 **`plot` 绘图**：线/散点/柱/等高线/热图；SVG 为默认后端，PNG 可选（`savefig` 格式参数）。**`render` 公式渲染**：
 
-- `render::to_svg(expr)` / `render::to_png(expr)`：把表达式（`Expr`/f-string 结果）渲染为公式图像（复用 §7 ExprDAG 渲染器）。
-- `render::to_terminal(expr)`：终端文本公式（ASCII/Unicode 数学）；**`print` 输出公式时的可选终端公式渲染以 cargo feature 提供**（§实现方案 §1）。
+- `render::to_svg(expr)` / `render::to_png(expr)`：把表达式（`Expr`/f-string 结果）渲染为公式图像（复用 §7 ExprDAG 渲染器）；`to_png` 为 v0.7 计划。
+- `render::to_terminal(expr)`：终端文本公式（ASCII/Unicode 数学）；**`print` 输出公式时的可选终端公式渲染以 cargo feature `term-render` 提供**（§实现方案 §1，v0.7 计划）。
 - 两者都以 `print_format` 策略为默认风格。
 
-**`mem`**：`mem::Arc` 显式引用计数（§12.3/12.4）。
+**`mem`**：`mem::Arc` 显式引用计数（§12.3/12.4）：`new(x)` / `a.clone()` / `a.get()` / `a.strong_count()`，方法以接收者形式调用。
 
 ---
 
@@ -2989,7 +2993,7 @@ c_api::unit         // C void
 math::factor(n)                  // 整数因式分解 → Array<Integer>
 math::primes(limit)              // 素数筛 → Array<Integer>
 math::gcd(a, b), math::lcm(a, b) // 已从 num 归并的整数算法
-math::taylor(f, x, x0, n)        // Taylor 展开（MFn 名或表达式，截断 n 阶）
+math::taylor(f, x, x0, n)        // Taylor 展开（MFn 名或表达式，截断 n 阶；v0.7 计划）
 math::polynomial(roots, coeffs)  // 多项式构造/求值/求根
 
 // physics —— 常用公式（Rust 实现）与 Class（§18.6）
@@ -3004,11 +3008,11 @@ sys::fs::metadata(p) -> Option<Dict>        // 文件元数据
 sys::term::size() -> (Integer, Integer)     // (rows, cols)
 
 // render —— 公式渲染（§18.6）
-render::to_svg(expr), render::to_png(expr)  // Expr → 公式图像
+render::to_svg(expr), render::to_png(expr)  // Expr → 公式图像（to_png 为 v0.7 计划）
 render::to_terminal(expr)                   // 终端文本公式
 
 // mem —— 显式引用计数（§12.3/12.4）
-mem::Arc::new(x), mem::Arc::strong_count(x)
+mem::Arc::new(x), a.clone(), a.get(), a.strong_count()
 ```
 
 ---

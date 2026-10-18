@@ -897,6 +897,7 @@ Besides the collapse family (§9.2–9.6, method syntax `x.to_f64()`/`x.rounded(
 ### 10.1 Evaluation Semantics
 
 - **Symbolic evaluation**: `f(x) = x^2 + 6; f(0)` → exact result after simplification, no automatic numeric conversion.
+- **Free variables**: an unbound single-segment identifier in value position is a free symbolic variable (e.g. `x`/`y` in `grad(x^2 + y^2)`; `\pi` and other symbol literals likewise); `E0040` applies only where a callable binding is required, such as call position.
 - **Numeric evaluation**: after collapse per §9.
 - **Loop formula optimization** (`loop_optimization := true` on by default): `sum(1..n) i → n(n+1)/2`.
 
@@ -1248,7 +1249,8 @@ let d: Number = 0;            // explicit type annotation
 - **Deep copy**: when a method **returns a basic-value field** (`Expr`/`Number`/`String`, etc. scalar/immutable values), the handed-out value is independently owned (these basic values are immutable, so a deep copy copies the handle/buffer). Returning a class instance keeps sharing.
 - **Struct literal**: `Test { a, b }` creates a new instance (owning new field values).
 - **No manual ownership syntax**: Rust-style borrowing (`&`/`move`) is not exposed (`let mut` is kept to indicate mutable bindings). Mutable class fields are changed by explicitly constructing a new instance or via a `mut self` method.
-- **Reference cycles**: reference counting cannot reclaim instances involved in cycles; for a deterministic lifetime or keeping instances alive across FFI, use the standard library `mem::Arc` (a layer of explicit reference counting, `mem::Arc::new(x)`/`x.strong_count()`).
+- **Reference cycles**: reference counting cannot reclaim instances involved in cycles; for a deterministic lifetime or keeping instances alive across FFI, use the standard library `mem::Arc` (explicit reference counting; `import mem;` is required).
+- **`mem::Arc` (v0.6)**: `mem::Arc::new(x)` creates a handle holding `x` (initial count 1); `a.clone()` returns the same payload and increments the count; `a.get()` returns the payload (basic values are copied by value, class instances stay shared); `a.strong_count()` returns the current count. The count is `1 + explicit clone calls` and is **monotonically non-decreasing** (there are no destructor hooks, §12.4); `let b = a` is class-instance handle sharing and does not increase the explicit count.
 - **`ExprId` is a `Copy` value handle**, naturally shared; the underlying `ExprPool` is read-only and concurrency-safe.
 
 ### 12.4 Memory strategy
@@ -2124,11 +2126,13 @@ with config { overload_policy := deny } {    // using it is an error
 ### 18.6 Standard Library Extensions (v2.2)
 
 > The **method-level lists** of the modules below **are governed by the `///` doc comments of their respective embedded `.pra` modules** (§18 management principle); this section gives the responsibility scope and key implementation choices.
+>
+> Entries marked **(v0.7 planned)** are target capabilities not yet provided in v0.6 and scheduled for Phase 13; unmarked entries landed in v0.6.
 
 **`math` numeric tools**:
 
 - Integer algorithms: **factorization** (trial division / Pollard rho), **prime sieve**, `gcd`/`lcm`/CRT (Chinese remainder theorem), modular integer exponentiation.
-- Polynomials and series: **Taylor expansion** (`taylor(f, x, x0, n)` → a truncated power series), polynomial add/sub/mul/div, evaluation, root-finding, continued fractions.
+- Polynomials and series: **Taylor expansion** (`taylor(f, x, x0, n)` → a truncated power series, v0.7 planned), polynomial add/sub/mul/div, evaluation, root-finding, continued fractions.
 - Generally written in `.pra`, with hot spots (such as the core of large-number factorization) layered to Rust via `@builtin(ON)` (§18.4).
 
 **`physics` common formulas and Classes**:
@@ -2139,15 +2143,15 @@ with config { overload_policy := deny } {    // using it is an error
 
 **`sys` system-interaction extensions**:
 
-- Process: submodules such as `sys::process` (run commands, exit codes, output capture), `sys::fs` (file metadata, directory traversal), `sys::term` (terminal size, raw mode), following the full-path binding convention of §18.2.
+- Process: submodules such as `sys::process` (run commands, exit codes, output capture), `sys::fs` (file metadata, directory traversal), `sys::term` (terminal size; raw mode is v0.7 planned), following the full-path binding convention of §18.2.
 
 **`plot` plotting**: line/scatter/bar/contour/heatmap; SVG is the default backend, PNG optional (`savefig` format parameter). **`render` formula rendering**:
 
-- `render::to_svg(expr)` / `render::to_png(expr)`: render an expression (`Expr`/f-string result) into a formula image (reusing the §7 ExprDAG renderer).
-- `render::to_terminal(expr)`: a terminal-text formula (ASCII/Unicode math); **the optional terminal formula rendering when `print` outputs formulas is provided via a cargo feature** (§Implementation Plan §1).
+- `render::to_svg(expr)` / `render::to_png(expr)`: render an expression (`Expr`/f-string result) into a formula image (reusing the §7 ExprDAG renderer); `to_png` is v0.7 planned.
+- `render::to_terminal(expr)`: a terminal-text formula (ASCII/Unicode math); **the optional terminal formula rendering when `print` outputs formulas is provided via the `term-render` cargo feature** (§Implementation Plan §1, v0.7 planned).
 - Both use the `print_format` policy as the default style.
 
-**`mem`**: `mem::Arc` explicit reference counting (§12.3/12.4).
+**`mem`**: `mem::Arc` explicit reference counting (§12.3/12.4): `new(x)` / `a.clone()` / `a.get()` / `a.strong_count()`, called as receiver methods.
 
 ---
 
