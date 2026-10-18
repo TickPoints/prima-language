@@ -2126,11 +2126,13 @@ with config { overload_policy := deny } {    // using it is an error
 ### 18.6 Standard Library Extensions (v2.2)
 
 > The **method-level lists** of the modules below **are governed by the `///` doc comments of their respective embedded `.pra` modules** (§18 management principle); this section gives the responsibility scope and key implementation choices.
+>
+> Entries marked **(v0.7 planned)** are target capabilities not yet provided in v0.6 and scheduled for Phase 13; unmarked entries landed in v0.6.
 
 **`math` numeric tools**:
 
 - Integer algorithms: **factorization** (trial division / Pollard rho), **prime sieve**, `gcd`/`lcm`/CRT (Chinese remainder theorem), modular integer exponentiation.
-- Polynomials and series: **Taylor expansion** (`taylor(f, x, x0, n)` → a truncated power series), polynomial add/sub/mul/div, evaluation, root-finding, continued fractions.
+- Polynomials and series: **Taylor expansion** (`taylor(f, x, x0, n)` → a truncated power series, v0.7 planned), polynomial add/sub/mul/div, evaluation, root-finding, continued fractions.
 - Generally written in `.pra`, with hot spots (such as the core of large-number factorization) layered to Rust via `@builtin(ON)` (§18.4).
 
 **`physics` common formulas and Classes**:
@@ -2141,12 +2143,12 @@ with config { overload_policy := deny } {    // using it is an error
 
 **`sys` system-interaction extensions**:
 
-- Process: submodules such as `sys::process` (run commands, exit codes, output capture), `sys::fs` (file metadata, directory traversal), `sys::term` (terminal size, raw mode), following the full-path binding convention of §18.2.
+- Process: submodules such as `sys::process` (run commands, exit codes, output capture), `sys::fs` (file metadata, directory traversal), `sys::term` (terminal size; raw mode is v0.7 planned), following the full-path binding convention of §18.2.
 
 **`plot` plotting**: line/scatter/bar/contour/heatmap; SVG is the default backend, PNG optional (`savefig` format parameter). **`render` formula rendering**:
 
-- `render::to_svg(expr)` / `render::to_png(expr)`: render an expression (`Expr`/f-string result) into a formula image (reusing the §7 ExprDAG renderer).
-- `render::to_terminal(expr)`: a terminal-text formula (ASCII/Unicode math); **the optional terminal formula rendering when `print` outputs formulas is provided via a cargo feature** (§Implementation Plan §1).
+- `render::to_svg(expr)` / `render::to_png(expr)`: render an expression (`Expr`/f-string result) into a formula image (reusing the §7 ExprDAG renderer); `to_png` is v0.7 planned.
+- `render::to_terminal(expr)`: a terminal-text formula (ASCII/Unicode math); **the optional terminal formula rendering when `print` outputs formulas is provided via the `term-render` cargo feature** (§Implementation Plan §1, v0.7 planned).
 - Both use the `print_format` policy as the default style.
 
 **`mem`**: `mem::Arc` explicit reference counting (§12.3/12.4): `new(x)` / `a.clone()` / `a.get()` / `a.strong_count()`, called as receiver methods.

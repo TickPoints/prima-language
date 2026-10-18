@@ -34,8 +34,8 @@ Domain | Choice | Version | Alternatives | Decision notes |
   Testing | cargo test + `insta` 1.48 (snapshots) + `assert_cmd` 2.2 (CLI) + `proptest` (parser property tests) | — | — | per-phase acceptance in §5 |
   Benchmarking | `criterion` | 0.8 | — | simplification engine, JIT trigger-threshold tuning |
   Plotting (stdlib phase) | `plotly` | 0.14 | hand-drawn SVG | §eighteen plot module, starting with SVG |
-  Formula-image rendering (v2.2 `render` module) | Handwritten SVG + `resvg`/`tiny-skia` | latest stable | — | §eighteen render: ExprDAG → SVG → (optional) PNG rasterization |
-  Terminal formula rendering (v2.2 feature) | Reuses the handwritten Unicode/ASCII renderer | — | — | the `term-render` cargo feature enables `print`'s terminal formula rendering (§eighteen render) |
+  Formula-image rendering (v2.2 `render` module) | Handwritten SVG + `resvg`/`tiny-skia` | latest stable | — | §eighteen render: ExprDAG → SVG → (optional) PNG rasterization (PNG is Phase 13 planned) |
+  Terminal formula rendering (v2.2 feature) | Reuses the handwritten Unicode/ASCII renderer | — | — | the `term-render` cargo feature enables `print`'s terminal formula rendering (§eighteen render; Phase 13 planned) |
   Doc generation (v2.2 `prima doc`) | Handwritten Markdown rendering (parsing `///`/`//!`) | — | `comrak` | Outputs Markdown; no codegen step (§2.2 principle) |
   Host-layer memory (§4.12) | **Reference counting** (`Rc<RefCell>` + `mem::Arc`) | — | `gc-arena` / `shifgrethor` | reference cycles handled explicitly by the user via `mem::Arc`; determinism first |
   JIT (Phase 5) | `cranelift-codegen` | latest stable | `inkwell` (LLVM) | §2.4 / §5 |
@@ -441,7 +441,7 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 - LaTeX is an MVP gate (§19.1 milestone 1): output at the `\sqrt{2} + \pi` level; `tex"..."` literals are parsed into a render tree (a small embedded TeX parser, supporting the MVP subset in Phase 1 first, expanding incrementally).
 - Spec §7 emphasizes that "built-in symbols are independent of TeX; TeX is only a view": `ExprDAG → (LaTeX|Unicode|ASCII)` is a pure view transformation, while the reverse (`tex"..."` → DAG) is parsing; the two are decoupled.
-- **v2.2 reuse**: f-string interpolation, the `render` module (`to_svg`/`to_png`/`to_terminal`), and `print`'s terminal formula rendering (cargo feature `term-render`) all reuse these three backends, changing only the output target.
+- **v2.2 reuse**: f-string interpolation, the `render` module (`to_svg`/`to_png`/`to_terminal`), and `print`'s terminal formula rendering (cargo feature `term-render`) all reuse these three backends, changing only the output target; `to_png` and `term-render` are Phase 13 planned.
 
 ### 4.10 Error Model Summary
 
@@ -471,7 +471,7 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 ---
 
-## 5. Implementation Roadmap (Phase 0 → 12)
+## 5. Implementation Roadmap (Phase 0 → 13)
 
 Each Phase ends with runnable acceptance commands. Phases 0–10 are all delivered (see the "landed" block at the end of each Phase); Phases 11–12 are planned. Phases 0–2 have been delivered under v1.x; the v2.0 changes are spread across each Phase's incremental tasks — see the "v2.0 increments" subsections of each Phase.
 
@@ -747,12 +747,12 @@ Each Phase ends with runnable acceptance commands. Phases 0–10 are all deliver
 > **Phase 11 incremental landing (in progress)**:
 >
 > - **stdlib four-tier features (prerequisite)**: `core`/`system`/`advanced`/`render` + `full`, isolating the heavy dependencies; the release binary uses `--features full`, and CI runs `--all-features` plus a per-tier `check`. See §7 "v2.3+ toolchain ADR".
-> - **`math` landed** (`advanced`): `gcd`/`lcm`/`factor`/`primes`/`crt`/`mod_pow` plus polynomials (`poly_eval`/`poly_add`/`poly_mul`/`poly_derivative`/`poly_roots` via Durand–Kerner) and `continued_fraction`. **Deviations**: `factor` uses deterministic trial division for small inputs and Miller–Rabin + Brent-Pollard rho for large ones (results stay ascending); `taylor(f,x,x0,n)` is not implemented (it needs call-site interception, beyond the builtin argument-evaluation model); `primes` is the only layered `@builtin(O1)` (`factor` stays O0 because its `n <= 0` error cannot be expressed in a `.pra` fallback). `num::gcd/lcm` and `math::gcd/lcm` share one implementation.
-> - **`sys` expansion landed** (`system`): `sys::process` (`run`/`exit_code`, platform shell), `sys::fs` (`exists`/`is_file`/`is_dir`/`size`/`read_dir`/`metadata`), `sys::term` (`size`/`is_tty`); raw mode is explicitly not planned. **Deviations**: `sys::fs::metadata` returns `Result<Dict, String>` (appendix B.7 sketches `Option<Dict>`) and `sys::term::size` returns `Dict{rows,cols}` (the sketch uses a tuple) — the embedded `.pra` docs are the sole method-list source (§eighteen management principle).
+> - **`math` landed** (`advanced`): `gcd`/`lcm`/`factor`/`primes`/`crt`/`mod_pow` plus polynomials (`poly_eval`/`poly_add`/`poly_mul`/`poly_derivative`/`poly_roots` via Durand–Kerner) and `continued_fraction`. **Deviations**: `factor` uses deterministic trial division for small inputs and Miller–Rabin + Brent-Pollard rho for large ones (results stay ascending); `taylor(f,x,x0,n)` is scheduled for Phase 13 (it needs call-site interception, beyond the builtin argument-evaluation model); `primes` is the only layered `@builtin(O1)` (`factor` stays O0 because its `n <= 0` error cannot be expressed in a `.pra` fallback). `num::gcd/lcm` and `math::gcd/lcm` share one implementation.
+> - **`sys` expansion landed** (`system`): `sys::process` (`run`/`exit_code`, platform shell), `sys::fs` (`exists`/`is_file`/`is_dir`/`size`/`read_dir`/`metadata`), `sys::term` (`size`/`is_tty`); raw mode is scheduled for Phase 13. **Deviations**: `sys::fs::metadata` returns `Result<Dict, String>` (appendix B.7 sketches `Option<Dict>`) and `sys::term::size` returns `Dict{rows,cols}` (the sketch uses a tuple) — the embedded `.pra` docs are the sole method-list source (§eighteen management principle).
 > - **`physics` landed** (`advanced`): moved from a host namespace to an embedded `.pra` module; the CODATA 2022 constants become typed `pub const`s (SI-exact values keep their `Integer`/`Rational` form), plus Rust `@builtin` elementary formulas (kinematics/mechanics/harmonic oscillation/thermodynamics/basic electromagnetism) and a `Vector3` class. **Deviations**: `ideal_gas_pressure(n, T, V)` uses the Boltzmann constant (`n·k_B·T/V`); the spec appendix B.7 example `simple_pendulum(L, g)` (small-angle period) is also provided.
 > - **`plot` expansion landed** (`advanced`): `heatmap` (viridis colorbar) / `contour` (marching squares) / `hist`; invalid grids raise a `RuntimeError` and `NaN`/`Inf` cells are skipped.
-> - **`render` landed** (`render` tier): `to_svg` (core LaTeX → RaTeX `parse`/`layout`/`to_display_list`/`render_to_svg` with `embed-fonts` for a self-contained SVG) plus `to_terminal` (LaTeX→Unicode transliteration). **Deviations**: `to_png` and the `print` terminal-formula `term-render` feature are explicitly not planned (removed from the roadmap).
-> - **Close-out (v0.6.0)**: `mem::Arc` landed (Phase 12); Pollard rho for `factor` landed; `math::taylor`, `sys::term` raw mode, and `render::to_png`/`term-render` are explicitly **not planned** and have been removed from the roadmap.
+> - **`render` landed** (`render` tier): `to_svg` (core LaTeX → RaTeX `parse`/`layout`/`to_display_list`/`render_to_svg` with `embed-fonts` for a self-contained SVG) plus `to_terminal` (LaTeX→Unicode transliteration). **Deviations**: `to_png` and the `print` terminal-formula `term-render` feature are scheduled for Phase 13.
+> - **Close-out (v0.6.0)**: `mem::Arc` landed (Phase 12); Pollard rho for `factor` landed; `math::taylor`, `sys::term` raw mode, and `render::to_png`/`term-render` are scheduled for Phase 13 (v0.7, below).
 
 ### Phase 12: `mem::Arc` explicit reference counting (spec §12.3/12.4, priority low)
 
@@ -769,7 +769,27 @@ Each Phase ends with runnable acceptance commands. Phases 0–10 are all deliver
 
 > **Phase 12 landing record (v0.6.0)**: `mem` is an embedded `core`-tier module (`modules/mem.pra` + `src/mem.rs`); `Arc` is an ordinary class whose `count` field is maintained through a narrow runtime interface, with no new `Value` variant. The counting semantics are specified in §12.3: `new` starts at 1, `clone` increments explicitly, `get` returns the payload, and `strong_count` reads the count; `let b = a` is handle sharing and does not count. There are no destructor hooks, so the count is monotonically non-decreasing. All four methods carry `///` docs visible through `prima doc --stdlib`.
 
-> **v2.2 chunk ordering**: Phase 6 (f-strings) → 7 (doc) → 8 (opt_level, work item 4 brought forward as a prerequisite) → 9 (`@builtin(ON)`) → 10 (String) → 11 (stdlib expansion) → 12 (`mem::Arc`). Each chunk has independent acceptance; shared-file conflicts between chunks are reconciled by the main session under the "large-task working model" section.
+> **v2.2 chunk ordering**: Phase 6 (f-strings) → 7 (doc) → 8 (opt_level, work item 4 brought forward as a prerequisite) → 9 (`@builtin(ON)`) → 10 (String) → 11 (stdlib expansion) → 12 (`mem::Arc`) → 13 (stdlib completion). Each chunk has independent acceptance; shared-file conflicts between chunks are reconciled by the main session under the "large-task working model" section.
+
+### Phase 13: stdlib completion (v0.7, spec §18.6, priority normal)
+
+**Work item 8** (the four capabilities carried over when v0.6.0 was closed; every other stdlib item is complete).
+
+- **`math::taylor(f, x, x0, n)`**: intercept at the `eval_call` call site (same layer as `derivative`/`map`) instead of evaluating `f`; accept an MFn name, a lambda, or an expression, and build the series truncated at order `n` from `f^(k)(x0)/k!`. `n < 0` or a non-integer errors; the result follows `simplify`'s normal form. Acceptance: `taylor(sin(x), x, 0, 5)` simplifies to `x - x^3/6 + x^5/120` and agrees with repeated `derivative`.
+- **`sys::term` raw mode**: add `sys::term::raw_mode(enable: Bool) -> Result<Nil, String>` and `is_raw() -> Bool`; use termios on Unix and console modes on Windows, returning `Result` instead of panicking. The host layer has no destructor hooks, so the docs require an explicit restore; the REPL and `term-render` never enable it implicitly.
+- **`render::to_png`**: add a rasterizer to the `render` tier (`resvg`/`tiny-skia`) and rasterize RaTeX's layout into PNG; the return shape (byte array or output path) is finalized in `render.pra`'s `///` docs at implementation time (the `.pra` docs remain the sole method-list source).
+- **`term-render` cargo feature**: add the feature to the root package and stdlib; the runtime exposes a `set_term_formula_renderer` hook and the stdlib registers `render::to_terminal` when the feature is on, so `print`/`println` render `Expr` output through the terminal backend according to `print_format` (falling back to LaTeX when stdout is not a TTY).
+
+**Acceptance**:
+
+```text
+cargo test -p prima-stdlib --test math --test render --test sys_time_num
+cargo build --features term-render
+cargo run -- run examples/taylor.pra
+cargo run -- run examples/render.pra
+```
+
+> **Phase 13 status**: not started (the v0.7 target). v0.6.0 keeps these four explicitly as next steps and does not advertise them as completed.
 
 ---
 

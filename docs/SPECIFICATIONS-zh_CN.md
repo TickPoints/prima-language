@@ -2126,11 +2126,13 @@ with config { overload_policy := deny } {    // 使用即报错
 ### 18.6 标准库扩展（v2.2）
 
 > 以下模块**方法级清单以各自内嵌 `.pra` 模块的 `///` 文档注释为准**（§十八 管理原则）；此处给出职责范畴与关键实现取向。
+>
+> 标注 **（v0.7 计划）** 的条目为 v0.6 尚未提供、列入 Phase 13 的目标能力；未标注条目已在 v0.6 落地。
 
 **`math` 数值工具**：
 
 - 整数算法：**因式分解**（试除/ Pollard rho）、**素数筛**、`gcd`/`lcm`/CRT（中国剩余定理）、整数幂余。
-- 多项式与级数：**Taylor 展开**（`taylor(f, x, x0, n)` → 截断幂级数）、多项式加减乘除/求值/求根、连分数。
+- 多项式与级数：**Taylor 展开**（`taylor(f, x, x0, n)` → 截断幂级数，v0.7 计划）、多项式加减乘除/求值/求根、连分数。
 - 一般以 `.pra` 书写，热点（如大数因式分解核心）用 `@builtin(ON)` 分层到 Rust（§18.4）。
 
 **`physics` 常用公式与 Class**：
@@ -2141,12 +2143,12 @@ with config { overload_policy := deny } {    // 使用即报错
 
 **`sys` 系统交互扩展**：
 
-- 进程：`sys::process`（运行命令、退出码、输出捕获）、`sys::fs`（文件元数据、目录遍历）、`sys::term`（终端尺寸、raw 模式）等子模块，沿用 §18.2 的全路径绑定约定。
+- 进程：`sys::process`（运行命令、退出码、输出捕获）、`sys::fs`（文件元数据、目录遍历）、`sys::term`（终端尺寸；raw 模式为 v0.7 计划）等子模块，沿用 §18.2 的全路径绑定约定。
 
 **`plot` 绘图**：线/散点/柱/等高线/热图；SVG 为默认后端，PNG 可选（`savefig` 格式参数）。**`render` 公式渲染**：
 
-- `render::to_svg(expr)` / `render::to_png(expr)`：把表达式（`Expr`/f-string 结果）渲染为公式图像（复用 §7 ExprDAG 渲染器）。
-- `render::to_terminal(expr)`：终端文本公式（ASCII/Unicode 数学）；**`print` 输出公式时的可选终端公式渲染以 cargo feature 提供**（§实现方案 §1）。
+- `render::to_svg(expr)` / `render::to_png(expr)`：把表达式（`Expr`/f-string 结果）渲染为公式图像（复用 §7 ExprDAG 渲染器）；`to_png` 为 v0.7 计划。
+- `render::to_terminal(expr)`：终端文本公式（ASCII/Unicode 数学）；**`print` 输出公式时的可选终端公式渲染以 cargo feature `term-render` 提供**（§实现方案 §1，v0.7 计划）。
 - 两者都以 `print_format` 策略为默认风格。
 
 **`mem`**：`mem::Arc` 显式引用计数（§12.3/12.4）：`new(x)` / `a.clone()` / `a.get()` / `a.strong_count()`，方法以接收者形式调用。
@@ -2991,7 +2993,7 @@ c_api::unit         // C void
 math::factor(n)                  // 整数因式分解 → Array<Integer>
 math::primes(limit)              // 素数筛 → Array<Integer>
 math::gcd(a, b), math::lcm(a, b) // 已从 num 归并的整数算法
-math::taylor(f, x, x0, n)        // Taylor 展开（MFn 名或表达式，截断 n 阶）
+math::taylor(f, x, x0, n)        // Taylor 展开（MFn 名或表达式，截断 n 阶；v0.7 计划）
 math::polynomial(roots, coeffs)  // 多项式构造/求值/求根
 
 // physics —— 常用公式（Rust 实现）与 Class（§18.6）
@@ -3006,7 +3008,7 @@ sys::fs::metadata(p) -> Option<Dict>        // 文件元数据
 sys::term::size() -> (Integer, Integer)     // (rows, cols)
 
 // render —— 公式渲染（§18.6）
-render::to_svg(expr), render::to_png(expr)  // Expr → 公式图像
+render::to_svg(expr), render::to_png(expr)  // Expr → 公式图像（to_png 为 v0.7 计划）
 render::to_terminal(expr)                   // 终端文本公式
 
 // mem —— 显式引用计数（§12.3/12.4）
