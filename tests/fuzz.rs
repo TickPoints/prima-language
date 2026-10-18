@@ -11,7 +11,9 @@ fn arb_string() -> impl Strategy<Value = String> {
 /// Evaluate a generated program with a fresh interpreter.
 fn eval(src: &str) -> Value {
     prima_stdlib::init();
-    Evaluator::new().eval_value(src).expect("generated program failed")
+    Evaluator::new()
+        .eval_value(src)
+        .expect("generated program failed")
 }
 
 fn ints(values: &[i64]) -> String {

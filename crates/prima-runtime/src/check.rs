@@ -126,10 +126,7 @@ pub fn check_src_checked(src: &str) -> (Vec<TypeError>, Vec<SyntaxWarning>) {
 /// Imports are resolved relative to the file's directory, but dependencies are not recursively
 /// checked: each module reports its own diagnostics when it is the checked entry point. Embedded
 /// stdlib modules are visible only after `prima_stdlib::init()`, as with the module loader.
-pub fn check_path_checked(
-    file: &Path,
-    src: &str,
-) -> (Vec<TypeError>, Vec<SyntaxWarning>) {
+pub fn check_path_checked(file: &Path, src: &str) -> (Vec<TypeError>, Vec<SyntaxWarning>) {
     let program = match parse(src) {
         Ok(program) => program,
         Err(syntax_errors) => {
@@ -426,7 +423,10 @@ mod tests {
         let (errors, _) = check_src_checked(
             "let e = x^2 + y;\nlet g = grad(x^2 + y^2);\nprintln(e);\nprintln(g);",
         );
-        assert!(errors.is_empty(), "free symbols must be allowed: {errors:?}");
+        assert!(
+            errors.is_empty(),
+            "free symbols must be allowed: {errors:?}"
+        );
     }
 
     #[test]

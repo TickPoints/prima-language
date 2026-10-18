@@ -154,11 +154,11 @@ p.at([1, 2])";
 
 #[test]
 fn disabled_broadcast_rejects_nested_array_argument() {
-    assert!(eval_err(
-        "config { broadcast := false }\nlet f(x) = x^2;\nf([[1, 2], [3, 4]])"
-    )
-    .to_string()
-    .contains("broadcast"));
+    assert!(
+        eval_err("config { broadcast := false }\nlet f(x) = x^2;\nf([[1, 2], [3, 4]])")
+            .to_string()
+            .contains("broadcast")
+    );
 }
 
 #[test]

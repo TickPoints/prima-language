@@ -56,10 +56,7 @@ fn check_stmt(stmt: &Stmt, warnings: &mut Vec<SyntaxWarning>) {
         | Stmt::While { body, .. }
         | Stmt::WhileLet { body, .. } => check_block(body, warnings),
         Stmt::If {
-            then,
-            elifs,
-            else_,
-            ..
+            then, elifs, else_, ..
         } => {
             check_block(then, warnings);
             for (_, block) in elifs {

@@ -1542,9 +1542,9 @@ impl Evaluator {
                 ));
             }
         };
-        let next = count.checked_add(1).ok_or_else(|| {
-            RuntimeError::Overflow("`Arc` reference count overflowed".into())
-        })?;
+        let next = count
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::Overflow("`Arc` reference count overflowed".into()))?;
         instance
             .fields
             .insert("count".into(), Value::Number(Number::from(next)));
@@ -1562,12 +1562,7 @@ impl Evaluator {
     }
 
     /// Shared field lookup for the `mem::Arc` accessors.
-    fn mem_arc_field(
-        &self,
-        arc: &Value,
-        field: &str,
-        method: &str,
-    ) -> Result<Value, RuntimeError> {
+    fn mem_arc_field(&self, arc: &Value, field: &str, method: &str) -> Result<Value, RuntimeError> {
         let Value::Class(id) = arc else {
             return Err(RuntimeError::Type(format!(
                 "`{method}` expects an Arc receiver, got {}",

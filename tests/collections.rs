@@ -587,8 +587,5 @@ fn unhashable_dict_key_is_rejected() {
 
 #[test]
 fn set_literal_dedups_repeated_elements() {
-    assert_eq!(
-        eval("len({1, 2, 2, 1, 3})"),
-        Value::Number(Number::from(3))
-    );
+    assert_eq!(eval("len({1, 2, 2, 1, 3})"), Value::Number(Number::from(3)));
 }

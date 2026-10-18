@@ -136,9 +136,7 @@ pub(crate) fn check_imports(
             ImportKind::Namespace {
                 alias: Some(alias), ..
             } => vec![alias.value.clone()],
-            ImportKind::Namespace { path, .. } => {
-                path.iter().map(|s| s.value.clone()).collect()
-            }
+            ImportKind::Namespace { path, .. } => path.iter().map(|s| s.value.clone()).collect(),
             ImportKind::From { .. } => continue,
         };
         modules.insert(prefix, exports);

@@ -167,9 +167,7 @@ pub(crate) fn attach_span(e: RuntimeError, span: prima_syntax::Span) -> RuntimeE
 
 /// Catch an internal `?` propagation at a function boundary (spec §16.3): the carried value is the
 /// result of the enclosing `Result`/`Option`-returning function.
-pub(crate) fn catch_propagate(
-    result: Result<Value, RuntimeError>,
-) -> Result<Value, RuntimeError> {
+pub(crate) fn catch_propagate(result: Result<Value, RuntimeError>) -> Result<Value, RuntimeError> {
     match result {
         Err(RuntimeError::Propagate(value)) => Ok(*value),
         other => other,

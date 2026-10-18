@@ -180,7 +180,12 @@ pub enum Value {
 // (16 bytes on both); `String`, `Error` and `Tuple` use pointer-sized fat pointers
 // (`Box<str>` / `Box<[Value]>`) and `Dict`/`Set`/`Result` are boxed for exactly this.
 const _: () = assert!(
-    std::mem::size_of::<Value>() == if std::mem::size_of::<usize>() == 8 { 24 } else { 16 }
+    std::mem::size_of::<Value>()
+        == if std::mem::size_of::<usize>() == 8 {
+            24
+        } else {
+            16
+        }
 );
 
 /// Hashable key for `Dict`/`Set` (spec §11.6): a value-semantic, immutable subset of `Value` —

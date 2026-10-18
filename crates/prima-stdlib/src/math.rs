@@ -195,7 +195,11 @@ fn factor(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     }
     factors.sort();
     Ok(Value::Array(
-        factors.into_iter().map(big_value).collect::<Vec<_>>().into(),
+        factors
+            .into_iter()
+            .map(big_value)
+            .collect::<Vec<_>>()
+            .into(),
     ))
 }
 

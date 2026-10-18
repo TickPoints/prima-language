@@ -131,9 +131,9 @@ impl Evaluator {
                 let v = self.eval_expr(env, inner)?;
                 match v {
                     Value::Result(Ok(v)) => Ok(*v),
-                    Value::Result(Err(m)) => Err(RuntimeError::Propagate(Box::new(
-                        Value::Result(Err(m)),
-                    ))),
+                    Value::Result(Err(m)) => {
+                        Err(RuntimeError::Propagate(Box::new(Value::Result(Err(m)))))
+                    }
                     Value::Option(Some(v)) => Ok(*v),
                     Value::Option(None) => {
                         Err(RuntimeError::Propagate(Box::new(Value::Option(None))))

@@ -725,14 +725,14 @@ fn check_qualified_access(
     ctx: &NameCtx,
     errors: &mut Vec<TypeError>,
 ) {
-    let Some((prefix, exports)) = ctx
-        .modules
-        .iter()
-        .find(|(prefix, _)| {
-            segments.len() == prefix.len() + 1
-                && segments.iter().take(prefix.len()).map(|s| &s.value).eq(prefix.iter())
-        })
-    else {
+    let Some((prefix, exports)) = ctx.modules.iter().find(|(prefix, _)| {
+        segments.len() == prefix.len() + 1
+            && segments
+                .iter()
+                .take(prefix.len())
+                .map(|s| &s.value)
+                .eq(prefix.iter())
+    }) else {
         return;
     };
     let item = &segments[prefix.len()];
@@ -754,10 +754,7 @@ fn check_qualified_access(
             )),
         );
     } else {
-        let help = did_you_mean_help(
-            &item.value,
-            exports.public.iter().chain(exports.all.iter()),
-        );
+        let help = did_you_mean_help(&item.value, exports.public.iter().chain(exports.all.iter()));
         push_err_with_help(
             src,
             errors,

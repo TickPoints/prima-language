@@ -29,10 +29,7 @@ const NEW_CODES: &[&str] = &["E0022", "E0030", "E0032", "W0004"];
 #[test]
 fn appendix_c_code_set_matches_the_document() {
     let spec = std::fs::read_to_string(spec_path()).expect("read the specification");
-    let appendix = spec
-        .split("### 附录 C")
-        .nth(1)
-        .expect("appendix C present");
+    let appendix = spec.split("### 附录 C").nth(1).expect("appendix C present");
     let documented = extract_codes(appendix);
     let expected: BTreeSet<String> = EXPECTED_CODES.iter().map(|c| c.to_string()).collect();
     assert_eq!(
@@ -54,7 +51,11 @@ fn new_codes_are_reachable_from_the_checker() {
     // E0030 — unresolved import; E0032 — private item.
     let dir = TempDir::new().unwrap();
     let module = dir.path().join("m.pra");
-    std::fs::write(&module, "pub let square(x) = x * x;\nlet helper(x) = x + 1;\n").unwrap();
+    std::fs::write(
+        &module,
+        "pub let square(x) = x * x;\nlet helper(x) = x + 1;\n",
+    )
+    .unwrap();
 
     let missing = dir.path().join("missing.pra");
     std::fs::write(&missing, "import nope;\n1;").unwrap();

@@ -10,11 +10,7 @@ use super::TypeError;
 use super::error::push_err_with_help;
 
 /// Check every config entry in the program (top-level block and nested `with config` blocks).
-pub(crate) fn check_program_config(
-    src: &str,
-    program: &Program,
-    errors: &mut Vec<TypeError>,
-) {
+pub(crate) fn check_program_config(src: &str, program: &Program, errors: &mut Vec<TypeError>) {
     if let Some(block) = &program.config {
         check_entries(src, &block.entries, errors);
     }
@@ -72,10 +68,7 @@ fn check_stmt(src: &str, stmt: &Stmt, errors: &mut Vec<TypeError>) {
         | Stmt::While { body, .. }
         | Stmt::WhileLet { body, .. } => check_block(src, body, errors),
         Stmt::If {
-            then,
-            elifs,
-            else_,
-            ..
+            then, elifs, else_, ..
         } => {
             check_block(src, then, errors);
             for (_, block) in elifs {
