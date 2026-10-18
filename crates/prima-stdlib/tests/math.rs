@@ -89,6 +89,18 @@ fn math_factor() {
 }
 
 #[test]
+fn math_factor_large_semiprime_uses_pollard_rho() {
+    // Trial division to `sqrt(n)` would need ~10^9 iterations; Pollard rho finds both factors.
+    let p = 1_000_000_007i64;
+    let q = 1_000_000_009i64;
+    let n = (p as i128) * (q as i128);
+    assert_eq!(
+        ints(&eval(&format!("import math;\nmath::factor({n})"))),
+        vec![p, q]
+    );
+}
+
+#[test]
 fn math_factor_rejects_non_positive() {
     assert_eq!(eval_err("import math;\nmath::factor(0)").kind(), "Message");
     assert_eq!(eval_err("import math;\nmath::factor(-7)").kind(), "Message");

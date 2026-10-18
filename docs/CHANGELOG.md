@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Diagnostics code-table guard.** A test pins the appendix C code set and covers the four codes
   added in this release, so the document and the implementation cannot drift silently.
 
+- **`mem::Arc` explicit reference counting (spec §12.3/§12.4).** `import mem;` now provides
+  `mem::Arc::new(x)`, `a.clone()`, `a.get()`, and `a.strong_count()`. The count starts at 1 and is
+  raised only by an explicit `clone`; ordinary class-instance copies (`let b = a`) share the handle
+  without changing it, and the count never decreases because the host layer has no destructor hooks.
+  The four methods carry `///` docs and appear in `prima doc --stdlib`.
+
+- **Pollard rho for `math::factor`.** After stripping factors up to 10,000 by trial division,
+  `factor` uses Miller–Rabin plus Brent's Pollard rho, so large semiprimes no longer require
+  `sqrt(n)` divisions. Results stay ascending with multiplicity, and the bounded search falls back
+  to trial division rather than returning a wrong answer.
+
 ## [0.5.2] - 2026-10-04
 
 ### Fixed

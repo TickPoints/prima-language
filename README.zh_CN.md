@@ -37,7 +37,7 @@ Prima 是一门面向科学计算的语言与工具链，把**符号层放在第
 - **Rust 式语义** —— `Result`/`Option` 与 `?`、`match`/`if let`/`while let`、完整模式与解构、带 `pub`/`pub(mod)` 可见性的类、`;` 语句分隔。
 - **符号微分** —— `derivative`/`partial`/`grad`/`limit` 内置于 core；前向与反向模式自动微分，可直接进入编译代码。
 - **并行** —— `@parallel` 广播与 `parfor`（rayon），带静态副作用检查。
-- **带类型签名的 `@builtin` 标准库** —— 每个 stdlib 模块是内嵌的 `.pra` 签名文件（`linalg`、`stats`、`io`、`plot`、`physics`、`sys`、`time`、`num`），`@builtin` 声明绑定到 Rust 实现；`prima check` 依据这些签名校验调用点（`E0050`）。
+- **带类型签名的 `@builtin` 标准库** —— 每个 stdlib 模块是内嵌的 `.pra` 签名文件（`linalg`、`stats`、`io`、`plot`、`physics`、`sys`、`time`、`num`、`math`、`mem`、`render`），`@builtin` 声明绑定到 Rust 实现；`prima check` 依据这些签名校验调用点（`E0050`）。
 - **工具链** —— `prima run` / `check` / `parse` / `compile` / `repl` / `fmt` / `test` / `doc` / `new` / `init` / `completions`，rustc 风格诊断（`error[E00xx]: --> file:line:col`，附 `= help:` 建议）、机器可读的 `--json`（NDJSON）、项目根发现，以及 `--color`/`--quiet`。
 
 ## 安装
@@ -58,7 +58,7 @@ irm https://raw.githubusercontent.com/TickPoints/prima-language/main/install.ps1
 
 ```bash
 # `prima` 二进制默认启用 `full`（全部 stdlib 层）；`prima-stdlib` 库的基线仍为精简的 `core`
-# （内置类 + `num`）。精简二进制用 `cargo build --no-default-features --features core`。
+# （内置类 + `num` + `mem`）。精简二进制用 `cargo build --no-default-features --features core`。
 # 分层：`core` / `system`（`io`/`time`/`sys`）/ `advanced`（`linalg`/`stats`/`math`/`physics`/`plot`）/ `render`（公式渲染）
 cargo install --git https://github.com/TickPoints/prima-language prima-language
 ```

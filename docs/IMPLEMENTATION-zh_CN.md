@@ -744,12 +744,12 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 > **Phase 11 分块落地记录（进行中）**：
 >
 > - **stdlib 四层 feature（前置）**：`core`/`system`/`advanced`/`render` + `full`，隔离重依赖；`prima` 二进制默认 `full`，`prima-stdlib` 库基线 `core`（精简二进制用 `--no-default-features --features <tier>`），CI `--all-features` 且逐层 `check`。详见 §7「v2.3+ 工具链 ADR」。
-> - **`math` 已落地**（`advanced`）：`gcd`/`lcm`/`factor`/`primes`/`crt`/`mod_pow` + 多项式（`poly_eval`/`poly_add`/`poly_mul`/`poly_derivative`/`poly_roots`，Durand–Kerner）+ `continued_fraction`。**偏差**：`factor` 用确定性试除（Pollard rho 仅列为大数可选优化，未实现）；`taylor(f,x,x0,n)` 未实现（需调用点拦截，超出 builtin 参数求值模型）；`primes` 为唯一 `@builtin(O1)` 分层（`factor` 因 `n<=0` 报错无法在 `.pra` 回退中表达而保持 O0）。`num::gcd/lcm` 与 `math::gcd/lcm` 共用实现。
+> - **`math` 已落地**（`advanced`）：`gcd`/`lcm`/`factor`/`primes`/`crt`/`mod_pow` + 多项式（`poly_eval`/`poly_add`/`poly_mul`/`poly_derivative`/`poly_roots`，Durand–Kerner）+ `continued_fraction`。**偏差**：`factor` 在小 n 上走确定性试除，大数走 Miller–Rabin + Brent-Pollard rho（结果仍升序）；`taylor(f,x,x0,n)` 不实现（需调用点拦截，超出 builtin 参数求值模型）；`primes` 为唯一 `@builtin(O1)` 分层（`factor` 因 `n<=0` 报错无法在 `.pra` 回退中表达而保持 O0）。`num::gcd/lcm` 与 `math::gcd/lcm` 共用实现。
 > - **`sys` 扩展已落地**（`system`）：`sys::process`（`run`/`exit_code`，平台 shell）、`sys::fs`（`exists`/`is_file`/`is_dir`/`size`/`read_dir`/`metadata`）、`sys::term`（`size`/`is_tty`）；raw 模式未实现。**偏差**：`sys::fs::metadata` 返回 `Result<Dict,String>`（附录 B.7 草图为 `Option<Dict>`）、`sys::term::size` 返回 `Dict{rows,cols}`（草图为元组）——以 `.pra` 文档为方法清单唯一来源（§十八 管理原则）。
 > - **`physics` 已落地**（`advanced`）：由宿主命名空间改为内嵌 `.pra` 模块，CODATA 2022 常数改为带类型的 `pub const`（SI 精确值保留 `Integer`/`Rational`），新增 Rust `@builtin` 初等公式（运动学/力学/简谐/热学/电磁基础）与 `Vector3` Class。**偏差**：`ideal_gas_pressure(n, T, V)` 用玻尔兹曼常数（`n·k_B·T/V`）；另补规范附录 B.7 示例 `simple_pendulum(L, g)`（小角度周期）。
 > - **`plot` 扩展已落地**（`advanced`）：`heatmap`（viridis 色条）/`contour`（marching squares）/`hist`；网格非法即 `RuntimeError`，`NaN`/`Inf` 跳过。
 > - **`render` 已落地**（`render` tier）：`to_svg`（core LaTeX → RaTeX `parse`/`layout`/`to_display_list`/`render_to_svg`，`embed-fonts` 自包含 SVG）+ `to_terminal`（LaTeX→Unicode 转写）。**偏差**：`to_png` 与 `print` 终端公式渲染 `term-render` feature 未实现。
-> - **待落地**：`mem::Arc`（Phase 12）；`math::taylor`、`factor` 的 Pollard rho、`sys::term` raw 模式、`render::to_png`/`term-render` 列为后续可选项。
+> - **收口（v0.6.0）**：`mem::Arc` 已落地（Phase 12）；`factor` 的 Pollard rho 已落地；`math::taylor`、`sys::term` raw 模式、`render::to_png`/`term-render` 明确**不做**，已移出路线图。
 
 ### Phase 12：`mem::Arc` 显式引用计数（规范 §12.3/12.4，优先级 low）
 
@@ -763,6 +763,8 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
   cargo test                       # 类语义回归（浅拷贝/方法）
   cargo test -p prima-stdlib       # mem::Arc 行为测试
   ```
+
+> **Phase 12 落地记录（v0.6.0）**：`mem` 是 `core` 层的内嵌模块（`modules/mem.pra` + `src/mem.rs`）；`Arc` 是普通类，`count` 字段由 runtime 提供的窄接口维护，不新增 `Value` 变体。计数语义见规范 §12.3：`new` 初始为 1，`clone` 显式加一，`get` 取回载荷，`strong_count` 读取计数；`let b = a` 是句柄共享、不计数。无析构钩子，计数单调不减。四个方法均有 `///` 文档，`prima doc --stdlib` 可见。
 
 > **v2.2 分块总序**：Phase 6（f-string）→ 7（doc）→ 8（opt_level，item 4 前置）→ 9（`@builtin(ON)`）→ 10（String）→ 11（stdlib 扩充）→ 12（`mem::Arc`）。各块验收独立；块与块之间的共享文件冲突由主会话按 §「大型任务工作方式」收口。
 

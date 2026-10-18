@@ -1248,7 +1248,8 @@ let d: Number = 0;            // explicit type annotation
 - **Deep copy**: when a method **returns a basic-value field** (`Expr`/`Number`/`String`, etc. scalar/immutable values), the handed-out value is independently owned (these basic values are immutable, so a deep copy copies the handle/buffer). Returning a class instance keeps sharing.
 - **Struct literal**: `Test { a, b }` creates a new instance (owning new field values).
 - **No manual ownership syntax**: Rust-style borrowing (`&`/`move`) is not exposed (`let mut` is kept to indicate mutable bindings). Mutable class fields are changed by explicitly constructing a new instance or via a `mut self` method.
-- **Reference cycles**: reference counting cannot reclaim instances involved in cycles; for a deterministic lifetime or keeping instances alive across FFI, use the standard library `mem::Arc` (a layer of explicit reference counting, `mem::Arc::new(x)`/`x.strong_count()`).
+- **Reference cycles**: reference counting cannot reclaim instances involved in cycles; for a deterministic lifetime or keeping instances alive across FFI, use the standard library `mem::Arc` (explicit reference counting; `import mem;` is required).
+- **`mem::Arc` (v0.6)**: `mem::Arc::new(x)` creates a handle holding `x` (initial count 1); `a.clone()` returns the same payload and increments the count; `a.get()` returns the payload (basic values are copied by value, class instances stay shared); `a.strong_count()` returns the current count. The count is `1 + explicit clone calls` and is **monotonically non-decreasing** (there are no destructor hooks, §12.4); `let b = a` is class-instance handle sharing and does not increase the explicit count.
 - **`ExprId` is a `Copy` value handle**, naturally shared; the underlying `ExprPool` is read-only and concurrency-safe.
 
 ### 12.4 Memory strategy
@@ -2147,7 +2148,7 @@ with config { overload_policy := deny } {    // using it is an error
 - `render::to_terminal(expr)`: a terminal-text formula (ASCII/Unicode math); **the optional terminal formula rendering when `print` outputs formulas is provided via a cargo feature** (§Implementation Plan §1).
 - Both use the `print_format` policy as the default style.
 
-**`mem`**: `mem::Arc` explicit reference counting (§12.3/12.4).
+**`mem`**: `mem::Arc` explicit reference counting (§12.3/12.4): `new(x)` / `a.clone()` / `a.get()` / `a.strong_count()`, called as receiver methods.
 
 ---
 

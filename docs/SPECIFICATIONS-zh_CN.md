@@ -1248,7 +1248,8 @@ let d: Number = 0;            // 显式类型注解
 - **深拷贝**：当方法**返回基本值字段**（`Expr`/`Number`/`String` 等标量/不可变值）时，传出的值独立持有（这些基本值本身不可变，深拷贝即复制句柄/缓冲）。返回类实例则保持共享。
 - **结构字面量**：`Test { a, b }` 创建新实例（拥有新字段值）。
 - **无手动所有权语法**：不暴露 `&` / `move` 等 Rust 风格借用语法（保留 `let mut` 表明可变绑定）。可变类字段修改可通过显式构造新实例或 `mut self` 方法实现。
-- **循环引用**：引用计数无法回收含循环引用的实例；需要确定性生命周期或跨 FFI 保持存活时，使用标准库 `mem::Arc`（打包一层显式引用计数，`mem::Arc::new(x)`/`x.strong_count()`）。
+- **循环引用**：引用计数无法回收含循环引用的实例；需要确定性生命周期或跨 FFI 保持存活时，使用标准库 `mem::Arc`（显式引用计数，需 `import mem;`）。
+- **`mem::Arc`（v0.6）**：`mem::Arc::new(x)` 创建持有 `x` 的句柄（初始计数 1）；`a.clone()` 返回同一载荷并把计数加一；`a.get()` 取回载荷（基本值按值拷贝，类实例仍为共享句柄）；`a.strong_count()` 返回当前计数。计数 = 1 + 显式 `clone` 次数，**单调不减**（无析构钩子，§12.4）；`let b = a` 属于类实例句柄共享，不增加显式计数。
 - **`ExprId` 是 `Copy` 值句柄**，自然共享；底层 `ExprPool` 只读并发安全。
 
 ### 12.4 内存策略
@@ -2147,7 +2148,7 @@ with config { overload_policy := deny } {    // 使用即报错
 - `render::to_terminal(expr)`：终端文本公式（ASCII/Unicode 数学）；**`print` 输出公式时的可选终端公式渲染以 cargo feature 提供**（§实现方案 §1）。
 - 两者都以 `print_format` 策略为默认风格。
 
-**`mem`**：`mem::Arc` 显式引用计数（§12.3/12.4）。
+**`mem`**：`mem::Arc` 显式引用计数（§12.3/12.4）：`new(x)` / `a.clone()` / `a.get()` / `a.strong_count()`，方法以接收者形式调用。
 
 ---
 
@@ -3008,7 +3009,7 @@ render::to_svg(expr), render::to_png(expr)  // Expr → 公式图像
 render::to_terminal(expr)                   // 终端文本公式
 
 // mem —— 显式引用计数（§12.3/12.4）
-mem::Arc::new(x), mem::Arc::strong_count(x)
+mem::Arc::new(x), a.clone(), a.get(), a.strong_count()
 ```
 
 ---

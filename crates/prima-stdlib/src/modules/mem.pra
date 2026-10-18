@@ -1,0 +1,28 @@
+//! The `mem` module (spec §12.3/§12.4): explicit reference counting.
+//!
+//! Import explicitly with `import mem;`. `mem::Arc` wraps a payload and keeps a count that is
+//! raised only by `clone()`; `let b = a` shares the same class-instance handle and does not
+//! change the count (spec §12.3). The count is `1 + clone calls` and never decreases: the host
+//! layer has no destructor hooks.
+
+/// An explicitly reference-counted handle (spec §12.3).
+///
+/// The count starts at 1 in `new`, `clone` raises it by one, `get` returns the payload, and
+/// `strong_count` reports the current value. `let b = a` shares the handle without counting.
+pub class Arc {
+    /// The payload held by this handle.
+    value: Value,
+    /// The explicit reference count (monotonically non-decreasing).
+    count: Integer,
+
+    /// Wrap `x` in an `Arc` with count 1.
+    pub fn new(x: Value) -> Self {
+        Arc { value: x, count: 1 }
+    },
+    /// Return the same payload and raise the explicit count by one.
+    pub fn clone(self) -> Self @builtin,
+    /// The payload held by this handle.
+    pub fn get(self) -> Value @builtin,
+    /// The current explicit reference count (`1 + clone calls`).
+    pub fn strong_count(self) -> Integer @builtin,
+}

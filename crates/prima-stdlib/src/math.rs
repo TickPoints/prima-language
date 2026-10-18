@@ -164,8 +164,9 @@ fn lcm(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(big_value(result))
 }
 
-/// Prime factorization by trial division: `2`, then odd divisors up to `sqrt(m)`. Ascending with
-/// multiplicity; `n <= 0` is rejected.
+/// Prime factorization, ascending with multiplicity. Small factors are stripped by trial division
+/// up to `SMALL_FACTOR_LIMIT`; anything left goes through Miller–Rabin plus Brent's Pollard rho, so
+/// large semiprimes do not require `sqrt(n)` divisions. `n <= 0` is rejected.
 fn factor(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "math::factor")?;
     let n = int_arg(args, 0, "math::factor")?;
@@ -174,26 +175,189 @@ fn factor(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
             "`math::factor` expects a positive integer".into(),
         ));
     }
-    let zero = BigInt::from(0);
     let two = BigInt::from(2);
-    let mut out: Vec<Value> = Vec::new();
+    let mut factors: Vec<BigInt> = Vec::new();
     let mut m = n;
-    while &m % &two == zero {
-        out.push(big_value(two.clone()));
+    while &m % &two == BigInt::from(0) {
+        factors.push(two.clone());
         m /= &two;
     }
     let mut d = BigInt::from(3);
-    while &d * &d <= m {
-        while &m % &d == zero {
-            out.push(big_value(d.clone()));
+    while d <= BigInt::from(SMALL_FACTOR_LIMIT) && &d * &d <= m {
+        while &m % &d == BigInt::from(0) {
+            factors.push(d.clone());
             m /= &d;
         }
         d += &two;
     }
     if m > BigInt::from(1) {
-        out.push(big_value(m));
+        factor_large(&m, &mut factors);
     }
-    Ok(Value::Array(out.into()))
+    factors.sort();
+    Ok(Value::Array(
+        factors.into_iter().map(big_value).collect::<Vec<_>>().into(),
+    ))
+}
+
+/// Upper bound for trial division before switching to Pollard rho.
+const SMALL_FACTOR_LIMIT: i64 = 10_000;
+/// Miller–Rabin bases: deterministic for `n < 2^64`, a strong probabilistic set above.
+const MR_BASES: &[u64] = &[2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53];
+
+/// Split `n` (with all small factors removed) into primes, appending to `out`.
+fn factor_large(n: &BigInt, out: &mut Vec<BigInt>) {
+    let one = BigInt::from(1);
+    if *n == one {
+        return;
+    }
+    if is_probable_prime(n) {
+        out.push(n.clone());
+        return;
+    }
+    match pollard_rho(n) {
+        Some(d) if d > one && &d < n => {
+            factor_large(&d, out);
+            factor_large(&(n / &d), out);
+        }
+        // The rho search is capped; falling back to trial division keeps the result correct for
+        // pathological inputs at the cost of time rather than correctness.
+        _ => {
+            let two = BigInt::from(2);
+            let mut d = BigInt::from(2);
+            while &d * &d <= *n {
+                if n % &d == BigInt::from(0) {
+                    factor_large(&d, out);
+                    factor_large(&(n / &d), out);
+                    return;
+                }
+                d += &two;
+            }
+            out.push(n.clone());
+        }
+    }
+}
+
+/// Miller–Rabin primality test (deterministic for `u64`-sized inputs).
+fn is_probable_prime(n: &BigInt) -> bool {
+    let one = BigInt::from(1);
+    let two = BigInt::from(2);
+    if *n < two {
+        return false;
+    }
+    for &p in &[2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37] {
+        let p = BigInt::from(p);
+        if *n == p {
+            return true;
+        }
+        if n % &p == BigInt::from(0) {
+            return false;
+        }
+    }
+    let n_minus_one = n - &one;
+    let mut d = n_minus_one.clone();
+    let mut s = 0u32;
+    while &d % &two == BigInt::from(0) {
+        d /= &two;
+        s += 1;
+    }
+    'base: for &base in MR_BASES {
+        let a = BigInt::from(base);
+        if &a % n == BigInt::from(0) {
+            continue;
+        }
+        let mut x = pow_mod(&a, &d, n);
+        if x == one || x == n_minus_one {
+            continue;
+        }
+        for _ in 1..s {
+            x = mod_floor(&(&x * &x), n);
+            if x == n_minus_one {
+                continue 'base;
+            }
+            if x == one {
+                return false;
+            }
+        }
+        return false;
+    }
+    true
+}
+
+/// `base^exp mod m` for a non-negative `exp` and `m > 0`.
+fn pow_mod(base: &BigInt, exp: &BigInt, m: &BigInt) -> BigInt {
+    let two = BigInt::from(2);
+    let mut result = BigInt::from(1) % m;
+    let mut b = mod_floor(base, m);
+    let mut e = exp.clone();
+    while e > BigInt::from(0) {
+        if &e % &two != BigInt::from(0) {
+            result = mod_floor(&(&result * &b), m);
+        }
+        b = mod_floor(&(&b * &b), m);
+        e >>= 1;
+    }
+    result
+}
+
+/// Brent's variant of Pollard's rho: `None` when the bounded search finds no non-trivial factor.
+fn pollard_rho(n: &BigInt) -> Option<BigInt> {
+    let one = BigInt::from(1);
+    let two = BigInt::from(2);
+    if n % &two == BigInt::from(0) {
+        return Some(two);
+    }
+    for c in 1..=32 {
+        let c = BigInt::from(c);
+        let mut y = BigInt::from(2);
+        let mut r: u64 = 1;
+        let mut q = one.clone();
+        let mut g = one.clone();
+        let mut x = y.clone();
+        let mut ys = y.clone();
+        let mut steps: u64 = 0;
+        while g == one && steps < 4_000_000 {
+            x = y.clone();
+            for _ in 0..r {
+                y = mod_floor(&(&y * &y + &c), n);
+            }
+            let mut k = 0;
+            while k < r && g == one {
+                ys = y.clone();
+                let batch = std::cmp::min(128, r - k);
+                for _ in 0..batch {
+                    y = mod_floor(&(&y * &y + &c), n);
+                    let diff = crate::num::bigint_abs(&x - &y);
+                    if diff != BigInt::from(0) {
+                        q = mod_floor(&(&q * &diff), n);
+                    }
+                }
+                g = crate::num::bigint_gcd(&q, n);
+                k += batch;
+                steps += batch;
+            }
+            r *= 2;
+        }
+        if g == one {
+            continue;
+        }
+        if g == *n {
+            // Backtrack one step at a time to recover a proper factor (bounded).
+            let mut backtrack = 0u64;
+            loop {
+                ys = mod_floor(&(&ys * &ys + &c), n);
+                let diff = crate::num::bigint_abs(&x - &ys);
+                g = crate::num::bigint_gcd(&diff, n);
+                backtrack += 1;
+                if g > one || backtrack > 1_000_000 {
+                    break;
+                }
+            }
+        }
+        if g > one && g < *n {
+            return Some(g);
+        }
+    }
+    None
 }
 
 /// Sieve of Eratosthenes: all primes `<= limit`, ascending (empty when `limit < 2`).
