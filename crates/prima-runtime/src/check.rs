@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn e0040_offers_did_you_mean_help() {
-        let (errors, _) = check_src_checked("let value = 1; let x = vlaue;");
+        let (errors, _) = check_src_checked("let value = 1; let x = vlaue();");
         assert_eq!(errors.len(), 1, "got: {errors:?}");
         assert_eq!(errors[0].code, "E0040");
         let help = errors[0].help.as_deref().unwrap_or_default();
@@ -315,6 +315,14 @@ mod tests {
         let errs = check_src("let 0 = x;");
         assert_eq!(errs.len(), 1);
         assert_eq!(errs[0].code, "E0053");
+    }
+
+    #[test]
+    fn struct_pattern_binding_is_irrefutable_in_let() {
+        let errs = check_src(
+            "class Point { x: Integer, y: Integer }\nlet p = Point { x: 1, y: 2 };\nlet Point { x, y } = p;",
+        );
+        assert!(errs.is_empty(), "struct patterns are irrefutable: {errs:?}");
     }
 
     #[test]
@@ -396,7 +404,7 @@ mod tests {
 
     #[test]
     fn e0040_undefined_name_is_detected() {
-        let (errors, _) = check_src_checked("let x = missing_name;");
+        let (errors, _) = check_src_checked("let x = missing_name();");
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].code, "E0040", "got: {errors:?}");
         assert!(errors[0].message.contains("missing_name"));
@@ -409,6 +417,22 @@ mod tests {
             errors.is_empty(),
             "core names must not be reported undefined: {errors:?}"
         );
+    }
+
+    #[test]
+    fn free_symbolic_variables_are_not_undefined() {
+        // The evaluator turns unbound value-position names into symbols (`grad(x^2 + y^2)`).
+        let (errors, _) = check_src_checked(
+            "let e = x^2 + y;\nlet g = grad(x^2 + y^2);\nprintln(e);\nprintln(g);",
+        );
+        assert!(errors.is_empty(), "free symbols must be allowed: {errors:?}");
+    }
+
+    #[test]
+    fn unknown_method_is_not_an_undefined_name() {
+        // Method names are resolved at runtime and are out of scope for `E0040`.
+        let (errors, _) = check_src_checked("import mem;\nlet a = mem::Arc::new(1);\n1;");
+        assert!(errors.is_empty(), "got: {errors:?}");
     }
 
     #[test]
@@ -531,6 +555,19 @@ mod tests {
             .iter()
             .any(|w| w.code == "W0003" && w.message.contains("unused"));
         assert!(has, "warnings: {warnings:?}");
+    }
+
+    #[test]
+    fn w0003_class_and_method_names_are_not_unused_bindings() {
+        let (errors, warnings) = check_src_checked(
+            "class Point { x: Integer, y: Integer, pub fn new(x: Integer, y: Integer) -> Self { Point { x, y } } }\n\
+             let p = Point::new(1, 2);\nlet Point { x, y } = p;\nprintln(x + y);",
+        );
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        assert!(
+            warnings.iter().all(|w| w.code != "W0003"),
+            "class and method names must not be unused bindings: {warnings:?}"
+        );
     }
 
     #[test]

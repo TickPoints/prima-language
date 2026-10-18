@@ -19,6 +19,11 @@ pub(crate) fn pattern_is_refutable(p: &Pattern) -> bool {
     match p {
         Pattern::Wildcard(_) | Pattern::Binding(_) => false,
         Pattern::Tuple(pats, _) | Pattern::Array(pats, _) => pats.iter().any(pattern_is_refutable),
+        // Struct patterns with binding-only fields never fail (same rule as the evaluator, spec §4.4).
+        Pattern::Struct { fields, .. } => fields.iter().any(|f| match &f.pat {
+            None => false,
+            Some(sub) => pattern_is_refutable(sub),
+        }),
         Pattern::Group(inner) => pattern_is_refutable(inner),
         Pattern::Or(pats) => pats.iter().any(pattern_is_refutable),
         _ => true,

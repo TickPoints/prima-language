@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`W0004 unreachable_code`.** Statements after a `return` in the same block are reported as a
   warning (spec §16.5).
 
+### Fixed
+
+- **`prima check` now agrees with the evaluator on valid symbolic code.** Unbound single-segment
+  identifiers in value position are free symbolic variables (as the evaluator already treated
+  them), so `prima check examples/` is clean except the intentionally broken example; only
+  call-position names are undefined. Struct patterns with binding-only fields are irrefutable in
+  `let` (no spurious `E0053`), and class or method names no longer produce `W0003`.
+
 - **Diagnostics code-table guard.** A test pins the appendix C code set and covers the four codes
   added in this release, so the document and the implementation cannot drift silently.
 

@@ -422,7 +422,6 @@ fn check_stmt(
                             );
                         }
                         check_type(ty, known, src, errors);
-                        ctx.bind(&fname.value, fname.span);
                     }
                     ClassMemberKind::Method {
                         name: mname,
@@ -442,7 +441,6 @@ fn check_stmt(
                                 Some("rename one of the definitions".into()),
                             );
                         }
-                        ctx.bind(&mname.value, mname.span);
                         check_self_position(src, params, errors);
                         if let Some(t) = ret {
                             check_type(t, known, src, errors);
@@ -681,46 +679,25 @@ fn check_expr(
     known: &HashSet<String>,
 ) {
     match &e.kind {
-        // A single-segment path is a variable reference (or a known root name).
+        // A single-segment path is a variable reference. An unbound name in value position is a
+        // free symbolic variable (`grad(x^2 + y^2)`), which the evaluator turns into a symbol, so
+        // it is not an error; unknown *functions* are still `E0040` in call position.
         prima_syntax::ast::ExprKind::Path { segments } if segments.len() == 1 => {
             let name = segments[0].value.as_str();
-            if !ctx.is_bound(name) {
-                let help = did_you_mean_help(name, ctx.candidate_names());
-                push_err_with_help(
-                    src,
-                    errors,
-                    e.span,
-                    "E0040",
-                    format!("undefined name `{name}`"),
-                    None,
-                    help,
-                );
-            } else {
+            if ctx.is_bound(name) {
                 ctx.mark_used(name);
             }
         }
         // A multi-segment path may be a qualified module item (`module::item`): check it against
         // the imported module's public set (`E0032` private / `E0040` missing).
         prima_syntax::ast::ExprKind::Path { segments } if segments.len() > 1 => {
+            // The leading segment may be a class or module name (`Point::new`); count it as used so
+            // the unused-binding warning does not fire on valid associated calls.
+            ctx.mark_used(&segments[0].value);
             check_qualified_access(src, segments, ctx, errors);
         }
-        prima_syntax::ast::ExprKind::Symbol(s) => {
-            let name = s.value.as_str();
-            if !ctx.is_bound(name) {
-                let help = did_you_mean_help(name, ctx.candidate_names());
-                push_err_with_help(
-                    src,
-                    errors,
-                    s.span,
-                    "E0040",
-                    format!("undefined name `{name}`"),
-                    None,
-                    help,
-                );
-            } else {
-                ctx.mark_used(name);
-            }
-        }
+        // `\pi`-style symbol literals are symbolic values by construction, never undefined names.
+        prima_syntax::ast::ExprKind::Symbol(_) => {}
         prima_syntax::ast::ExprKind::Self_ => {
             if ctx.fn_depth == 0 {
                 push_err_with_help(
@@ -813,7 +790,26 @@ fn check_expr_children(
             }
         }
         ExprKind::Call { callee, args } => {
-            check_expr(src, callee, ctx, errors, known);
+            // Call position requires a callable: an unbound bare name is `E0040`, unlike a free
+            // symbolic variable in value position.
+            if let ExprKind::Path { segments } = &callee.kind
+                && segments.len() == 1
+                && !ctx.is_bound(&segments[0].value)
+            {
+                let name = &segments[0].value;
+                let help = did_you_mean_help(name, ctx.candidate_names());
+                push_err_with_help(
+                    src,
+                    errors,
+                    callee.span,
+                    "E0040",
+                    format!("undefined function `{name}`"),
+                    None,
+                    help,
+                );
+            } else {
+                check_expr(src, callee, ctx, errors, known);
+            }
             for a in args {
                 check_expr(src, a, ctx, errors, known);
             }

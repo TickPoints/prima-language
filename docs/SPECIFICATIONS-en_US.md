@@ -897,6 +897,7 @@ Besides the collapse family (§9.2–9.6, method syntax `x.to_f64()`/`x.rounded(
 ### 10.1 Evaluation Semantics
 
 - **Symbolic evaluation**: `f(x) = x^2 + 6; f(0)` → exact result after simplification, no automatic numeric conversion.
+- **Free variables**: an unbound single-segment identifier in value position is a free symbolic variable (e.g. `x`/`y` in `grad(x^2 + y^2)`; `\pi` and other symbol literals likewise); `E0040` applies only where a callable binding is required, such as call position.
 - **Numeric evaluation**: after collapse per §9.
 - **Loop formula optimization** (`loop_optimization := true` on by default): `sum(1..n) i → n(n+1)/2`.
 
