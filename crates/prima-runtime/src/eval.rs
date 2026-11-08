@@ -174,6 +174,7 @@ pub struct Evaluator {
     pub(crate) symbols: &'static SymbolTable,
     pub(crate) builtins: &'static BuiltinSymbols,
     pub(crate) output: Box<dyn FnMut(String)>,
+    pub(crate) output_is_terminal: bool,
     /// Policy stack (spec §4.6): global defaults at the bottom; module config / `with config` push and pop per block.
     pub(crate) config: Vec<Config>,
     /// Evaluated module public items (indexed by module path), available for `import` binding (spec §15).
@@ -201,6 +202,16 @@ pub struct Evaluator {
     pub(crate) vm_frames_pool: Vec<Vec<crate::vm::exec::Frame>>,
     /// Pool of reusable bytecode-VM operand-stack buffers (companion to `vm_frames_pool`).
     pub(crate) vm_stack_pool: Vec<Vec<Value>>,
+}
+
+/// Optional terminal formula backend. The input is the core LaTeX representation.
+pub type TermFormulaRenderer = fn(&str, crate::config::PrintFormat) -> Option<String>;
+
+static TERM_FORMULA_RENDERER: std::sync::OnceLock<TermFormulaRenderer> = std::sync::OnceLock::new();
+
+/// Register the process-wide terminal formula backend once.
+pub fn set_term_formula_renderer(renderer: TermFormulaRenderer) -> Result<(), TermFormulaRenderer> {
+    TERM_FORMULA_RENDERER.set(renderer)
 }
 
 impl Default for Evaluator {

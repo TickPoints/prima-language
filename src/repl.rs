@@ -8,7 +8,7 @@
 //! without replaying the whole session, so long sessions stay O(1) per entry.
 
 use std::cell::RefCell;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
 use std::rc::Rc;
 
@@ -31,7 +31,10 @@ pub fn run() -> anyhow::Result<ExitCode> {
     let mut editor = DefaultEditor::new().context("cannot initialize the REPL line editor")?;
     let printed = Rc::new(RefCell::new(String::new()));
     let sink = printed.clone();
-    let mut ev = Evaluator::with_sink(move |s| sink.borrow_mut().push_str(&s));
+    let mut ev = Evaluator::with_terminal_sink(
+        move |s| sink.borrow_mut().push_str(&s),
+        io::stdout().is_terminal(),
+    );
 
     // Persistent session environment: bindings survive across entries (no session replay).
     let env = Env::new().into_ref();

@@ -21,3 +21,4 @@ pub use builtins::Builtin;
 pub use class::{ClassDef, ClassInstance, FieldDef, MethodDef, MethodNature};
 pub use error::RuntimeError;
 pub use eval::{Env, EnvRef, Evaluator, Function, NamespaceItem, NativeCall, value_type_name};
+pub use eval::{TermFormulaRenderer, set_term_formula_renderer};

@@ -1,0 +1,5 @@
+import math;
+
+println(math::taylor(sin(x), x, 0, 5));
+let square(x) = x^2;
+println(math::taylor(square, x, 1, 2));

@@ -7,7 +7,7 @@
 //!
 //! Both accept a symbolic `Value::Expr`/`Value::Symbol` or a `String` containing LaTeX.
 
-use prima_core::{Value, render_latex};
+use prima_core::{Number, Value, render_latex};
 use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
@@ -41,7 +41,39 @@ fn arg_latex(ev: &Evaluator, v: &Value, fname: &str) -> Result<String, RuntimeEr
 /// Register the `render` `@builtin` implementations (spec §18.4/§18.6).
 pub fn register() {
     builtin!("render::to_svg", to_svg);
+    builtin!("render::to_png", to_png);
     builtin!("render::to_terminal", to_terminal);
+}
+
+/// `render::to_png(expr)` → `Result<Array, String>` (PNG bytes).
+fn to_png(ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
+    arity(args, 1, "render::to_png")?;
+    let latex = arg_latex(ev, &args[0], "render::to_png")?;
+    match latex_to_png(&latex) {
+        Ok(bytes) => Ok(Value::Result(Ok(Box::new(Value::Array(
+            bytes
+                .into_iter()
+                .map(|b| Value::Number(Number::from(i64::from(b))))
+                .collect::<Vec<_>>()
+                .into(),
+        ))))),
+        Err(e) => Ok(Value::Result(Err(Box::new(e)))),
+    }
+}
+
+fn latex_to_png(latex: &str) -> Result<Vec<u8>, String> {
+    let svg = latex_to_svg(latex)?;
+    let tree = resvg::usvg::Tree::from_data(svg.as_bytes(), &Default::default())
+        .map_err(|e| e.to_string())?;
+    let size = tree.size().to_int_size();
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width(), size.height())
+        .ok_or_else(|| "unable to allocate PNG image".to_string())?;
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::identity(),
+        &mut pixmap.as_mut(),
+    );
+    pixmap.encode_png().map_err(|e| e.to_string())
 }
 
 /// `render::to_svg(expr)` → `Result<String, String>` (self-contained SVG).
@@ -82,6 +114,17 @@ fn latex_to_unicode(latex: &str) -> String {
     let mut out = String::new();
     transliterate(&mut latex.chars().peekable(), &mut out);
     out
+}
+
+#[cfg(feature = "term-render")]
+pub(crate) fn terminal_formula_renderer(
+    latex: &str,
+    format: prima_runtime::config::PrintFormat,
+) -> Option<String> {
+    match format {
+        prima_runtime::config::PrintFormat::Unicode => Some(latex_to_unicode(latex)),
+        _ => None,
+    }
 }
 
 // The loop body hands the same iterator to `command`/`script`, so `while let` is required here

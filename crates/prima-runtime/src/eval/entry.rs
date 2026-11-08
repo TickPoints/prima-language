@@ -33,12 +33,14 @@ impl Evaluator {
     }
 
     pub fn new() -> Evaluator {
+        use std::io::IsTerminal;
         Self::register_jit_hooks();
         Evaluator {
             pool: ExprPool::global(),
             symbols: SymbolTable::global(),
             builtins: BuiltinSymbols::global(),
             output: Box::new(|s| print!("{s}")),
+            output_is_terminal: std::io::stdout().is_terminal(),
             config: vec![Config::default()],
             module_items: HashMap::new(),
             warnings: Vec::new(),
@@ -55,12 +57,21 @@ impl Evaluator {
     }
 
     pub fn with_sink(output: impl FnMut(String) + 'static) -> Evaluator {
+        Self::with_terminal_sink(output, false)
+    }
+
+    /// Construct an evaluator with explicit output terminal capability.
+    pub fn with_terminal_sink(
+        output: impl FnMut(String) + 'static,
+        is_terminal: bool,
+    ) -> Evaluator {
         Self::register_jit_hooks();
         Evaluator {
             pool: ExprPool::global(),
             symbols: SymbolTable::global(),
             builtins: BuiltinSymbols::global(),
             output: Box::new(output),
+            output_is_terminal: is_terminal,
             config: vec![Config::default()],
             module_items: HashMap::new(),
             warnings: Vec::new(),
@@ -754,9 +765,16 @@ impl Evaluator {
     }
 
     pub fn format_value(&self, v: &Value) -> String {
+        use crate::config::PrintFormat;
+        let format = self.current_config().print_format;
         match v {
             Value::Nil => "nil".into(),
-            Value::Number(n) => prima_core::render::render_number(n),
+            Value::Number(n) => match format {
+                PrintFormat::Latex => prima_core::render::render_number(n),
+                PrintFormat::Unicode | PrintFormat::Ascii => {
+                    prima_core::render::render_number_text(n)
+                }
+            },
             Value::Bool(b) => b.to_string(),
             Value::Char(c) => c.to_string(),
             Value::String(s) => s.to_string(),
@@ -784,7 +802,17 @@ impl Evaluator {
                 let inner: Vec<String> = elems.iter().map(|e| self.format_value(e)).collect();
                 format!("{{{}}}", inner.join(", "))
             }
-            Value::Expr(id) => prima_core::render::render_latex(self.pool, self.symbols, *id),
+            Value::Expr(id) => match format {
+                PrintFormat::Latex => {
+                    prima_core::render::render_latex(self.pool, self.symbols, *id)
+                }
+                PrintFormat::Unicode => {
+                    prima_core::render::render_text(self.pool, self.symbols, *id, true)
+                }
+                PrintFormat::Ascii => {
+                    prima_core::render::render_text(self.pool, self.symbols, *id, false)
+                }
+            },
             Value::Symbol(_) => "symbol".into(),
             Value::Indeterminate(_) => "indeterminate".into(),
             Value::Undefined => "undefined".into(),

@@ -14,3 +14,12 @@ pub fn size() -> Dict;
 /// Whether stdout is a terminal.
 @builtin
 pub fn is_tty() -> Bool;
+
+/// Enable or disable raw mode. Repeated calls with the same value have no effect.
+/// Explicitly disable raw mode to restore the terminal; it is not restored automatically.
+/// Returns an error if the terminal mode cannot be changed.
+@builtin
+pub fn raw_mode(enable: Bool) -> Result<Nil, String>;
+/// Whether raw mode was enabled successfully and has not yet been disabled.
+@builtin
+pub fn is_raw() -> Bool;

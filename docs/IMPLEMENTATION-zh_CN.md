@@ -776,8 +776,8 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 - **`math::taylor(f, x, x0, n)`**：在 `eval_call` 调用点拦截（与 `derivative`/`map` 同层），不对 `f` 求值；接受 MFn 名、lambda 或表达式，按 `f^(k)(x0)/k!` 生成截断到 `n` 阶的符号多项式。`n < 0` 或非整数报错；结果沿用 `simplify` 的规范形。验收：`taylor(sin(x), x, 0, 5)` 化简为 `x - x^3/6 + x^5/120`，并与逐阶 `derivative` 的结果一致。
 - **`sys::term` raw 模式**：新增 `sys::term::raw_mode(enable: Bool) -> Result<Nil, String>` 与 `is_raw() -> Bool`；Unix 走 termios、Windows 走控制台模式，失败返回 `Result` 而非 panic。宿主层无析构钩子，文档要求显式恢复；REPL 与 `term-render` 不自动开启。
-- **`render::to_png`**：`render` tier 引入光栅化依赖（`resvg`/`tiny-skia`），把 RaTeX 的布局结果栅格化为 PNG；返回字节数组或写入路径，具体签名在落地时以 `render.pra` 的 `///` 文档定稿（以 `.pra` 为方法清单唯一来源）。
-- **`term-render` cargo feature**：根包与 stdlib 增加 feature；runtime 提供 `set_term_formula_renderer` 钩子，stdlib 在 feature 开启时注册 `render::to_terminal` 后端，`print`/`println` 输出 `Expr` 时按 `print_format` 策略选择终端公式渲染（非 TTY 回退 LaTeX）。
+- **`render::to_png`**：`render` tier 引入光栅化依赖（`resvg`/`tiny-skia`），把 RaTeX 的布局结果栅格化为 PNG；返回 `Result<Array<Integer>, String>` 字节数组，不直接写入文件（以 `.pra` 为方法清单唯一来源）。
+- **`term-render` cargo feature**：根包与 stdlib 增加 feature；runtime 提供 `set_term_formula_renderer` 钩子，stdlib 在 feature 开启时注册终端公式渲染后端。`print`/`println` 输出 `Expr` 时，TTY 可按 `print_format` 使用终端公式排版；非 TTY 不使用终端专属排版，而按 `print_format` 使用普通文本渲染。
 
 **验收**：
 
@@ -788,7 +788,18 @@ cargo run -- run examples/taylor.pra
 cargo run -- run examples/render.pra
 ```
 
-> **Phase 13 状态**：尚未开始（v0.7 目标）。这四项在 v0.6.0 明确保留为下一步，不作为已完成能力对外宣称。
+> **Phase 13 状态**：四项能力已实现；全工作区测试、Clippy 和 Windows MSVC 交叉编译检查已通过。Windows 真实终端验证延期，v0.7 尚未发布。
+
+**raw 模式人工验收**：在 Unix 和 Windows 的真实交互终端中运行预先编写的脚本，依次调用 `sys::term::raw_mode(true)`、`sys::term::is_raw()` 和 `sys::term::raw_mode(false)`；在恢复后输出记录的结果，确认启用状态为 `true`、终端输入和回显恢复。再将标准输入重定向，确认启用失败时返回 `Err`。异常退出后若终端未恢复，Unix 执行 `stty sane`，Windows 关闭并重新打开终端。记录平台、终端、命令和结果。
+
+### 下一步：语义一致性与性能（先建立门槛，再并行）
+
+**目标**：先建立可复现的语义与性能基线，再并行修复语义偏差和优化经测量确认的热点；任何优化都不得改变规范语义。规范与实现不一致时先与用户确认，按规范 → 实现方案 → 代码顺序处理。以下为工作路线图，不预设具体性能收益或提前宣布 v0.7 发布。
+
+1. **语义门槛**：扩展 `tests/vm_parity.rs` 等现有测试，覆盖精确数值及溢出、数组及别名、控制流、配置、错误传播、输出与副作用。对同一程序比较 AST、VM 和 JIT 的结果及错误；对非纯程序核对副作用是否仅发生一次。分别验证目标路径确实执行，测试有意回退的情况，不能把回退后结果一致误作 VM/JIT 覆盖。以规范为判定依据，而非自动以当前 AST 行为为准。
+2. **性能基线**：复用 `benches/bench_suite.rs` 与 `benches/RESULTS.md`，记录机器、操作系统、工具链、构建选项、输入规模及重复次数；区分启动/解析与预热后稳态，并尽可能分别测量 AST、VM、JIT。保留可复现的原始结果和同机前后比较；现有结果是历史参考，不作为跨机器硬性阈值。新增代表符号运算及集合的负载，先核对结果正确。
+3. **并行工作流**：正确性方向按严重程度处理已复现的差异，每项先建立回归测试；性能方向依据基线和剖析选少量热点，逐项记录假设、改动、语义测试和前后数据。两个方向涉及同一执行路径时由集成方协调；不相关模块可并行，依赖和共享文件统一收口。
+4. **验收**：执行 `cargo test --workspace --all-features`、`cargo clippy --workspace --all-targets --all-features`，检查各 stdlib tier 与 `term-render` 的精简构建，并复跑受影响基准。记录未覆盖路径、误差与测量条件；无法解释的语义差异或不可复现的性能收益不能作为完成项。Windows 真实终端实测继续延期，交叉编译不视为实测，发布前保留其验收状态。
 
 ---
 

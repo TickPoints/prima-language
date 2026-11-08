@@ -18,7 +18,23 @@ impl Evaluator {
                     if i > 0 {
                         s.push(' ');
                     }
-                    s.push_str(&self.format_value(v));
+                    let rendered = if self.output_is_terminal
+                        && self.current_config().print_format != crate::config::PrintFormat::Latex
+                    {
+                        if let (Value::Expr(id), Some(renderer)) =
+                            (v, super::TERM_FORMULA_RENDERER.get())
+                        {
+                            renderer(
+                                &prima_core::render::render_latex(self.pool, self.symbols, *id),
+                                self.current_config().print_format,
+                            )
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    s.push_str(&rendered.unwrap_or_else(|| self.format_value(v)));
                 }
                 if matches!(b, Builtin::Println) {
                     s.push('\n');
@@ -412,7 +428,22 @@ impl Evaluator {
             Builtin::Jit => {
                 crate::error::err("`jit` must be called directly with a function or expression")
             }
-            Builtin::Collapse(name) => crate::collapse::call(name, &args, self.pool, self.builtins),
+            Builtin::Collapse(name) => {
+                if self.current_config().print_format != crate::config::PrintFormat::Latex {
+                    match (name, args.as_slice()) {
+                        ("to_string", [value]) => {
+                            return Ok(Value::String(self.format_value(value).into()));
+                        }
+                        ("concat", [a, b]) => {
+                            return Ok(Value::String(
+                                format!("{}{}", self.format_value(a), self.format_value(b)).into(),
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+                crate::collapse::call(name, &args, self.pool, self.builtins)
+            }
             // Math operators: build an `Apply` node, then simplify the whole thing (spec §8.3 level 2 constant folding).
             _ => {
                 let f_id = self.pool.symbol(match b {

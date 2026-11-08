@@ -11,3 +11,9 @@ match render::to_svg(x^2 + 1) {
     Ok(svg) => println(len(svg) > 0),         // → true
     Err(e) => println(e),
 }
+
+// PNG rendering returns bytes without writing a file.
+match render::to_png(x^2 + 1) {
+    Ok(bytes) => println(len(bytes) > 0),
+    Err(e) => println(e),
+}
