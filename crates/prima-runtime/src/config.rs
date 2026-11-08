@@ -26,7 +26,7 @@ pub enum UndefinedHandling {
     Custom,
 }
 
-/// Print format (spec §13.2); currently only the `latex` renderer is available.
+/// Print format (spec §13.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrintFormat {
     Latex,

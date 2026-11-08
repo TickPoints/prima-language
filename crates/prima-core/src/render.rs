@@ -31,6 +31,166 @@ pub fn render_number(n: &Number) -> String {
     }
 }
 
+/// Plain text view of a number, using Unicode or ASCII mathematical notation.
+pub fn render_number_text(n: &Number) -> String {
+    match n {
+        Number::Rational(r) => format!("({})/({})", r.numer(), r.denom()),
+        Number::Complex(c) => format!(
+            "{} + {}i",
+            render_number_text(&c.re),
+            render_number_text(&c.im)
+        ),
+        _ => render_number(n),
+    }
+}
+
+/// Plain text view of an expression, preserving operator grouping.
+pub fn render_text(pool: &ExprPool, symbols: &SymbolTable, id: ExprId, unicode: bool) -> String {
+    fn name(s: &str, unicode: bool) -> String {
+        let bare = s.strip_prefix('\\').unwrap_or(s);
+        if unicode {
+            match bare {
+                "alpha" => "α",
+                "beta" => "β",
+                "gamma" => "γ",
+                "delta" => "δ",
+                "epsilon" => "ε",
+                "zeta" => "ζ",
+                "eta" => "η",
+                "theta" => "θ",
+                "iota" => "ι",
+                "kappa" => "κ",
+                "lambda" => "λ",
+                "mu" => "μ",
+                "nu" => "ν",
+                "xi" => "ξ",
+                "pi" => "π",
+                "rho" => "ρ",
+                "sigma" => "σ",
+                "tau" => "τ",
+                "upsilon" => "υ",
+                "phi" => "φ",
+                "chi" => "χ",
+                "psi" => "ψ",
+                "omega" => "ω",
+                "Gamma" => "Γ",
+                "Delta" => "Δ",
+                "Theta" => "Θ",
+                "Lambda" => "Λ",
+                "Xi" => "Ξ",
+                "Pi" => "Π",
+                "Sigma" => "Σ",
+                "Phi" => "Φ",
+                "Psi" => "Ψ",
+                "Omega" => "Ω",
+                _ => bare,
+            }
+            .to_string()
+        } else {
+            bare.chars()
+                .flat_map(|c| {
+                    if c.is_ascii() {
+                        c.to_string()
+                    } else {
+                        format!("\\u{{{:x}}}", c as u32)
+                    }
+                    .chars()
+                    .collect::<Vec<_>>()
+                })
+                .collect()
+        }
+    }
+    fn go(pool: &ExprPool, symbols: &SymbolTable, id: ExprId, unicode: bool, parent: u8) -> String {
+        let (prec, text) = match pool.get(id) {
+            Some(ExprData::Symbol(s)) => (
+                4,
+                name(
+                    &symbols.name(s).unwrap_or_else(|| format!("?{}", s.0)),
+                    unicode,
+                ),
+            ),
+            Some(ExprData::Integer(i)) => (if i.is_negative() { 2 } else { 4 }, i.to_string()),
+            Some(ExprData::Rational(r)) => {
+                let sign = if r.is_negative() { "-" } else { "" };
+                (2, format!("{sign}({})/({})", r.numer().abs(), r.denom()))
+            }
+            Some(ExprData::Real(Real::F64(f))) => (if f < 0.0 { 2 } else { 4 }, f.to_string()),
+            Some(ExprData::Real(Real::F32(f))) => (if f < 0.0 { 2 } else { 4 }, f.to_string()),
+            Some(ExprData::Add(items)) => {
+                let mut text = String::new();
+                for &item in items.iter() {
+                    let term = go(pool, symbols, item, unicode, 1);
+                    if text.is_empty() {
+                        text.push_str(&term);
+                    } else if let Some(rest) = term.strip_prefix('-') {
+                        text.push_str(" - ");
+                        text.push_str(rest);
+                    } else {
+                        text.push_str(" + ");
+                        text.push_str(&term);
+                    }
+                }
+                (1, text)
+            }
+            Some(ExprData::Mul(items)) => {
+                let mut neg = false;
+                let mut parts = Vec::new();
+                for &item in items.iter() {
+                    if items.len() > 1
+                        && matches!(pool.get(item), Some(ExprData::Integer(i)) if *i == BigInt::from(-1))
+                    {
+                        neg = !neg;
+                    } else {
+                        parts.push(go(pool, symbols, item, unicode, 2));
+                    }
+                }
+                let body = if parts.is_empty() {
+                    "1".to_string()
+                } else {
+                    parts.join(if unicode { " · " } else { " * " })
+                };
+                let text = if neg {
+                    if let Some(rest) = body.strip_prefix('-') {
+                        rest.to_string()
+                    } else {
+                        format!("-{body}")
+                    }
+                } else {
+                    body
+                };
+                (2, text)
+            }
+            Some(ExprData::Pow { base, exp }) => (
+                3,
+                format!(
+                    "{}^({})",
+                    go(pool, symbols, base, unicode, 4),
+                    go(pool, symbols, exp, unicode, 0)
+                ),
+            ),
+            Some(ExprData::Apply { f, args }) => (
+                4,
+                format!(
+                    "{}({})",
+                    go(pool, symbols, f, unicode, 4),
+                    args.iter()
+                        .map(|&i| go(pool, symbols, i, unicode, 0))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            ),
+            Some(ExprData::Indeterminate(_)) => (4, "indeterminate".into()),
+            None => (4, "?".into()),
+        };
+        if prec < parent {
+            format!("({text})")
+        } else {
+            text
+        }
+    }
+    go(pool, symbols, id, unicode, 0)
+}
+
 /// ExprDAG → LaTeX view (spec §8.3 level 0, preserving the original form). TeX names come from the symbol table (spec §7);
 /// rendering is just a view conversion, decoupled from the reverse parsing of `tex"..."` (spec §4.9).
 pub fn render_latex(pool: &ExprPool, symbols: &SymbolTable, id: ExprId) -> String {
@@ -148,4 +308,44 @@ fn render_apply(pool: &ExprPool, symbols: &SymbolTable, f: ExprId, args: &[ExprI
         return format!("\\sqrt{{{}}}", arg_strs[0]);
     }
     format!("{name}\\left({}\\right)", arg_strs.join(", "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_negative_terms_and_precedence() {
+        let pool = ExprPool::new();
+        let symbols = SymbolTable::new();
+        let x = pool.symbol(symbols.intern("x"));
+        let minus_one = pool.integer(-1);
+        let minus_three = pool.integer(-3);
+        let neg_x = pool.intern(ExprData::Mul(vec![minus_one, x].into_boxed_slice()));
+        let sum = pool.intern(ExprData::Add(
+            vec![x, minus_three, neg_x].into_boxed_slice(),
+        ));
+        let neg_sum = pool.intern(ExprData::Mul(vec![minus_one, sum].into_boxed_slice()));
+        let power = pool.intern(ExprData::Pow {
+            base: neg_x,
+            exp: pool.integer(2),
+        });
+        let rational = pool.intern(ExprData::Rational(Box::new(BigRational::new(
+            (-3).into(),
+            2.into(),
+        ))));
+        let rational_sum = pool.intern(ExprData::Add(vec![x, rational].into_boxed_slice()));
+        for unicode in [false, true] {
+            assert_eq!(render_text(&pool, &symbols, sum, unicode), "x - 3 - x");
+            assert_eq!(
+                render_text(&pool, &symbols, neg_sum, unicode),
+                "-(x - 3 - x)"
+            );
+            assert_eq!(render_text(&pool, &symbols, power, unicode), "(-x)^(2)");
+            assert_eq!(
+                render_text(&pool, &symbols, rational_sum, unicode),
+                "x - (3)/(2)"
+            );
+        }
+    }
 }

@@ -146,5 +146,7 @@ pub fn init() {
     {
         prima_runtime::stdlib::register_module_source("render", include_str!("modules/render.pra"));
         render::register();
+        #[cfg(feature = "term-render")]
+        let _ = prima_runtime::set_term_formula_renderer(render::terminal_formula_renderer);
     }
 }

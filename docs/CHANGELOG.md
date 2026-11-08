@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `render::to_png` returns PNG image bytes for symbolic expressions and LaTeX strings.
-
-- `sys::term::raw_mode` and `is_raw` provide explicit terminal raw-mode control on Unix and Windows.
-
 - `math::taylor` constructs symbolic Taylor polynomials from expressions and functions.
+- `sys::term::raw_mode` and `is_raw` provide explicit terminal raw-mode control on Unix and Windows.
+- `render::to_png` returns PNG image bytes for symbolic expressions and LaTeX strings.
+- The optional `term-render` feature enables terminal formula rendering; ordinary output respects
+  the `print_format` policy on both terminals and redirected output.
 
 ## [0.6.0] - 2026-10-18
 
