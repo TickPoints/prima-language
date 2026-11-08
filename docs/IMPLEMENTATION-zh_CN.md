@@ -776,8 +776,8 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 
 - **`math::taylor(f, x, x0, n)`**：在 `eval_call` 调用点拦截（与 `derivative`/`map` 同层），不对 `f` 求值；接受 MFn 名、lambda 或表达式，按 `f^(k)(x0)/k!` 生成截断到 `n` 阶的符号多项式。`n < 0` 或非整数报错；结果沿用 `simplify` 的规范形。验收：`taylor(sin(x), x, 0, 5)` 化简为 `x - x^3/6 + x^5/120`，并与逐阶 `derivative` 的结果一致。
 - **`sys::term` raw 模式**：新增 `sys::term::raw_mode(enable: Bool) -> Result<Nil, String>` 与 `is_raw() -> Bool`；Unix 走 termios、Windows 走控制台模式，失败返回 `Result` 而非 panic。宿主层无析构钩子，文档要求显式恢复；REPL 与 `term-render` 不自动开启。
-- **`render::to_png`**：`render` tier 引入光栅化依赖（`resvg`/`tiny-skia`），把 RaTeX 的布局结果栅格化为 PNG；返回字节数组或写入路径，具体签名在落地时以 `render.pra` 的 `///` 文档定稿（以 `.pra` 为方法清单唯一来源）。
-- **`term-render` cargo feature**：根包与 stdlib 增加 feature；runtime 提供 `set_term_formula_renderer` 钩子，stdlib 在 feature 开启时注册 `render::to_terminal` 后端，`print`/`println` 输出 `Expr` 时按 `print_format` 策略选择终端公式渲染（非 TTY 回退 LaTeX）。
+- **`render::to_png`**：`render` tier 引入光栅化依赖（`resvg`/`tiny-skia`），把 RaTeX 的布局结果栅格化为 PNG；返回 `Result<Array<Integer>, String>` 字节数组，不直接写入文件（以 `.pra` 为方法清单唯一来源）。
+- **`term-render` cargo feature**：根包与 stdlib 增加 feature；runtime 提供 `set_term_formula_renderer` 钩子，stdlib 在 feature 开启时注册终端公式渲染后端。`print`/`println` 输出 `Expr` 时，TTY 可按 `print_format` 使用终端公式排版；非 TTY 不使用终端专属排版，而按 `print_format` 使用普通文本渲染。
 
 **验收**：
 
@@ -788,7 +788,9 @@ cargo run -- run examples/taylor.pra
 cargo run -- run examples/render.pra
 ```
 
-> **Phase 13 状态**：尚未开始（v0.7 目标）。这四项在 v0.6.0 明确保留为下一步，不作为已完成能力对外宣称。
+> **Phase 13 状态**：四项能力已实现；全工作区测试、Clippy 和 Windows MSVC 交叉编译检查已通过。Windows 真实终端验证延期，v0.7 尚未发布。
+
+**raw 模式人工验收**：在 Unix 和 Windows 的真实交互终端中运行预先编写的脚本，依次调用 `sys::term::raw_mode(true)`、`sys::term::is_raw()` 和 `sys::term::raw_mode(false)`；在恢复后输出记录的结果，确认启用状态为 `true`、终端输入和回显恢复。再将标准输入重定向，确认启用失败时返回 `Err`。异常退出后若终端未恢复，Unix 执行 `stty sane`，Windows 关闭并重新打开终端。记录平台、终端、命令和结果。
 
 ---
 

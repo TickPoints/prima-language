@@ -777,8 +777,8 @@ Each Phase ends with runnable acceptance commands. Phases 0–10 are all deliver
 
 - **`math::taylor(f, x, x0, n)`**: intercept at the `eval_call` call site (same layer as `derivative`/`map`) instead of evaluating `f`; accept an MFn name, a lambda, or an expression, and build the series truncated at order `n` from `f^(k)(x0)/k!`. `n < 0` or a non-integer errors; the result follows `simplify`'s normal form. Acceptance: `taylor(sin(x), x, 0, 5)` simplifies to `x - x^3/6 + x^5/120` and agrees with repeated `derivative`.
 - **`sys::term` raw mode**: add `sys::term::raw_mode(enable: Bool) -> Result<Nil, String>` and `is_raw() -> Bool`; use termios on Unix and console modes on Windows, returning `Result` instead of panicking. The host layer has no destructor hooks, so the docs require an explicit restore; the REPL and `term-render` never enable it implicitly.
-- **`render::to_png`**: add a rasterizer to the `render` tier (`resvg`/`tiny-skia`) and rasterize RaTeX's layout into PNG; the return shape (byte array or output path) is finalized in `render.pra`'s `///` docs at implementation time (the `.pra` docs remain the sole method-list source).
-- **`term-render` cargo feature**: add the feature to the root package and stdlib; the runtime exposes a `set_term_formula_renderer` hook and the stdlib registers `render::to_terminal` when the feature is on, so `print`/`println` render `Expr` output through the terminal backend according to `print_format` (falling back to LaTeX when stdout is not a TTY).
+- **`render::to_png`**: add a rasterizer to the `render` tier (`resvg`/`tiny-skia`) and rasterize RaTeX's layout into PNG; return the bytes as `Result<Array<Integer>, String>` without writing a file (the `.pra` docs remain the sole method-list source).
+- **`term-render` cargo feature**: add the feature to the root package and stdlib; the runtime exposes a `set_term_formula_renderer` hook and the stdlib registers a terminal formula backend when the feature is on. For `Expr` output, `print`/`println` may use terminal formula layout on a TTY according to `print_format`; on non-TTY output they use ordinary text rendering according to `print_format` without terminal-specific layout.
 
 **Acceptance**:
 
@@ -789,7 +789,9 @@ cargo run -- run examples/taylor.pra
 cargo run -- run examples/render.pra
 ```
 
-> **Phase 13 status**: not started (the v0.7 target). v0.6.0 keeps these four explicitly as next steps and does not advertise them as completed.
+> **Phase 13 status**: all four capabilities are implemented; workspace tests, Clippy, and the Windows MSVC cross-check passed. Windows real-terminal verification is deferred; v0.7 has not been released.
+
+**Raw-mode manual acceptance**: in real interactive terminals on Unix and Windows, run a prepared script calling `sys::term::raw_mode(true)`, `sys::term::is_raw()`, and `sys::term::raw_mode(false)` in sequence. Print the recorded results after restoring the terminal; confirm that the enabled state was `true` and that input and echo are restored. Repeat with redirected standard input and confirm that enabling returns `Err`. If an abnormal exit leaves the terminal unrestored, run `stty sane` on Unix or close and reopen the terminal on Windows. Record the platform, terminal, commands, and results.
 
 ---
 
