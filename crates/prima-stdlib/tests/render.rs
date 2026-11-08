@@ -44,10 +44,50 @@ fn svg_is_self_contained() {
     assert!(svg.contains("<svg"), "not an SVG document: {svg:.80}");
     // The `embed-fonts` build emits glyph outlines, not a bare `<text>`-only document.
     assert!(svg.contains("</svg>"));
+    assert!(svg.contains("<path"), "expected embedded glyph outlines");
+    assert!(!svg.contains("<text"), "unexpected external font fallback");
 }
 
 #[test]
 fn invalid_latex_is_an_error_not_a_panic() {
     let v = eval("import render;\nrender::to_svg(\"\\\\frac{1}\")");
+    assert!(matches!(v, Value::Result(Err(_))), "got {v:?}");
+}
+
+#[test]
+fn png_renders_symbolic_and_latex_input() {
+    for src in [
+        "import render; render::to_png(\"x\")",
+        "import render; render::to_png(x^2 + 1)",
+        "import render; render::to_png(\"\\\\frac{1}{2}\")",
+    ] {
+        let value = eval(src);
+        let Value::Result(Ok(inner)) = value else {
+            panic!("expected Result<Ok>, got {value:?}");
+        };
+        let Value::Array(items) = *inner else {
+            panic!("expected byte array, got {inner:?}");
+        };
+        let bytes: Vec<u8> = items
+            .iter()
+            .map(|item| match item {
+                Value::Number(n) => {
+                    u8::try_from(n.as_i64().expect("integer byte")).expect("byte range")
+                }
+                other => panic!("expected integer byte, got {other:?}"),
+            })
+            .collect();
+        let image = resvg::tiny_skia::Pixmap::decode_png(&bytes).expect("valid PNG");
+        assert!(image.width() > 0 && image.height() > 0);
+        assert!(
+            image.pixels().iter().any(|pixel| pixel.alpha() != 0),
+            "formula image has no nontransparent pixels"
+        );
+    }
+}
+
+#[test]
+fn png_invalid_latex_is_an_error_not_a_panic() {
+    let v = eval("import render; render::to_png(\"\\\\frac{1}\")");
     assert!(matches!(v, Value::Result(Err(_))), "got {v:?}");
 }
