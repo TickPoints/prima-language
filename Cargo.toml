@@ -44,10 +44,10 @@ nalgebra = "0.33"
 serde_json = "1"
 rustyline = "15"
 criterion = "0.8"
-cranelift-codegen = "0.135"
-cranelift-frontend = "0.135"
-cranelift-jit = "0.135"
-cranelift-module = "0.135"
+cranelift-codegen = "0.137"
+cranelift-frontend = "0.137"
+cranelift-jit = "0.137"
+cranelift-module = "0.137"
 target-lexicon = "0.13"
 tempfile = "3"
 
@@ -72,6 +72,7 @@ core = ["prima-stdlib/core"]
 system = ["prima-stdlib/system"]
 advanced = ["prima-stdlib/advanced"]
 render = ["prima-stdlib/render"]
+term-render = ["prima-stdlib/term-render"]
 full = ["prima-stdlib/full"]
 
 [dev-dependencies]

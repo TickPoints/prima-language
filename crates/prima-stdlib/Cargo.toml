@@ -14,6 +14,8 @@ prima-syntax = { path = "../prima-syntax", version = "0.6.0" }
 num-bigint = { workspace = true }
 nalgebra = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+crossterm = { version = "0.29", default-features = false, features = ["windows"], optional = true }
+resvg = { version = "0.45", optional = true }
 ratex-parser = { version = "0.1.14", optional = true }
 ratex-layout = { version = "0.1.14", optional = true }
 ratex-svg = { version = "0.1.14", optional = true, features = ["embed-fonts"] }
@@ -24,7 +26,7 @@ default = ["core"]
 # Built-in classes (`core::*`), `num`: no OS or heavy dependencies.
 core = []
 # OS interaction: `io`, `time`, `sys::path/env/os` (+ later `sys::process/fs/term`).
-system = ["core", "dep:serde_json"]
+system = ["core", "dep:serde_json", "dep:crossterm"]
 # Scientific modules: `linalg`, `stats`, `math`, `physics`, `plot` (pulls `nalgebra`).
 advanced = ["core", "dep:nalgebra"]
 # Formula rendering (LaTeX -> SVG via RaTeX); the heaviest dependency.
@@ -33,7 +35,8 @@ render = [
     "dep:ratex-parser",
     "dep:ratex-layout",
     "dep:ratex-svg",
+    "dep:resvg",
 ]
 # The aggregate shipped in the release binary.
 full = ["system", "advanced", "render"]
-
+term-render = ["render"]
