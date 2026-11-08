@@ -13,6 +13,7 @@ use std::fs;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::process::{Command, ExitStatus};
+use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
 use num_bigint::BigInt;
@@ -87,6 +88,8 @@ pub fn register() {
     // sys::term
     builtin!("sys::term::size", term_size);
     builtin!("sys::term::is_tty", term_is_tty);
+    builtin!("sys::term::raw_mode", term_raw_mode);
+    builtin!("sys::term::is_raw", term_is_raw);
 }
 
 fn path_join(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
@@ -403,4 +406,41 @@ fn term_size(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError>
 fn term_is_tty(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 0, "sys::term::is_tty")?;
     Ok(Value::Bool(std::io::stdout().is_terminal()))
+}
+
+static RAW_MODE: Mutex<bool> = Mutex::new(false);
+
+fn term_raw_mode(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
+    arity(args, 1, "sys::term::raw_mode")?;
+    let enable = match args[0] {
+        Value::Bool(value) => value,
+        ref other => {
+            return Err(RuntimeError::Type(format!(
+                "`sys::term::raw_mode` argument 0 must be a bool, got {other:?}"
+            )));
+        }
+    };
+    let mut raw = RAW_MODE.lock().unwrap_or_else(|e| e.into_inner());
+    if *raw == enable {
+        return Ok(ok(Value::Nil));
+    }
+    let result = if enable {
+        crossterm::terminal::enable_raw_mode()
+    } else {
+        crossterm::terminal::disable_raw_mode()
+    };
+    match result {
+        Ok(()) => {
+            *raw = enable;
+            Ok(ok(Value::Nil))
+        }
+        Err(e) => Ok(err(e.to_string())),
+    }
+}
+
+fn term_is_raw(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
+    arity(args, 0, "sys::term::is_raw")?;
+    Ok(Value::Bool(
+        *RAW_MODE.lock().unwrap_or_else(|e| e.into_inner()),
+    ))
 }

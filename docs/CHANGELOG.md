@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `sys::term::raw_mode` and `is_raw` provide explicit terminal raw-mode control on Unix and Windows.
+
 - `math::taylor` constructs symbolic Taylor polynomials from expressions and functions.
 
 ## [0.6.0] - 2026-10-18
