@@ -14,6 +14,36 @@ use prima_core::{BuiltinSymbols, SymbolId};
 /// Maximum number of L'Hôpital iterations in `limit` (spec §19.4 MVP).
 pub const L_HOPITAL_MAX_ITER: usize = 8;
 
+/// Whether every application in a DAG has a differentiation rule.
+pub(crate) fn supports_derivative(pool: &ExprPool, builtins: &BuiltinSymbols, id: ExprId) -> bool {
+    match pool.get(id) {
+        Some(ExprData::Add(items) | ExprData::Mul(items)) => items
+            .iter()
+            .all(|&item| supports_derivative(pool, builtins, item)),
+        Some(ExprData::Pow { base, exp }) => {
+            supports_derivative(pool, builtins, base) && supports_derivative(pool, builtins, exp)
+        }
+        Some(ExprData::Apply { f, args }) => {
+            args.len() == 1
+                && [
+                    builtins.sin,
+                    builtins.cos,
+                    builtins.tan,
+                    builtins.exp,
+                    builtins.ln,
+                    builtins.log,
+                    builtins.sqrt,
+                    builtins.abs,
+                ]
+                .iter()
+                .any(|&symbol| f == pool.symbol(symbol))
+                && supports_derivative(pool, builtins, args[0])
+        }
+        Some(_) => true,
+        None => false,
+    }
+}
+
 /// Differentiate `expr` with respect to symbol `x` (spec §19.4 MVP): recursive rules over the DAG.
 pub fn derivative(pool: &ExprPool, builtins: &BuiltinSymbols, expr: ExprId, x: SymbolId) -> ExprId {
     let zero = pool.integer(0);

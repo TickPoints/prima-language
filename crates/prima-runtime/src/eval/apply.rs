@@ -319,6 +319,15 @@ impl Evaluator {
             let next = self
                 .resolve_func(&call_env, segments)
                 .ok_or_else(|| unknown_function_error(&call_env, &path_key(segments)))?;
+            if matches!(
+                next.as_ref(),
+                Function::Native {
+                    name: "math::taylor",
+                    ..
+                }
+            ) {
+                return self.eval_call(&call_env, &tc.callee, &tc.args);
+            }
             let nargs: Vec<Value> = tc
                 .args
                 .iter()

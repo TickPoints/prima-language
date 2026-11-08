@@ -11,6 +11,14 @@ impl Evaluator {
         callee: &Expr,
         args: &[Expr],
     ) -> Result<Value, RuntimeError> {
+        if let ExprKind::Path { segments } = &callee.kind
+            && let Some(Function::Native {
+                name: "math::taylor",
+                ..
+            }) = self.resolve_func(env, segments).as_deref()
+        {
+            return self.eval_taylor_call(env, args);
+        }
         // Symbolic differentiation (spec §19.4): `derivative`/`partial`/`grad`/`limit` are intercepted
         // before generic argument evaluation, so the first argument may be an MFn *name* (functions are
         // not first-class values) as well as a symbolic expression.
@@ -79,6 +87,85 @@ impl Evaluator {
             _ => return crate::error::err("invalid function call"),
         };
         self.apply_function(&func, arg_values)
+    }
+
+    fn eval_taylor_call(&mut self, env: &EnvRef, args: &[Expr]) -> Result<Value, RuntimeError> {
+        if args.len() != 4 {
+            return crate::error::err("`math::taylor` expects (f, x, x0, n)");
+        }
+        let x = self.eval_var_symbol(env, &args[1])?;
+        let at_value = self.eval_expr(env, &args[2])?;
+        let at = self.to_expr_id(&at_value)?;
+        let order_value = self.eval_expr(env, &args[3])?;
+        let Value::Number(number) = order_value else {
+            return crate::error::err("`math::taylor` order must be a nonnegative integer");
+        };
+        let Some(integer) = number.as_bigint() else {
+            return crate::error::err("`math::taylor` order must be a nonnegative integer");
+        };
+        if integer < 0.into() {
+            return crate::error::err("`math::taylor` order must be a nonnegative integer");
+        }
+        let Some(order) = number.as_i64() else {
+            return crate::error::err("`math::taylor` order exceeds the supported iteration range");
+        };
+        let variable = self.pool.symbol(x);
+        let function = match &args[0].kind {
+            ExprKind::Lambda { params, body } => {
+                Some((params.clone(), (**body).clone(), env.clone()))
+            }
+            ExprKind::Path { segments } => match self.resolve_func(env, segments).as_deref() {
+                Some(Function::User {
+                    params, body, env, ..
+                }) => Some((params.clone(), body.clone(), env.clone())),
+                _ => None,
+            },
+            _ => None,
+        };
+        let mut derivative = if let Some((params, body, function_env)) = function {
+            if params.len() != 1 {
+                return crate::error::err(
+                    "`math::taylor` function must have exactly one parameter",
+                );
+            }
+            let dag = self.body_dag(&params, &body, &function_env)?.0;
+            let parameter = self.symbols.intern(&params[0].name.value);
+            crate::diff::substitute(self.pool, dag, parameter, variable)
+        } else {
+            self.lower_symbolic(env, &args[0])?
+        };
+        let base = self.pool.sub2(variable, at);
+        let mut result = self.pool.integer(0);
+        let mut factorial = self.pool.integer(1);
+        for k in 0..=order {
+            self.check_cancelled()?;
+            if k > 0 {
+                if !crate::diff::supports_derivative(self.pool, self.builtins, derivative) {
+                    return crate::error::err(
+                        "`math::taylor` cannot differentiate an unsupported function",
+                    );
+                }
+                derivative = self.simplify_current(crate::diff::derivative(
+                    self.pool,
+                    self.builtins,
+                    derivative,
+                    x,
+                ));
+                if derivative == self.pool.integer(0) {
+                    break;
+                }
+                factorial = self.pool.mul2(factorial, self.pool.integer(k));
+            }
+            let coeff =
+                self.simplify_current(crate::diff::substitute(self.pool, derivative, x, at));
+            let term = self.pool.div2(
+                self.pool
+                    .mul2(coeff, self.pool.pow2(base, self.pool.integer(k))),
+                factorial,
+            );
+            result = self.pool.add2(result, term);
+        }
+        Ok(self.value_from_expr(self.simplify_current(result)))
     }
 
     /// `derivative`/`partial`/`grad`/`limit` (spec §19.4): lower the argument expressions to the symbolic

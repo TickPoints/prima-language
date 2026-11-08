@@ -22,6 +22,7 @@ const MAX_CF_TERMS: usize = 1_000_000;
 /// declaration in the embedded `math.pra` signature module binds to the implementation registered
 /// under its fully-qualified `math::<name>` key.
 pub fn register() {
+    builtin!("math::taylor", taylor);
     builtin!("math::gcd", gcd);
     builtin!("math::lcm", lcm);
     builtin!("math::factor", factor);
@@ -35,6 +36,12 @@ pub fn register() {
     builtin!("math::poly_derivative", poly_derivative);
     builtin!("math::poly_roots", poly_roots);
     builtin!("math::continued_fraction", continued_fraction);
+}
+
+fn taylor(_: &mut Evaluator, _: &[Value]) -> Result<Value, RuntimeError> {
+    Err(RuntimeError::Message(
+        "`math::taylor` must be called directly".into(),
+    ))
 }
 
 // —— argument helpers (mirroring the `num`/`stats` module conventions) ——

@@ -56,6 +56,141 @@ fn complex_parts(v: &Value) -> (f64, f64) {
 }
 
 #[test]
+fn math_taylor_polynomials() {
+    let src = "import math; math::taylor(sin(x), x, 0, 5)";
+    let expected = "x - x^3/6 + x^5/120";
+    assert_eq!(eval(src), eval(expected));
+    assert_eq!(
+        eval("import math; math::taylor(x^2, x, 1, 0)"),
+        Value::Number(Number::from(1))
+    );
+    assert_eq!(
+        eval("import math; math::taylor(x^2, x, 1, 2)"),
+        eval("1 + 2*(x-1) + (x-1)^2")
+    );
+    assert_eq!(
+        eval("import math; let f(x) = x^2; math::taylor(f, x, 0, 2)"),
+        eval("x^2")
+    );
+    assert_eq!(
+        eval("import math; math::taylor(|x| x^2, x, 0, 2)"),
+        eval("x^2")
+    );
+    assert_eq!(
+        eval("from math import taylor as series; series(x^2, x, 0, 2)"),
+        eval("x^2")
+    );
+    assert_eq!(
+        eval("import math; fn f() { return math::taylor(x^2, x, 0, 2); } f()"),
+        eval("x^2")
+    );
+    assert_eq!(
+        eval(
+            "from math import taylor as series; fn f() { let v = series(x^2, x, 0, 2); return v; } f()"
+        ),
+        eval("x^2")
+    );
+    assert_eq!(
+        eval(
+            "from math import taylor as series; fn f() { let v = series(1, \"x\", 0, 1); return v; } f()"
+        ),
+        Value::Number(Number::from(1))
+    );
+}
+
+#[test]
+fn math_taylor_invalid_arguments() {
+    for call in [
+        "math::taylor(x, x, 0, -1)",
+        "math::taylor(x, x, 0, 1.5)",
+        "math::taylor(x, x, 0)",
+        "math::taylor(x, 1, 0, 1)",
+    ] {
+        eval_err(&format!("import math; {call}"));
+    }
+}
+
+#[test]
+fn math_taylor_function_parameter_substitution() {
+    assert_eq!(
+        eval("import math; let f(t) = t^2 + t; math::taylor(f, x, 1, 2)"),
+        eval("1 + 1 + 3*(x-1) + (x-1)^2")
+    );
+    assert_eq!(
+        eval("import math; math::taylor(|t| t^2 + t, x, 1, 2)"),
+        eval("2 + 3*(x-1) + (x-1)^2")
+    );
+    assert_eq!(
+        eval("import math; math::taylor(x^2, x, 0, 1000000)"),
+        eval("x^2")
+    );
+    assert_eq!(
+        eval("import math; math::taylor(sin(x), x, 0, 11)"),
+        eval("x - x^3/6 + x^5/120 - x^7/5040 + x^9/362880 - x^11/39916800")
+    );
+    for call in [
+        "math::taylor(x, x, 0, 999999999999999999999999999)",
+        "math::taylor(|a, b| a + b, x, 0, 2)",
+    ] {
+        let error = eval_err(&format!("import math; {call}"));
+        assert!(error.to_string().contains("math::taylor"), "{error}");
+    }
+}
+
+#[test]
+fn math_taylor_rejects_unsupported_derivatives() {
+    use prima_core::{ExprPool, SymbolTable};
+    use prima_runtime::{Env, Function, NamespaceItem};
+
+    fn unknown(_: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
+        let Value::Expr(arg) = args[0] else {
+            panic!("expected symbolic argument")
+        };
+        let pool = ExprPool::global();
+        let f = pool.symbol(SymbolTable::global().intern("unknown_function"));
+        Ok(Value::Expr(pool.apply(f, &[arg])))
+    }
+
+    prima_stdlib::init();
+    prima_runtime::stdlib::register_namespace(
+        "taylor_test",
+        [(
+            "unknown".to_string(),
+            NamespaceItem::Func(Function::Native {
+                name: "unknown",
+                call: unknown,
+            }),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    let mut ev = Evaluator::new();
+    for source in [
+        "import math; import taylor_test; math::taylor(taylor_test::unknown(x), x, 0, 1)",
+        "import math; import taylor_test; let f(t) = taylor_test::unknown(t); math::taylor(f, x, 0, 1)",
+        "import math; import taylor_test; math::taylor(|t| taylor_test::unknown(t), x, 0, 1)",
+    ] {
+        let env = Env::new().into_ref();
+        let error = ev
+            .eval_value_keep_env(&env, source)
+            .expect_err("unsupported derivative");
+        assert!(
+            error
+                .to_string()
+                .contains("cannot differentiate an unsupported function"),
+            "{error}"
+        );
+    }
+    assert!(
+        ev.eval_value_keep_env(
+            &Env::new().into_ref(),
+            "import math; import taylor_test; math::taylor(taylor_test::unknown(x), x, 0, 0)"
+        )
+        .is_ok()
+    );
+}
+
+#[test]
 fn math_gcd_lcm() {
     assert_eq!(
         eval("import math;\nmath::gcd(12, 18)"),

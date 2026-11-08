@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `math::taylor` constructs symbolic Taylor polynomials from expressions and functions.
+
 ## [0.6.0] - 2026-10-18
 
 ### Added
