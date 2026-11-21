@@ -17,7 +17,8 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 
 use prima_syntax::ast::{
-    AssignOp, BinOp, Block, Expr, ExprKind, IndexItem, Literal, Param, Pattern, Program, Stmt, UnOp,
+    AssignOp, BinOp, Block, ClassMemberKind, Expr, ExprKind, IndexItem, Literal, Param, Pattern,
+    Program, Stmt, UnOp,
 };
 
 use super::op::{ArithOp, Chunk, Imm, Local, Op, Program as VmProgram};
@@ -89,10 +90,8 @@ impl Compiler {
     /// for `ReturnValue`.
     fn compile_fn(&mut self, params: &[Param], body: &Block) -> Result<Chunk, String> {
         let mut chunk = Chunk::new();
-        if params.iter().any(|p| p.is_self) {
-            // `self` receivers are class methods, which the compiled subset does not lower here.
-            return Err("VM compiler: `self` parameters unsupported".into());
-        }
+        // `self` is an ordinary first parameter in the compiled model; field reads use `Op::Field`
+        // and the receiver is passed as the first argument by `call_method_inner` (spec §4.5).
         let arity = checked_u16(params.len(), "parameters")?;
         chunk.slot_count = arity;
         chunk.arity = arity;
@@ -171,11 +170,17 @@ impl Compiler {
                 scope.define(&name.value, slot);
                 Ok(())
             }
-            Stmt::FnDef { .. } => {
-                // Nested `fn` definitions are bound through the environment at runtime, which the
-                // compiled subset does not model (locals live in slots) — reject so the whole
-                // program falls back to the AST interpreter.
-                Err("VM compiler: nested function definitions unsupported".into())
+            Stmt::FnDef { params, body, .. } => {
+                // Nested `fn` definitions bind a closure in the environment, not in a slot. The
+                // definition itself is delegated to the AST via `EvalStmt`, which keeps the rest of
+                // the body compiled. Closures that capture enclosing *locals* (which live only in
+                // slots) would see stale/missing bindings, so those stay outside the subset.
+                if nested_fn_captures(scope, params, body) {
+                    return Err("VM compiler: nested function capture is unsupported".into());
+                }
+                let id = chunk.add_fallback_stmt(stmt.clone());
+                chunk.emit(Op::EvalStmt { stmt: id }, 0);
+                Ok(())
             }
             Stmt::Assign {
                 target, op, value, ..
@@ -985,6 +990,22 @@ impl Compiler {
                 chunk.emit(unary_op(*op), expr.span.start);
                 Ok(())
             }
+            ExprKind::Self_ => {
+                // `self` is bound as the method's first parameter (spec §4.5).
+                if let Some(slot) = scope.slot_of("self") {
+                    chunk.emit(Op::LoadLocal(slot), expr.span.start);
+                } else {
+                    let idx = chunk.add_name("self".to_string())?;
+                    chunk.emit(Op::LoadName(idx), expr.span.start);
+                }
+                Ok(())
+            }
+            ExprKind::Field { receiver, name } => {
+                self.compile_expr(chunk, scope, receiver)?;
+                let idx = chunk.add_name(name.value.clone())?;
+                chunk.emit(Op::Field { name: idx }, expr.span.start);
+                Ok(())
+            }
             ExprKind::Call { callee, args } => {
                 self.compile_call(chunk, scope, callee, args, expr.span.start)
             }
@@ -996,7 +1017,10 @@ impl Compiler {
                 // A mutating `Array` method (spec §11.3) on a local slot mutates the slot's array
                 // in place; on an environment binding it mutates the binding's array along the
                 // scope chain; any other receiver shape falls back to the AST.
-                if crate::eval::is_mutating_array_method(&name.value) {
+                if crate::eval::is_mutating_array_method(&name.value)
+                    || crate::eval::is_mutating_dict_method(&name.value)
+                    || crate::eval::is_mutating_set_method(&name.value)
+                {
                     let ExprKind::Path { segments } = &receiver.kind else {
                         return Err(
                             "VM compiler: mutating method receiver must be a variable".into()
@@ -1072,30 +1096,62 @@ impl Compiler {
                 Ok(())
             }
             ExprKind::Index { base, index } => {
-                if index.items.len() != 1 {
-                    return Err("VM compiler: multi-dimensional indexing unsupported".into());
-                }
-                // Condition/expression reads with a local base and index push the element directly
-                // (no receiver-handle clone): `if prime[i]` (spec §11.3).
+                // Condition/expression reads with a local base and a single element index push the
+                // element directly (no receiver-handle clone): `if prime[i]` (spec §11.3).
                 if let IndexItem::Elem(e) = &index.items[0]
+                    && index.items.len() == 1
                     && let (Some(arr), Some(idx)) = (local_slot(scope, base), local_slot(scope, e))
                 {
                     chunk.emit(Op::RegIndexPush { arr, idx }, expr.span.start);
                     return Ok(());
                 }
                 self.compile_expr(chunk, scope, base)?;
-                match &index.items[0] {
-                    IndexItem::Elem(e) => {
-                        self.compile_expr(chunk, scope, e)?;
-                        chunk.emit(Op::Index, expr.span.start);
-                    }
-                    IndexItem::Slice { .. } => {
-                        return Err("VM compiler: slice indexing unsupported".into());
+                if index.items.len() == 1
+                    && let IndexItem::Elem(e) = &index.items[0]
+                {
+                    self.compile_expr(chunk, scope, e)?;
+                    chunk.emit(Op::Index, expr.span.start);
+                    return Ok(());
+                }
+                // Slices and multi-dimensional selections (spec §11.3): push one operand per element
+                // index and two per slice (`Nil` for an omitted bound), then let the executor perform
+                // the nested selection.
+                let mut shapes = Vec::with_capacity(index.items.len());
+                for item in &index.items {
+                    match item {
+                        IndexItem::Elem(e) => {
+                            self.compile_expr(chunk, scope, e)?;
+                            shapes.push(false);
+                        }
+                        IndexItem::Slice { start, end } => {
+                            self.compile_slice_bound(chunk, scope, start.as_ref())?;
+                            self.compile_slice_bound(chunk, scope, end.as_ref())?;
+                            shapes.push(true);
+                        }
                     }
                 }
+                let spec = chunk.add_index_spec(shapes);
+                chunk.emit(Op::IndexMulti { spec }, expr.span.start);
                 Ok(())
             }
             _ => Err("VM compiler: expression unsupported".into()),
+        }
+    }
+
+    /// Push a slice bound (or the `Nil` sentinel for an omitted bound) for `IndexMulti`.
+    fn compile_slice_bound(
+        &mut self,
+        chunk: &mut Chunk,
+        scope: &mut Scope,
+        bound: Option<&Expr>,
+    ) -> Result<(), String> {
+        match bound {
+            Some(e) => self.compile_expr(chunk, scope, e),
+            None => {
+                let n = chunk.add_value(prima_core::Value::Nil)?;
+                chunk.emit(Op::Const(n), 0);
+                Ok(())
+            }
         }
     }
 
@@ -1375,6 +1431,126 @@ fn unary_op(op: UnOp) -> Op {
     }
 }
 
+/// Whether a nested `fn` body reads a name bound to an enclosing VM local slot (which lives only in
+/// the frame, not in the environment). Conservative: any statement shape the scan does not model is
+/// treated as a capture, so the caller falls back to the AST instead of changing semantics.
+fn nested_fn_captures(scope: &Scope, params: &[Param], body: &Block) -> bool {
+    let mut names = std::collections::HashSet::new();
+    if scan_block(body, &mut names) {
+        return true;
+    }
+    names
+        .into_iter()
+        .any(|name| !params.iter().any(|p| p.name.value == name) && scope.slot_of(&name).is_some())
+}
+
+/// Collect read names from a block; returns `true` when an unsupported shape was encountered.
+fn scan_block(block: &Block, out: &mut std::collections::HashSet<String>) -> bool {
+    block.stmts.iter().any(|s| scan_stmt(s, out))
+}
+
+fn scan_stmt(stmt: &Stmt, out: &mut std::collections::HashSet<String>) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } | Stmt::Const { value, .. } => {
+            crate::eval::collect_read_names(value, out);
+            false
+        }
+        Stmt::FnDef { body, .. } => scan_block(body, out),
+        Stmt::MathDef { body, .. } => {
+            crate::eval::collect_read_names(body, out);
+            false
+        }
+        Stmt::ClassDef { members, .. } => {
+            let mut unknown = false;
+            for m in members {
+                if let ClassMemberKind::Method {
+                    body: Some(body), ..
+                } = &m.kind
+                {
+                    unknown |= scan_block(body, out);
+                }
+            }
+            unknown
+        }
+        Stmt::Impl { members, .. } => members.iter().any(|m| scan_stmt(m, out)),
+        Stmt::Assign { target, value, .. } => {
+            crate::eval::collect_read_names(target, out);
+            crate::eval::collect_read_names(value, out);
+            false
+        }
+        Stmt::Expr(e) => {
+            crate::eval::collect_read_names(e, out);
+            false
+        }
+        Stmt::For {
+            range, step, body, ..
+        }
+        | Stmt::ParFor {
+            range, step, body, ..
+        } => {
+            crate::eval::collect_read_names(&range.0, out);
+            crate::eval::collect_read_names(&range.1, out);
+            if let Some(step) = step {
+                crate::eval::collect_read_names(step, out);
+            }
+            scan_block(body, out)
+        }
+        Stmt::While { cond, body, .. } => {
+            crate::eval::collect_read_names(cond, out);
+            scan_block(body, out)
+        }
+        Stmt::If {
+            cond,
+            then,
+            elifs,
+            else_,
+            ..
+        } => {
+            crate::eval::collect_read_names(cond, out);
+            if scan_block(then, out) {
+                return true;
+            }
+            for (cond, block) in elifs {
+                crate::eval::collect_read_names(cond, out);
+                if scan_block(block, out) {
+                    return true;
+                }
+            }
+            else_.as_ref().is_some_and(|b| scan_block(b, out))
+        }
+        Stmt::IfLet {
+            value, then, else_, ..
+        } => {
+            crate::eval::collect_read_names(value, out);
+            scan_block(then, out) || else_.as_ref().is_some_and(|b| scan_block(b, out))
+        }
+        Stmt::WhileLet { value, body, .. } => {
+            crate::eval::collect_read_names(value, out);
+            scan_block(body, out)
+        }
+        Stmt::Match {
+            scrutinee, arms, ..
+        } => {
+            crate::eval::collect_read_names(scrutinee, out);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    crate::eval::collect_read_names(guard, out);
+                }
+                crate::eval::collect_read_names(&arm.body, out);
+            }
+            false
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(value) = value {
+                crate::eval::collect_read_names(value, out);
+            }
+            false
+        }
+        Stmt::WithConfig { body, .. } => scan_block(body, out),
+        Stmt::Pub(inner) => scan_stmt(inner, out),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1392,6 +1568,12 @@ mod tests {
             }
         }
         panic!("no top-level fn");
+    }
+
+    #[test]
+    fn self_parameter_and_field_read_compile() {
+        let chunk = fn_body("pub fn get(self) -> Integer { self.value }");
+        assert!(chunk.code.iter().any(|op| matches!(op, Op::Field { .. })));
     }
 
     #[test]

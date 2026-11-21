@@ -7,7 +7,114 @@ use super::helpers::{
 };
 use super::*;
 
+/// One evaluated index component for multi-dimensional array selection (spec §11.3). Slice bounds
+/// are raw integers (`None` = omitted); normalization happens against each dimension's length.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum IndexSelection {
+    Elem(i64),
+    Slice(Option<i64>, Option<i64>),
+}
+
+/// Normalize raw slice bounds against `len` with the interpreter's rules (spec §11.3): negative
+/// bounds count from the end, omitted bounds mean 0/len, and out-of-range values clamp.
+pub(crate) fn slice_bounds_values(
+    lo: Option<i64>,
+    hi: Option<i64>,
+    len: usize,
+) -> Result<(usize, usize), RuntimeError> {
+    let len_i = len as i64;
+    let clamp = |raw: i64| {
+        if raw < 0 {
+            (len_i + raw).max(0)
+        } else {
+            raw.min(len_i)
+        }
+    };
+    let lo = clamp(lo.unwrap_or(0));
+    let hi = clamp(hi.unwrap_or(len_i));
+    if lo > hi {
+        return crate::error::err(format!("invalid slice range {lo}..{hi} (length {len})"));
+    }
+    Ok((lo as usize, hi as usize))
+}
+
 impl Evaluator {
+    /// Evaluate an index list into components (elements and slices) without applying it, so the AST
+    /// and the bytecode VM share the same multi-dimensional selection logic.
+    pub(crate) fn eval_index_selections(
+        &mut self,
+        env: &EnvRef,
+        index: &prima_syntax::ast::Index,
+    ) -> Result<Vec<IndexSelection>, RuntimeError> {
+        let mut out = Vec::with_capacity(index.items.len());
+        for item in &index.items {
+            match item {
+                IndexItem::Elem(e) => out.push(IndexSelection::Elem(self.eval_index_i64(env, e)?)),
+                IndexItem::Slice { start, end } => {
+                    let lo = match start {
+                        Some(e) => Some(self.eval_index_i64(env, e)?),
+                        None => None,
+                    };
+                    let hi = match end {
+                        Some(e) => Some(self.eval_index_i64(env, e)?),
+                        None => None,
+                    };
+                    out.push(IndexSelection::Slice(lo, hi));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Apply evaluated index components to a (possibly nested) array (spec §11.3). Each component
+    /// consumes one dimension: `Elem` selects, `Slice` keeps a range and maps the remaining components
+    /// over its elements. A single component therefore keeps the historical 1-D behavior, while two or
+    /// more implement `A[i, j]` / `A[.., j]` / submatrices.
+    pub(crate) fn index_nd(
+        &mut self,
+        value: Value,
+        selections: &[IndexSelection],
+    ) -> Result<Value, RuntimeError> {
+        let Some((first, rest)) = selections.split_first() else {
+            return Ok(value);
+        };
+        let a = match value {
+            Value::Array(a) => a,
+            other => {
+                return crate::error::err(format!(
+                    "indexing requires nested arrays, got {}",
+                    value_type_name(&other)
+                ));
+            }
+        };
+        let len = a.len();
+        match first {
+            IndexSelection::Elem(raw) => {
+                let idx = normalize_index(*raw, len).ok_or_else(|| {
+                    RuntimeError::IndexOutOfBounds(format!("index {raw} (length {len})"))
+                })?;
+                let item = a.get(idx).ok_or_else(|| {
+                    RuntimeError::IndexOutOfBounds(format!("index {raw} (length {len})"))
+                })?;
+                self.index_nd(item, rest)
+            }
+            IndexSelection::Slice(lo, hi) => {
+                let (lo, hi) = slice_bounds_values(*lo, *hi, len)?;
+                if rest.is_empty() {
+                    return Ok(Value::Array(a.with(|items| items[lo..hi].to_vec()).into()));
+                }
+                let mut out = Vec::with_capacity(hi.saturating_sub(lo));
+                for i in lo..hi {
+                    let item = a.get(i).ok_or_else(|| {
+                        RuntimeError::IndexOutOfBounds(format!("index {i} (length {len})"))
+                    })?;
+                    out.push(self.index_nd(item, rest)?);
+                }
+                Ok(Value::Array(out.into()))
+            }
+        }
+    }
+
     pub(crate) fn eval_index(
         &mut self,
         env: &EnvRef,
@@ -42,33 +149,11 @@ impl Evaluator {
             }
         }
         match arr_v {
-            // Array indexing with negative indices and clamped slices (spec §11.3).
+            // Array indexing with negative indices, clamped slices, and multi-dimensional selection
+            // (spec §11.3): `A[i, j]`, `A[.., j]`, `A[i, 1..3]` select through nested arrays.
             Value::Array(a) => {
-                if index.items.len() != 1 {
-                    return crate::error::err("multi-dimensional indexing is not supported yet");
-                }
-                match &index.items[0] {
-                    IndexItem::Elem(e) => {
-                        let raw = self.eval_index_i64(env, e)?;
-                        let idx = normalize_index(raw, a.len()).ok_or_else(|| {
-                            RuntimeError::IndexOutOfBounds(format!(
-                                "index {raw} (length {})",
-                                a.len()
-                            ))
-                        })?;
-                        a.get(idx).ok_or_else(|| {
-                            RuntimeError::IndexOutOfBounds(format!(
-                                "index {raw} (length {})",
-                                a.len()
-                            ))
-                        })
-                    }
-                    IndexItem::Slice { start, end } => {
-                        let (lo, hi) =
-                            self.slice_bounds(env, start.as_ref(), end.as_ref(), a.len())?;
-                        Ok(Value::Array(a.with(|items| items[lo..hi].to_vec()).into()))
-                    }
-                }
+                let selections = self.eval_index_selections(env, index)?;
+                self.index_nd(Value::Array(a), &selections)
             }
             // Dict indexing by key (spec §11.6): a missing key is `R0012`.
             Value::Dict(d) => {

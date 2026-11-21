@@ -22,7 +22,7 @@ use prima_syntax::ast::BinOp as AstBinOp;
 use super::op::{ArithOp, Callee, Chunk, Const, Imm, Op, Program as VmProgram};
 use crate::builtins::Builtin;
 use crate::error::RuntimeError;
-use crate::eval::{EnvRef, Evaluator, Function};
+use crate::eval::{Env, EnvRef, Evaluator, Function};
 
 /// Message prefix marking a VM capability limit (spec §19.5): the compiled subset cannot execute
 /// the construct, so the caller falls back to the AST interpreter (the authoritative path) instead
@@ -1467,7 +1467,13 @@ impl Evaluator {
                     };
                     match s {
                         Value::Array(a) => self.mutate_array_handle(a, &name, args)?,
-                        _ => return Err(vm_limit("expected an array binding")),
+                        Value::Dict(d) => self.mutate_dict_handle(d, &name, args)?,
+                        Value::Set(set) => self.mutate_set_handle(set, &name, args)?,
+                        _ => {
+                            return Err(vm_limit(
+                                "mutating method receiver must be an array/dict/set binding",
+                            ));
+                        }
                     }
                 };
                 vm.stack.push(r);
@@ -1480,16 +1486,22 @@ impl Evaluator {
                 // array is mutated in place along the scope chain (CoW when aliased), mirroring
                 // the AST's `mutate_array`. A missing or non-array receiver falls back to the
                 // AST interpreter.
-                if !matches!(env.borrow().get_value(&name), Some(Value::Array(_))) {
-                    return Err(vm_limit("expected an array binding"));
+                if !matches!(
+                    env.borrow().get_value(&name),
+                    Some(Value::Array(_) | Value::Dict(_) | Value::Set(_))
+                ) {
+                    return Err(vm_limit("expected an array/dict/set binding"));
                 }
                 let mut out: Option<Result<Value, RuntimeError>> = None;
                 env.borrow_mut().update_value(&name, |slot| {
-                    if let Value::Array(a) = slot {
-                        out = Some(self.mutate_array_handle(a, &name, args));
-                    }
+                    out = Some(match slot {
+                        Value::Array(a) => self.mutate_array_handle(a, &name, args),
+                        Value::Dict(d) => self.mutate_dict_handle(d, &name, args),
+                        Value::Set(set) => self.mutate_set_handle(set, &name, args),
+                        _ => Err(vm_limit("expected an array/dict/set binding")),
+                    });
                 });
-                let r = out.ok_or_else(|| vm_limit("expected an array binding"))??;
+                let r = out.ok_or_else(|| vm_limit("expected an array/dict/set binding"))??;
                 vm.stack.push(r);
                 Ok(())
             }
@@ -1526,10 +1538,80 @@ impl Evaluator {
                 vm.stack.push(Value::Dict(Box::new(dict)));
                 Ok(())
             }
+            Op::Field { name } => {
+                let name = resolve_name(vm.active_chunk(), name)?.to_string();
+                let receiver = pop(&mut vm.stack);
+                let v = self.field_value(receiver, &name)?;
+                vm.stack.push(v);
+                Ok(())
+            }
+            Op::EvalStmt { stmt } => {
+                let stmt = vm
+                    .active_chunk()
+                    .fallback_stmts
+                    .get(stmt as usize)
+                    .cloned()
+                    .ok_or_else(|| vm_limit("invalid fallback statement"))?;
+                match self.eval_stmt(env, &stmt)? {
+                    crate::eval::Flow::Continue => Ok(()),
+                    crate::eval::Flow::Return(_) => {
+                        Err(vm_limit("fallback statement returned from the function"))
+                    }
+                }
+            }
             Op::Index => {
                 let idx = pop(&mut vm.stack);
                 let base = pop(&mut vm.stack);
                 let v = super::helpers::vm_index(self, base, idx)?;
+                vm.stack.push(v);
+                Ok(())
+            }
+            Op::IndexMulti { spec } => {
+                let shape = vm
+                    .active_chunk()
+                    .index_specs
+                    .get(spec as usize)
+                    .cloned()
+                    .ok_or_else(|| vm_limit("invalid multi-index shape"))?;
+                let mut raw = Vec::with_capacity(shape.len());
+                for is_slice in shape.iter().rev() {
+                    if *is_slice {
+                        let hi = pop(&mut vm.stack);
+                        let lo = pop(&mut vm.stack);
+                        raw.push((true, lo, hi));
+                    } else {
+                        raw.push((false, pop(&mut vm.stack), Value::Nil));
+                    }
+                }
+                raw.reverse();
+                let base = pop(&mut vm.stack);
+                let bound = |v: Value| -> Result<Option<i64>, RuntimeError> {
+                    match v {
+                        Value::Nil => Ok(None),
+                        Value::Number(n) => n.as_i64().map(Some).ok_or_else(|| {
+                            RuntimeError::Message("slice bound must be an integer".into())
+                        }),
+                        _ => Err(RuntimeError::Message(
+                            "slice bound must be an integer".into(),
+                        )),
+                    }
+                };
+                let mut selections = Vec::with_capacity(raw.len());
+                for (is_slice, a, b) in raw {
+                    if is_slice {
+                        selections.push(crate::eval::IndexSelection::Slice(bound(a)?, bound(b)?));
+                    } else {
+                        let idx = match a {
+                            Value::Number(n) => n.as_i64(),
+                            _ => None,
+                        }
+                        .ok_or_else(|| {
+                            RuntimeError::Message("array index must be an integer".into())
+                        })?;
+                        selections.push(crate::eval::IndexSelection::Elem(idx));
+                    }
+                }
+                let v = self.index_nd(base, &selections)?;
                 vm.stack.push(v);
                 Ok(())
             }
@@ -2413,8 +2495,11 @@ impl Evaluator {
             return Ok(VmOutcome::Fallback); // outside the compiled subset → AST fallback
         };
         // Parameters bind into slots by the chunk's leading `BindParams`, which consumes the
-        // argument values from the operand stack (and uses the closure env for free names).
-        match self.run_vm(f_env, program, Some(("__entry", args))) {
+        // argument values from the operand stack (and uses the closure env for free names). A fresh
+        // call environment mirrors `apply_host`'s `Env::child`: names created by the body (including
+        // nested `fn` bindings) are call-local instead of leaking into the module environment.
+        let call_env = Env::child(f_env);
+        match self.run_vm(&call_env, program, Some(("__entry", args))) {
             Ok(v) => {
                 self.path_stats.vm_hits += 1;
                 Ok(VmOutcome::Hit(v))

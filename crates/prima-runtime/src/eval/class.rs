@@ -416,6 +416,29 @@ impl Evaluator {
             Value::Class(id) => Some(*id),
             _ => None,
         };
+        // Bytecode VM fast path (spec §19.5): `self` is an ordinary first parameter and field reads
+        // use `Op::Field`. The receiver stack/`self` value stays active for the whole VM run, so
+        // private-field access and builtin-class `self` semantics match the AST path; a body outside
+        // the compiled subset falls back to `eval_block_tail` below.
+        if self.current_config().vm {
+            let mut full = Vec::with_capacity(args.len() + 1);
+            full.push(receiver.clone());
+            full.extend(args.iter().cloned());
+            if let Some(id) = instance_id {
+                self.self_stack.push(id);
+            } else {
+                self.self_values.push(receiver.clone());
+            }
+            let outcome = self.try_vm_single(&method.params, body, &method.env, &method.vm, full);
+            if instance_id.is_some() {
+                self.self_stack.pop();
+            } else {
+                self.self_values.pop();
+            }
+            if let crate::vm::exec::VmOutcome::Hit(v) = outcome? {
+                return Ok(v);
+            }
+        }
         if let Some(id) = instance_id {
             self.self_stack.push(id);
         } else {
@@ -466,6 +489,12 @@ impl Evaluator {
         name: &Spanned<String>,
     ) -> Result<Value, RuntimeError> {
         let rcv = self.eval_expr(env, receiver)?;
+        self.field_value(rcv, &name.value)
+    }
+
+    /// Read `receiver.field` from an already-evaluated receiver (spec §4.5). Shared by the AST
+    /// `eval_field` path and the bytecode VM's `Op::Field`.
+    pub(crate) fn field_value(&self, rcv: Value, name: &str) -> Result<Value, RuntimeError> {
         match rcv {
             Value::Class(id) => {
                 let inst = self
@@ -476,17 +505,17 @@ impl Evaluator {
                 let def = self.class_defs.get(&inst.class).cloned().ok_or_else(|| {
                     RuntimeError::Message(format!("unknown class `{}`", inst.class))
                 })?;
-                let field = def.fields.get(&name.value).cloned().ok_or_else(|| {
-                    RuntimeError::Message(format!("`{}` has no field `{}`", def.name, name.value))
+                let field = def.fields.get(name).cloned().ok_or_else(|| {
+                    RuntimeError::Message(format!("`{}` has no field `{}`", def.name, name))
                 })?;
                 if !self.field_accessible(&def, &field) {
                     return crate::error::err(format!(
                         "field `{}` of `{}` is not accessible here",
-                        name.value, def.name
+                        name, def.name
                     ));
                 }
-                inst.fields.get(&name.value).cloned().ok_or_else(|| {
-                    RuntimeError::Message(format!("field `{}` is uninitialized", name.value))
+                inst.fields.get(name).cloned().ok_or_else(|| {
+                    RuntimeError::Message(format!("field `{}` is uninitialized", name))
                 })
             }
             other => crate::error::err(format!(
@@ -685,6 +714,7 @@ impl Evaluator {
                             nature,
                             vis: m.vis,
                             env: Rc::clone(env),
+                            vm: Default::default(),
                             docs: m.docs.clone(),
                         },
                     );
@@ -1227,6 +1257,20 @@ impl Evaluator {
         let Value::Dict(mut d) = cur else {
             return crate::error::err("expected a dict binding");
         };
+        let out = self.mutate_dict_handle(&mut d, name, args)?;
+        self.write_back(env, &var, Value::Dict(d));
+        Ok(out)
+    }
+
+    /// Apply a mutating `Dict` method to an already-resolved map (spec §11.6). Shared by the
+    /// whole-value AST path (which writes the map back to its binding) and the bytecode VM (which
+    /// mutates a local slot or an environment binding in place).
+    pub(crate) fn mutate_dict_handle(
+        &self,
+        d: &mut HashMap<ValueKey, Value>,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
         let arity = |n: usize| -> Result<(), RuntimeError> {
             if args.len() == n {
                 Ok(())
@@ -1268,7 +1312,7 @@ impl Evaluator {
                     d.insert(k.clone(), v.clone());
                 }
                 // `d.update(other)` returns the merged dict (spec §11.6 example `let dd = d.update(…)`).
-                Value::Dict(d.clone())
+                Value::Dict(Box::new(d.clone()))
             }
             "setdefault" => {
                 // Python `dict.setdefault`: return the value for `key`, inserting `default` when absent.
@@ -1284,19 +1328,14 @@ impl Evaluator {
             }
             "popitem" => {
                 arity(0)?;
-                let k = self
-                    .sorted_dict_keys(&d)
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| {
-                        crate::error::coded("R0014", "`Dict.popitem` on an empty dict")
-                    })?;
+                let k = self.sorted_dict_keys(d).into_iter().next().ok_or_else(|| {
+                    crate::error::coded("R0014", "`Dict.popitem` on an empty dict")
+                })?;
                 let v = d.remove(&k).unwrap();
                 Value::Tuple(vec![k.to_value(), v].into())
             }
             _ => return crate::error::err(format!("unknown `Dict` method `{name}`")),
         };
-        self.write_back(env, &var, Value::Dict(d));
         Ok(out)
     }
 
@@ -1383,6 +1422,19 @@ impl Evaluator {
         let Value::Set(mut s) = cur else {
             return crate::error::err("expected a set binding");
         };
+        let out = self.mutate_set_handle(&mut s, name, args)?;
+        self.write_back(env, &var, Value::Set(s));
+        Ok(out)
+    }
+
+    /// Apply a mutating `Set` method to an already-resolved set (spec §11.6). Shared by the AST
+    /// write-back path and the bytecode VM's in-place slot/binding mutation.
+    pub(crate) fn mutate_set_handle(
+        &self,
+        s: &mut HashSet<ValueKey>,
+        name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
         let arity = |n: usize| -> Result<(), RuntimeError> {
             if args.len() == n {
                 Ok(())
@@ -1457,7 +1509,6 @@ impl Evaluator {
             }
             _ => return crate::error::err(format!("unknown `Set` method `{name}`")),
         };
-        self.write_back(env, &var, Value::Set(s));
         Ok(out)
     }
 

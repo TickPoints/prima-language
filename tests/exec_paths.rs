@@ -281,6 +281,64 @@ fn parity_invalid_slice_range_errors_on_every_path() {
 }
 
 #[test]
+fn parity_multidimensional_indexing() {
+    // Matrix values are nested arrays; `A[i, j]`, row/column selections, and submatrices share one
+    // selection implementation in the AST and the VM (spec §11.3).
+    let src = "fn main() -> Integer {\n    let A = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];\n    let e = A[0, 1];\n    let row = A[0, ..];\n    let col = A[.., 1];\n    let sub = A[0..2, 1..3];\n    e + row[0] + col[1] + sub[1][1]\n}\nmain()";
+    let (ast, vm, default) = assert_parity("multidimensional indexing", src, "");
+    assert_is_integer(ast.value.as_ref(), 2 + 1 + 5 + 6, "matrix selection");
+    assert!(
+        vm.stats.vm_hits > 0,
+        "VM must execute multi-dimensional indexing: {:?}",
+        vm.stats
+    );
+    assert!(
+        default.stats.vm_hits > 0,
+        "default path falls back to the VM for multi-dimensional indexing: {:?}",
+        default.stats
+    );
+}
+
+#[test]
+fn parity_nested_fn_without_capture_runs_in_vm() {
+    // A nested `fn` is bound through the environment; the VM delegates just that definition to the
+    // AST and keeps the rest of the body compiled (spec §19.5).
+    let src = "fn main(n: Integer) -> Integer {\n    fn helper(x: Integer) -> Integer { x * 2 }\n    let mut s = 0;\n    let mut i = 0;\n    while i < n { s += helper(i); i += 1; }\n    s\n}\nmain(5)";
+    let (ast, vm, _) = assert_parity("nested fn", src, "");
+    assert_is_integer(ast.value.as_ref(), 20, "nested helper sum");
+    assert!(
+        vm.stats.vm_hits > 0 && vm.stats.vm_fallbacks == 0,
+        "non-capturing nested fn must keep the body in the VM: {:?}",
+        vm.stats
+    );
+}
+
+#[test]
+fn nested_fn_binding_does_not_leak_out_of_the_call() {
+    // A nested `fn` is call-local in the AST; the VM must not bind it in the module environment.
+    let src =
+        "fn main() -> Integer { fn helper() -> Integer { 1 } helper() }\nlet a = main();\nhelper()";
+    let (ast, vm, default) = assert_parity("nested fn scope", src, "");
+    assert!(ast.error.is_some(), "helper must not be visible after main");
+    assert_eq!(ast.error, Some("R0011"));
+    assert_eq!(vm.error, ast.error);
+    assert_eq!(default.error, ast.error);
+}
+
+#[test]
+fn parity_nested_fn_capture_takes_vm_fallback() {
+    // Capturing an enclosing local is outside the compiled subset; the AST fallback must still agree.
+    let src = "fn main(n: Integer) -> Integer {\n    fn add(x: Integer) -> Integer { x + n }\n    add(2)\n}\nmain(5)";
+    let (ast, vm, _) = assert_parity("nested fn capture", src, "");
+    assert_is_integer(ast.value.as_ref(), 7, "capturing nested fn");
+    assert!(
+        vm.stats.vm_fallbacks > 0 && vm.stats.ast_calls > 0,
+        "capturing nested fn must take the documented fallback: {:?}",
+        vm.stats
+    );
+}
+
+#[test]
 fn parity_out_of_bounds_error_matches() {
     let src = "fn main() -> Integer {\n    let a = [1, 2];\n    a[5]\n}\nmain()";
     let (ast, _, _) = assert_parity("out-of-bounds", src, "");
@@ -361,6 +419,23 @@ fn parity_dict_and_set_operations() {
 }
 
 #[test]
+fn parity_dict_and_set_mutations_run_in_vm() {
+    let src = "fn main(n: Integer) -> Integer {\n    let mut d = {};\n    let mut i = 0;\n    while i < n { d.insert(i, i * 2); i += 1; }\n    let mut s = 0;\n    let mut j = 0;\n    while j < n { s += d[j]; j += 1; }\n    d.remove(0);\n    let mut set = {1, 2};\n    set.add(3);\n    set.discard(2);\n    set.update({4, 5});\n    s + d.len() + set.len()\n}\nmain(5)";
+    let (ast, vm, default) = assert_parity("dict/set mutation", src, "");
+    assert_is_integer(ast.value.as_ref(), 20 + 4 + 4, "dict/set mutation result");
+    assert!(
+        vm.stats.vm_hits > 0,
+        "mutating dict/set methods must run in the VM: {:?}",
+        vm.stats
+    );
+    assert!(
+        default.stats.vm_hits > 0,
+        "default path must run the dict/set body in the VM: {:?}",
+        default.stats
+    );
+}
+
+#[test]
 fn parity_string_methods() {
     let src = "fn main(s: String) -> String { \"-\".join(s.split(\",\")) }\nmain(\"a,b,c\")";
     let (ast, _, _) = assert_parity("string methods", src, "");
@@ -372,12 +447,31 @@ fn parity_class_method_call() {
     let src = "class Counter {\n    value: Integer,\n    pub fn new(v: Integer) -> Self { Counter { value: v } },\n    pub fn get(self) -> Integer { self.value }\n}\nfn main(n: Integer) -> Integer { Counter::new(n).get() }\nmain(7)";
     let (ast, vm, _) = assert_parity("class method call", src, "");
     assert_is_integer(ast.value.as_ref(), 7, "class method result");
-    // Classes are outside the VM subset: the fallback must be explicit, not a silent same-result run.
+    // The method body (`self.value`) now runs in the VM; class construction/struct literals still
+    // take the documented fallback.
     assert!(
-        vm.stats.vm_fallbacks > 0,
-        "class body must take the documented VM fallback: {:?}",
+        vm.stats.vm_hits > 0,
+        "class method body must run in the VM: {:?}",
         vm.stats
     );
+    assert!(
+        vm.stats.vm_fallbacks > 0,
+        "class construction must take the documented VM fallback: {:?}",
+        vm.stats
+    );
+}
+
+#[test]
+fn parity_class_method_field_arithmetic_in_vm() {
+    let src = "class Point {\n    x: Integer,\n    y: Integer,\n    pub fn new(x: Integer, y: Integer) -> Self { Point { x, y } },\n    pub fn sum(self) -> Integer { self.x + self.y }\n}\nfn main(n: Integer) -> Integer {\n    let p = Point::new(n, 2);\n    let mut s = 0;\n    let mut i = 0;\n    while i < n { s += p.sum(); i += 1; }\n    s\n}\nmain(4)";
+    let (ast, vm, default) = assert_parity("class field arithmetic", src, "");
+    assert_is_integer(ast.value.as_ref(), 4 * 6, "field arithmetic result");
+    assert!(
+        vm.stats.vm_hits > 0,
+        "class method with field reads must run in the VM: {:?}",
+        vm.stats
+    );
+    let _ = default;
 }
 
 // ————— error propagation (spec §16.3) —————
@@ -463,13 +557,13 @@ fn vm_runs_kernels_and_falls_back_for_unsupported_bodies() {
     assert_eq!(vm.stats.jit_hits, 0, "JIT is gated at O2");
     assert_eq!(vm.stats.ast_calls, 0, "the VM must not silently fall back");
 
-    // A nested `fn` is outside the compiled subset (spec §19.5), so the VM must decline it and the
-    // AST interpreter must still produce the value.
-    let unsupported = "fn main(s: String) -> Integer {\n    fn inner() -> Integer { 1 }\n    inner() + s.len()\n}\nmain(\"abc\")";
+    // A nested `fn` that captures an enclosing local is outside the compiled subset (spec §19.5), so
+    // the VM must decline it and the AST interpreter must still produce the value.
+    let unsupported = "fn main(n: Integer) -> Integer {\n    fn inner() -> Integer { n }\n    inner()\n}\nmain(3)";
     let fallback = run(unsupported, "", Mode::Vm);
     assert!(
         fallback.stats.vm_fallbacks > 0 && fallback.stats.ast_calls > 0,
-        "nested-fn body must take the documented AST fallback: {:?}",
+        "capturing nested fn must take the documented AST fallback: {:?}",
         fallback.stats
     );
 }
