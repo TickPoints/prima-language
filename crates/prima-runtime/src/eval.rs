@@ -202,6 +202,34 @@ pub struct Evaluator {
     pub(crate) vm_frames_pool: Vec<Vec<crate::vm::exec::Frame>>,
     /// Pool of reusable bytecode-VM operand-stack buffers (companion to `vm_frames_pool`).
     pub(crate) vm_stack_pool: Vec<Vec<Value>>,
+    /// Execution-path counters (spec §19.2/§19.5): read by tests to prove that a fast path really ran
+    /// instead of silently falling back, which identical results alone cannot show.
+    pub(crate) path_stats: PathStats,
+}
+
+/// Execution-path counters (spec §19.2/§19.5). Incremented once per function call — never inside a
+/// loop body — so they do not affect steady-state performance. `ast_calls`/`vm_hits`/`jit_hits` are
+/// mutually exclusive for a given Host `fn` invocation; `vm_fallbacks` and the `jit_*` counters
+/// describe calls the respective engine declined or deoptimized before the AST path took over.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PathStats {
+    /// Host `fn` bodies executed by the AST interpreter (including the TCO trampoline).
+    pub ast_calls: u64,
+    /// Host `fn` calls that actually ran bytecode.
+    pub vm_hits: u64,
+    /// Host `fn` calls the bytecode VM declined (outside the compiled subset, arity mismatch, or a
+    /// capability-limit fallback to the AST).
+    pub vm_fallbacks: u64,
+    /// Host `fn` calls that actually ran whole-function JIT code.
+    pub jit_hits: u64,
+    /// Whole-function JIT calls deoptimized (exact-arithmetic overflow or out-of-range index) and
+    /// re-run on the interpreter.
+    pub jit_deopts: u64,
+    /// Host `fn` calls the whole-function JIT declined (non-numeric body or arguments, arity
+    /// mismatch, or `opt_level` below `O2`).
+    pub jit_ineligible: u64,
+    /// MFn (`let f(x) = …`) calls served by the numeric hot-path compiler (auto or `@jit`).
+    pub mfn_jit_hits: u64,
 }
 
 /// Optional terminal formula backend. The input is the core LaTeX representation.
@@ -260,7 +288,18 @@ impl Evaluator {
     }
 }
 
-impl Evaluator {}
+impl Evaluator {
+    /// Snapshot of the execution-path counters (spec §19.2/§19.5). Tests use this to assert that a
+    /// differential case really exercised the JIT/VM rather than silently falling back to the AST.
+    pub fn path_stats(&self) -> PathStats {
+        self.path_stats
+    }
+
+    /// Clear the execution-path counters (typically between differential-case runs).
+    pub fn reset_path_stats(&mut self) {
+        self.path_stats = PathStats::default();
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -59,6 +59,93 @@ pub unsafe extern "C" fn pj_arena_free(arena: *mut Arena) {
     drop(unsafe { Box::from_raw(arena) });
 }
 
+/// Array header as laid out by generated code (`func.rs`: `data`, `len`, `cap`, 24 bytes). `data` is
+/// stored as an `i64` word (the generated code stores the pointer through an I64 slot), keeping the
+/// layout identical on 32-bit and 64-bit targets.
+#[repr(C)]
+struct ArrayHdr {
+    data: u64,
+    len: i64,
+    cap: i64,
+}
+
+/// Replace `hdr[lo..hi]` with the elements of `src` (spec §11.3), returning a fresh header allocated
+/// from `arena`. `lo`/`hi` follow the interpreter's slice rules (negative counts from the end, clamped
+/// to the length); `i64::MAX` is the "omitted bound" sentinel and clamps to the length. Returns null for
+/// an invalid range (`lo > hi`), so the JIT deopts and the interpreter reports the error.
+///
+/// # Safety
+/// `arena` must be a live arena returned by [`pj_arena_new`]; `hdr` and `src` must point to array
+/// headers allocated from the same arena; `esize` must be the element size of both arrays.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pj_array_splice(
+    arena: *mut Arena,
+    hdr: *mut u8,
+    lo: i64,
+    hi: i64,
+    src: *const u8,
+    esize: usize,
+) -> *mut u8 {
+    // SAFETY: the caller (generated code) passes headers from this arena (see the JIT lowering).
+    // Copy the fields out first so no shared reference to the arena outlives the mutable borrow below.
+    let (h_data, len, s_data, s_len) = unsafe {
+        let h = &*(hdr as *const ArrayHdr);
+        let s = &*(src as *const ArrayHdr);
+        (h.data as *mut u8, h.len, s.data as *mut u8, s.len)
+    };
+    let clamp = |raw: i64, omitted: i64| {
+        let raw = if raw == i64::MAX { omitted } else { raw };
+        if raw < 0 {
+            (len + raw).max(0)
+        } else {
+            raw.min(len)
+        }
+    };
+    let lo = clamp(lo, 0);
+    let hi = clamp(hi, len);
+    if lo > hi || s_len < 0 {
+        return std::ptr::null_mut();
+    }
+    let prefix = lo as usize;
+    let suffix = (len - hi) as usize;
+    let mid = s_len as usize;
+    let new_len = prefix + mid + suffix;
+
+    // SAFETY: `arena` is live for the whole call (see the JIT call protocol).
+    let a = unsafe { &mut *arena };
+    let new_hdr = a.alloc(std::mem::size_of::<ArrayHdr>());
+    let new_data = if new_len == 0 {
+        std::ptr::null_mut()
+    } else {
+        a.alloc(new_len * esize)
+    };
+    // SAFETY: every segment is valid for its byte count inside the two source buffers.
+    unsafe {
+        if prefix > 0 {
+            std::ptr::copy_nonoverlapping(h_data, new_data, prefix * esize);
+        }
+        if mid > 0 {
+            std::ptr::copy_nonoverlapping(s_data, new_data.add(prefix * esize), mid * esize);
+        }
+        if suffix > 0 {
+            std::ptr::copy_nonoverlapping(
+                h_data.add(hi as usize * esize),
+                new_data.add((prefix + mid) * esize),
+                suffix * esize,
+            );
+        }
+        std::ptr::write(
+            new_hdr as *mut ArrayHdr,
+            ArrayHdr {
+                data: new_data as u64,
+                len: new_len as i64,
+                cap: new_len as i64,
+            },
+        );
+    }
+    new_hdr
+}
+
 /// Copy `n` bytes from `src` to `dst` (non-overlapping; the JIT only copies array buffers).
 ///
 /// # Safety

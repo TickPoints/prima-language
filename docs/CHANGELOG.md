@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-21
+
+### Added
+
+- **Execution-path counters** (`Evaluator::path_stats`) distinguish AST, bytecode-VM, and
+  whole-function-JIT execution (plus JIT deopts/fallbacks). `tests/exec_paths.rs` uses them as a
+  differential semantic gate: the same program must agree on value, error code, and console output
+  across all three paths, and every case asserts that the intended engine really ran instead of
+  silently falling back.
+- **Execution-path performance baseline.** `benches/bench_suite.rs` now reports AST, VM, and
+  default-path timings side by side, records the CPU/OS/toolchain/build/commit/date in
+  `benches/RESULTS.md`, and adds symbolic (`simplify`, `derivative`) and collection (`sort`, `dict`,
+  `strings`) workloads. Results are documented as same-machine before/after references only.
+
+- **Broader array assignment coverage on the compile paths.** The VM now compiles index compound
+  assignment (`a[i] += v`/`-=`, including negative indices), and the whole-function JIT additionally
+  compiles slice assignment (`a[lo..hi] = rhs`, open/negative bounds, empty RHS) through a new
+  `ArraySplice` IR op, instead of falling back to the AST interpreter (spec §19.2/§19.5).
+
+### Fixed
+
+- **Whole-function JIT preserves array value semantics.** Binding one local array to another
+  (`let b = a`) now deep-copies the buffer (new IR `ArrayCopy`) instead of sharing it, so a later
+  `b[i] = v` no longer mutates `a`; pushes after the alias also grow independently (spec §11.3).
+- **Automatic hot-path JIT no longer changes exact integer results.** Auto compilation is gated on
+  all-`Real` arguments, so `Integer`/`Rational` calls stay exact after the call-count threshold. An
+  explicit `@jit` still opts the function into `F64` numeric execution, as documented in spec §19.2.
+- **`broadcast := false` now also rejects `Array ∘ scalar`.** The policy previously only gated
+  pure-function calls, so `a + 1` still broadcast silently. Both cases now report `R0011`; array
+  concatenation and same-length elementwise array operations remain unaffected (spec §11.4).
+- **`domain := real` rejects negative `sqrt`/`log`/`ln` before constant folding.** A constant such as
+  `sqrt(-1.0)` now reports `R0005` instead of collapsing to NaN through `simplify` (spec §6.5/§9.9).
+
 ## [0.7.0] - 2026-11-08
 
 ### Added

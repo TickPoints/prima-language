@@ -876,6 +876,7 @@ let (r, theta) = polar_form(z);  // r = 5, theta = arctan(4/3)
 - Fractional exponents (e.g. `(-1)^0.5`) are decided by the `Domain` metadata (§6.5):
   - `domain := complex` → allowed, yielding `\i`.
   - `domain := real` → error or `Undefined`.
+- Under `domain := real`, negative real arguments to `sqrt`/`log`/`ln` are enforced **consistently during evaluation and constant folding**: the constant `sqrt(-1.0)` must report `R0005` and must not fold to `NaN`.
 
 ### 9.10 Lazy Evaluation of Operators
 
@@ -1084,7 +1085,7 @@ let h = A[0..2, 1..3];        // → [[2, 3], [5, 6]] (submatrix)
 - **Applies only to homogeneous numeric arrays**: broadcast requires array elements to be `Number`; elements containing non-numeric values (strings/arrays/classes, etc.) **error** (`R0009`) rather than silently degrading.
 - **Rejects nested numeric arrays**: broadcast **errors** on "arrays of arrays" and does not recurse; ordinary nested arrays are data only (§11.3) and do not participate in broadcast.
 - **Empty arrays error**: broadcast on an empty array errors (`R0014`), producing no silent empty result.
-- **Default broadcast** `broadcast := true` (default): pure functions applied to arrays are element-wise; when `false`, an explicit `map` or a broadcast operator is required.
+- **Default broadcast** `broadcast := true` (default): pure functions applied to arrays and `Array ∘ scalar` are element-wise. `broadcast := false` **disables both** (an explicit `map` or the `@.` broadcast operator is required); `Array + Array` concatenation and same-length `Array ∘ Array` elementwise operations are not implicit broadcast and are unaffected by the policy.
 - **Parallel broadcast**: `@parallel` pure functions + large arrays automatically go parallel via rayon (§17.4).
 
 **Example**:
@@ -1295,7 +1296,7 @@ May be declared at the module top or in a local `with config`.
   Strategy | Type | Default | Description |
 ------|------|------|------|
   `fraction` | bool | `true` | Preference for rational fractions vs floats |
-  `broadcast` | bool | `true` | Pure functions are automatically element-wise (v2.1: only for numeric homogeneous arrays; rejects nested/empty arrays, §11.4) |
+  `broadcast` | bool | `true` | Pure functions are automatically element-wise, and `Array ∘ scalar` broadcasts (v2.1: only for numeric homogeneous arrays; rejects nested/empty arrays, §11.4) |
   `loop_optimization` | bool | `true` | Closed-form loop optimization |
   `opt_level` | enum | `O2` | Optimization level (`O0`/`O1`/`O2`/`O3`, v2.2, §10.2): the set of optimization passes applied automatically by the compiler |
   `simplify_level` | int 0-3 | `2` | Default simplification level (symbolic layer, independent of `opt_level`) |
@@ -2269,6 +2270,7 @@ with config { overload_policy := deny } {    // using it is an error
 - **Compilation triggers**:
   - A function is called more than a threshold number of times (e.g. 100).
   - An explicit `@jit` annotation: `let f(x) @jit = x^2 + sin(x)`.
+- **Exactness gate**: automatic hot-path compilation is enabled **only when every argument is `Real`**. Calls with `Integer`/`Rational`/fixed-width integer arguments keep the exact symbolic/numeric path (§6.1 "exact by default") and are never silently demoted to `F64` as the call count grows. An explicit `@jit` annotation means the user accepts `F64` numeric execution for that function: its arguments may be any non-complex number and its result is returned as `Real`.
 - **Batched algorithms**: integrate with BLAS (OpenBLAS/MKL) and LAPACK via `nalgebra` or `faer`.
 
 **Optimization pipeline rollout** (§10.2): the JIT phase applies constant folding, CSE, loop optimization, and **automatic inlining**; the AOT phase additionally performs dead-code elimination and module-level optimization.

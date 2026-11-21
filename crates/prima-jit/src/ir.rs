@@ -155,6 +155,20 @@ pub enum IrOp {
         dst: u16,
         elem: ElemType,
     },
+    /// Deep copy of a local array into a fresh arena buffer (spec §11.3 value semantics): binding a
+    /// local array to a second name must not alias the source, or a later element store would mutate
+    /// both bindings.
+    ArrayCopy {
+        dst: u16,
+        src: u16,
+    },
+    /// `arr[lo..hi] = src` (spec §11.3): splice `src` into `arr` through a fresh arena buffer.
+    ArraySplice {
+        arr: u16,
+        lo: u16,
+        hi: u16,
+        src: u16,
+    },
     ArrayLen {
         dst: u16,
         arr: u16,

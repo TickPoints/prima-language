@@ -598,12 +598,13 @@ trait Renderer { fn render_expr(&self, pool: &ExprPool, id: ExprId, out: &mut St
 > **Phase 5 落地记录（2026-08）**：全部完成。与本文档的偏差/定稿：
 >
 > - **新 crate `prima-jit`**（依赖方向 `syntax → core → prima-jit → runtime`）：`ExprDAG → Bytecode → cranelift IR → 原生码`。字节码是纯 `f64` 栈机（`Const`/`Param`/四则/`Pow`/超越函数）；**超越函数不依赖 cranelift 的 libcall 符号名解析**，而是经 `#[unsafe(no_mangle)] extern "C"` trampoline（`pj_sin/pj_cos/...`）在 `JITBuilder::symbol` 注册后由生成码直接 `call`。`CompiledScalar::call` 无锁线程安全；编译在进程级 `OnceLock<Mutex<JitEngine>>` 下串行。cranelift 0.135 注意：无 `frem`（`Rem` 走 `pj_rem`）、`MemFlagsData`/`Offset32` 路径、`JITModule::new` 需 `is_pic=false`。
-> - **自动热点编译**：`Function::User` 增加 `hot: Arc<HotState>`（`force` + `AtomicU64` 调用计数 + `OnceLock<Option<Arc<CompiledScalar>>>`，克隆共享）。实参全为非复数 `Number` 时走热点：`@jit`（`MathDef` 注解）首调用即编译；否则第 `JIT_CALL_THRESHOLD`（默认 100）次调用触发编译并原生返回，失败结果缓存（不重试）；非数值实参回落到解释路径。语义不变（原生与解释结果一致）。
+> - **自动热点编译**：`Function::User` 增加 `hot: Arc<HotState>`（`force` + `AtomicU64` 调用计数 + `OnceLock<Option<Arc<CompiledScalar>>>`，克隆共享）。**自动**热点编译只在实参全为 `Real` 时启用（`Integer`/`Rational` 实参照常走精确路径，§6.1）；`@jit`（`MathDef` 注解）首调用即编译，接受任意非复数 `Number` 实参并按 `F64` 返回。第 `JIT_CALL_THRESHOLD`（默认 100）次 `Real` 调用触发自动编译，失败结果缓存（不重试）；非数值实参回落到解释路径。**v0.7.1 修正**：原表述「语义不变」不成立——整数实参会在阈值后被降为 `F64`；现以「自动编译仅限 `Real` 实参，`@jit` 为显式 `F64` 选择」为定稿语义（规范 §19.2）。
 > - **`jit(...)` 内建**（`Builtin::Jit`，`eval_call` 拦截）：接受 MFn 名 → 编译前向标量；`jit(grad(f))` → **反向模式**（`ad::Tape`）多变量梯度（`Value::Array`）；裸符号表达式 → 以自由符号为参数编译；`grad` 的符号元组 → 逐分量数值求值。产物是 **`Value::JitFunction(u32)`**（`prima-core` 新变体，句柄指向 `runtime::jit` 进程级注册表，含 `compiled`/`tape`/`expressions`/`fallback` 多形态，编译不可用时自动回落）；调用点在 `eval_call` 支持该值作被调对象。
 > - **AD**（`crates/prima-runtime/src/ad.rs`）：前向 `Dual`（`forward_derivative`）+ 反向 `Tape`（post-order DFS + memo 建图，`grad(inputs)` 一次反向传播得全偏导，支持 `Pow` 对数导数链式、内置常数）。反向 Tape 是 `jit(grad(f))` 的运行引擎。
 > - **优化管道**（§10.2）：`core::opt`（`const_fold`=simplify、`cse`=hash-consing 天然共享、`optimize`）；`runtime::opt`（`tail_call_of` 纯 AST 尾调用分析：末语句直接 `return f(args)` 且前置语句 effect-free）；解释器 `Function::Host` 分支以 trampoline 实现 **TCO**（常量栈空间跑 10 万层尾递归；前置 `if` 内提前 `return` 正确退出）。自动内联=MFn 替换天然内联；循环优化沿用 Phase 2；标量字节码无分支故 DCE 为空（常量折叠已消死）。
 > - **C ABI 导出**（`--emit-c-abi`）：按维护者决策采用 **cdylib 壳工程**——解析后收集 `@c_api::extern` 导出清单，生成头文件（`-o` 基名 + `.h`），并在临时目录生成 `cdylib` 壳 crate（绝对路径依赖 `prima-runtime`/`prima-core`，内嵌源文件绝对路径，每个导出一个 `#[unsafe(no_mangle)] extern "C"` 包装函数，`call_file_export` 线程本地缓存求值后按 C 类型转换），`cargo build --release` 产出 `.so`/`.dylib`/`.dll`。运行时需 cargo；`--emit-headers` 仍为离线路径。ctypes 实测 `add(2.5,3.0)=5.5`、`hello("world")` 往返成功。
 > - **criterion 基准**（`benches/bench_jit.rs`）：同一 `x^4 + sin(x)·x + exp(x)` DAG，解释递归 ~373ns vs 原生 ~34ns（约 11× 加速），`f(101)` 双路结果一致——即验收 `f(to_f64(101))` 走原生路径。
+> - **v0.7.1 修正（JIT 数组别名）**：整函数 JIT 的局部数组绑定 `let b = a` 原先直接共享 arena 头，`b[i] = v` 会同时改写 `a`（违反 §11.3 值语义）。现新增 IR `ArrayCopy`，在别名绑定处深拷贝头与缓冲区；`push` 后各自独立增长。同时 VM 补充索引复合赋值（`a[i] += v`/`-=`，含负索引）编译；整函数 JIT 补充索引复合赋值与切片赋值（`ArraySplice` IR + `pj_array_splice`，支持开区间/负边界/空右值），减少回退 AST。回归用例见 `tests/exec_paths.rs`（别名写入、别名后 `push`、索引复合赋值与切片赋值的路径计数及非法区间错误一致性）。
 
 > AOT（§19.3，WASM/独立可执行）不在本路线图内，待 Phase 5 完成后再立项评估。
 
@@ -919,8 +920,8 @@ cargo run -- run examples/render.pra
 > **第二轮落地结果（JIT）**：P6 实现了纯数值子集的整函数 cranelift JIT（`prima-jit` 的 `ir`/`func`/
 > `rt` + `prima-runtime::jit_fn`；`opt_level >= O2` 时对 `fn` 体编译一次并缓存，精确整数运算与数组
 > 越界检查失败即去优化回解释器，循环回边轮询取消标志），使 6 个内核达到 Python 的 **7×–1700×**；
-> P3 池化 VM 帧/操作数栈缓冲；P5 补充字典索引赋值、切片赋值与字典/集合字面量的 VM 编译（字典/集合
-> 变异方法仍回退 AST）。**P2（`Value` 瘦身至 24B）未实施**：JIT 已覆盖热点数值循环，跨 ~250 处
+> P3 池化 VM 帧/操作数栈缓冲；P5 补充字典索引赋值、切片赋值、索引复合赋值（`a[i] += v`）与字典/
+> 集合字面量的 VM 编译（字典/集合变异方法仍回退 AST）。**P2（`Value` 瘦身至 24B）未实施**：JIT 已覆盖热点数值循环，跨 ~250 处
 > `Number::Real`/`Real` 的机械改造收益有限而风险高，保留为后续可选项。
 >
 > **第三轮落地结果（P2）**：`Number` 瘦身至 16B、`Value` 至 24B 已完成，语义零变化：`Complex`

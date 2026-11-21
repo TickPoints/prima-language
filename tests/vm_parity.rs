@@ -1,7 +1,8 @@
 //! Bytecode VM correctness test (spec §19.5, Milestone B): for a set of kernels, run the same
-//! function with the AST interpreter (default) and with `config { vm := true }` (stack bytecode VM),
-//! and assert both produce the same scalar result. The VM is gated off by default, so the AST path is
-//! the authoritative reference; the VM fast-path is entered through the `vm` config gate.
+//! function through the AST interpreter and through the bytecode VM, and assert both produce the
+//! same result. The VM is enabled by default (`vm := true`); the AST interpreter remains the
+//! authoritative reference and the fallback outside the compiled subset. The broader differential
+//! gate (value, error, output, and path coverage) lives in `tests/exec_paths.rs`.
 
 use std::io::Write;
 

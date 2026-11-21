@@ -407,6 +407,58 @@ fn emit_op(b: &mut FunctionBuilder, c: &mut Ctx, op: &IrOp, index: usize) {
                 .store(MemFlagsData::new(), zero, hdr, Offset32::new(HDR_CAP));
             set(b, c, *dst, hdr);
         }
+        IrOp::ArrayCopy { dst, src } => {
+            // Value semantics (spec §11.3): allocate a fresh header + buffer and copy the elements,
+            // so stores through either binding stay independent. Capacity is tightened to the length;
+            // the next push grows it through the normal `array_push` path.
+            let src_hdr = get(b, c, *src);
+            let elem = elem_of(c, *src);
+            let esize = elem_size(elem);
+            let len = b.ins().load(
+                types::I64,
+                MemFlagsData::new(),
+                src_hdr,
+                Offset32::new(HDR_LEN),
+            );
+            let arena = b.use_var(c.arena_var);
+            let size = b.ins().iconst(types::I64, HDR_BYTES);
+            let hdr = call_ret(b, c.module, c.func.arena_alloc, &[arena, size]);
+            let bytes = b.ins().imul_imm_s(len, esize);
+            let data = call_ret(b, c.module, c.func.arena_alloc, &[arena, bytes]);
+            let old_data = b.ins().load(
+                types::I64,
+                MemFlagsData::new(),
+                src_hdr,
+                Offset32::new(HDR_DATA),
+            );
+            call_void(b, c.module, c.func.memcpy, &[data, old_data, bytes]);
+            b.ins()
+                .store(MemFlagsData::new(), data, hdr, Offset32::new(HDR_DATA));
+            b.ins()
+                .store(MemFlagsData::new(), len, hdr, Offset32::new(HDR_LEN));
+            b.ins()
+                .store(MemFlagsData::new(), len, hdr, Offset32::new(HDR_CAP));
+            set(b, c, *dst, hdr);
+        }
+        IrOp::ArraySplice { arr, lo, hi, src } => {
+            let hdr = get(b, c, *arr);
+            let lo_v = get(b, c, *lo);
+            let hi_v = get(b, c, *hi);
+            let src_hdr = get(b, c, *src);
+            let elem = elem_of(c, *arr);
+            let esize = b.ins().iconst(types::I64, elem_size(elem));
+            let arena = b.use_var(c.arena_var);
+            let new_hdr = call_ret(
+                b,
+                c.module,
+                c.func.array_splice,
+                &[arena, hdr, lo_v, hi_v, src_hdr, esize],
+            );
+            let zero = b.ins().iconst(types::I64, 0);
+            let failed = b.ins().icmp(IntCC::Equal, new_hdr, zero);
+            guard(b, c, failed);
+            set(b, c, *arr, new_hdr);
+        }
         IrOp::ArrayLen { dst, arr } => {
             let hdr = get(b, c, *arr);
             let len = b
