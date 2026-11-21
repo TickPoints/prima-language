@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-21
+
+### Added
+
+- **Multi-dimensional array indexing.** `A[i, j]`, `A[.., j]`, and submatrix selections such as
+  `A[0..2, 1..3]` now work on nested arrays in both the interpreter and the bytecode VM, sharing one
+  selection implementation with negative indices and clamped slice bounds (spec §11.3).
+- **Broader bytecode-VM coverage.** Method bodies with a `self` receiver and field reads, non-capturing
+  nested `fn` definitions, mutating `Dict`/`Set` methods, and multi-dimensional indexing now compile
+  instead of forcing the whole function onto the AST fallback. Nested functions that capture an
+  enclosing local still fall back, as documented.
+
 ## [0.7.1] - 2026-11-21
 
 ### Added

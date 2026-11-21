@@ -1078,6 +1078,8 @@ let g = A[.., 1];             // → [2, 5, 8] (column 1)
 let h = A[0..2, 1..3];        // → [[2, 3], [5, 6]] (submatrix)
 ```
 
+**Multi-dimensional index reads** operate on nested arrays (`Matrix` is represented as nested arrays): each index component consumes one dimension; `Elem` selects a single element, while `Slice` keeps a range and maps the remaining components over its elements. All-`Elem` selections yield a scalar; otherwise the nested array structure is preserved. Negative indices and slice bounds follow the rules above. The write form `A[i, j] = v` is outside the current scope of this specification (write through one dimension at a time).
+
 ### 11.4 Broadcast
 
 **Rules** (tightened in v2.1 to "homogeneous numeric arrays"):

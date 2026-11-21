@@ -186,6 +186,7 @@ impl Evaluator {
                                 nature: MethodNature::Plain,
                                 vis: Visibility::Public,
                                 env: Rc::clone(env),
+                                vm: Default::default(),
                                 docs: None,
                             };
                             self.overloads.insert(overload_key(&target.value, *op), def);
@@ -206,6 +207,7 @@ impl Evaluator {
                                 nature: MethodNature::Plain,
                                 vis: Visibility::Public,
                                 env: Rc::clone(env),
+                                vm: Default::default(),
                                 docs: None,
                             };
                             self.overloads.insert(overload_key(&target.value, *op), def);

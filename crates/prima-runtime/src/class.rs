@@ -57,6 +57,8 @@ pub struct MethodDef {
     pub nature: MethodNature,
     pub vis: Visibility,
     pub env: EnvRef,
+    /// Bytecode-VM chunk cache (spec §19.5) for pure `.pra` method bodies, shared across clones.
+    pub vm: crate::eval::VmChunkCache,
     /// `///` doc comment preceding the method (spec §4.1).
     pub docs: Option<DocComment>,
 }

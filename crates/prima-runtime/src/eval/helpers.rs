@@ -122,6 +122,10 @@ pub(crate) fn collect_read_names(e: &Expr, out: &mut HashSet<String>) {
                 collect_read_names(a, out);
             }
         }
+        ExprKind::Self_ => {
+            // A nested closure reading `self` captures the method receiver (a slot in the VM).
+            out.insert("self".into());
+        }
         ExprKind::Field { receiver, .. } => collect_read_names(receiver, out),
         ExprKind::StructLiteral { fields, base, .. } => {
             if let Some(b) = base {

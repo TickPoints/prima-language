@@ -12,6 +12,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use prima_syntax::ast::Stmt;
+
 /// A constant reference into the chunk's constant pool.
 pub type Reg = u16;
 
@@ -142,6 +144,10 @@ pub enum Op {
     MakeDict(u16),
     /// Index a value: `base[index]` → push result.
     Index,
+    /// Multi-dimensional array indexing `base[i, j]` / `base[.., j]` (spec §11.3). The base is pushed
+    /// first, then each component in order: one operand for an element, two (`lo`, `hi`, `Nil` for an
+    /// omitted bound) for a slice. The shape comes from `Chunk::index_specs[spec]`.
+    IndexMulti { spec: u32 },
     /// Index assign into a local slot's array: `slot[index] = value` (stack: `[index, value]`).
     /// The slot's array is mutated in place (copy-on-write when its handle is aliased) and the
     /// assigned value is left on the stack (spec §11.3).
@@ -156,6 +162,12 @@ pub enum Op {
     Call { argc: u16 },
     /// Call a method by name constant index with `argc` arguments pushed above the receiver.
     Method { name: Reg, argc: u16 },
+    /// Read `receiver.field` (spec §4.5): the receiver is on the stack and `name` indexes a
+    /// name constant. Visibility and missing-field diagnostics match the AST path.
+    Field { name: Reg },
+    /// Execute one AST statement (`Chunk::fallback_stmts`) against the current environment. Used for
+    /// nested `fn` definitions, which bind a closure in the environment rather than in a slot.
+    EvalStmt { stmt: u32 },
     /// Call a mutating `Array` method (spec §11.3) on a local slot's array: the slot's array is
     /// mutated in place and stored back so later loads observe the mutation. `argc` arguments are
     /// on the stack; the receiver stays in its slot.
@@ -306,6 +318,12 @@ pub struct Chunk {
     /// execution and invalidated by epoch changes. Only builtin/program-function callees are
     /// cached; environment-dependent callees (host `fn`, MFn, natives) always re-resolve.
     pub callee_cache: RefCell<Vec<Option<(u64, Callee)>>>,
+    /// Multi-dimensional index shapes (spec §11.3): one entry per `IndexMulti` site, where `true`
+    /// marks a slice component (two stack operands) and `false` an element component (one operand).
+    pub index_specs: Vec<Vec<bool>>,
+    /// Statements delegated back to the AST at this point in the chunk (nested `fn` definitions).
+    /// Keeping them in a side table lets the VM execute the rest of the body natively.
+    pub fallback_stmts: Vec<Stmt>,
 }
 
 impl Chunk {
@@ -319,7 +337,23 @@ impl Chunk {
             upvalues: Vec::new(),
             lines: Vec::new(),
             callee_cache: RefCell::new(Vec::new()),
+            index_specs: Vec::new(),
+            fallback_stmts: Vec::new(),
         }
+    }
+
+    /// Register a multi-dimensional index shape, returning its `IndexMulti` operand.
+    pub fn add_index_spec(&mut self, shapes: Vec<bool>) -> u32 {
+        let id = self.index_specs.len() as u32;
+        self.index_specs.push(shapes);
+        id
+    }
+
+    /// Register an AST statement executed by `Op::EvalStmt`, returning its operand.
+    pub fn add_fallback_stmt(&mut self, stmt: Stmt) -> u32 {
+        let id = self.fallback_stmts.len() as u32;
+        self.fallback_stmts.push(stmt);
+        id
     }
 
     /// Push an instruction, recording its source line.
