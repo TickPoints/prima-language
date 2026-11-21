@@ -1561,7 +1561,6 @@ dependencies = [
  "cranelift-jit",
  "cranelift-module",
  "prima-core",
- "prima-syntax",
  "target-lexicon",
 ]
 

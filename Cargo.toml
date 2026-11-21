@@ -44,11 +44,6 @@ nalgebra = "0.33"
 serde_json = "1"
 rustyline = "15"
 criterion = "0.8"
-cranelift-codegen = "0.137"
-cranelift-frontend = "0.137"
-cranelift-jit = "0.137"
-cranelift-module = "0.137"
-target-lexicon = "0.13"
 tempfile = "3"
 
 [dependencies]
