@@ -132,6 +132,7 @@ pub(crate) struct FuncTrampolines {
     pub fill_u8: FuncId,
     pub fill_i64: FuncId,
     pub fill_f64: FuncId,
+    pub array_splice: FuncId,
     pub i64_rem: FuncId,
     pub f64_rem: FuncId,
     pub cancel: FuncId,
@@ -262,6 +263,10 @@ impl JitEngine {
                 crate::rt::pj_fill_f64 as *const () as *const u8,
             )
             .symbol(
+                "pj_array_splice",
+                crate::rt::pj_array_splice as *const () as *const u8,
+            )
+            .symbol(
                 "pj_i64_rem",
                 crate::rt::pj_i64_rem as *const () as *const u8,
             )
@@ -295,6 +300,11 @@ impl JitEngine {
         let s_fill_u8 = build_sig(module.isa(), &[ptr, types::I64, types::I8], None);
         let s_fill_i64 = build_sig(module.isa(), &[ptr, types::I64, types::I64], None);
         let s_fill_f64 = build_sig(module.isa(), &[ptr, types::I64, types::F64], None);
+        let s_array_splice = build_sig(
+            module.isa(),
+            &[ptr, ptr, types::I64, types::I64, ptr, types::I64],
+            Some(ptr),
+        );
         let s_i64_rem = build_sig(module.isa(), &[types::I64, types::I64], Some(types::I64));
         let s_cancel = build_sig(module.isa(), &[], Some(types::I8));
         let func = FuncTrampolines {
@@ -305,6 +315,7 @@ impl JitEngine {
             fill_u8: declare(&mut module, "pj_fill_u8", &s_fill_u8)?,
             fill_i64: declare(&mut module, "pj_fill_i64", &s_fill_i64)?,
             fill_f64: declare(&mut module, "pj_fill_f64", &s_fill_f64)?,
+            array_splice: declare(&mut module, "pj_array_splice", &s_array_splice)?,
             i64_rem: declare(&mut module, "pj_i64_rem", &s_i64_rem)?,
             f64_rem: rem,
             cancel: declare(&mut module, "pj_check_cancel", &s_cancel)?,

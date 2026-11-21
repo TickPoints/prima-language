@@ -53,6 +53,7 @@ impl Evaluator {
             current_module: String::new(),
             vm_frames_pool: Vec::new(),
             vm_stack_pool: Vec::new(),
+            path_stats: super::PathStats::default(),
         }
     }
 
@@ -84,6 +85,7 @@ impl Evaluator {
             current_module: String::new(),
             vm_frames_pool: Vec::new(),
             vm_stack_pool: Vec::new(),
+            path_stats: super::PathStats::default(),
         }
     }
 
@@ -325,7 +327,7 @@ impl Evaluator {
             .borrow()
             .get_func(name)
             .ok_or_else(|| unknown_function_error(env, name))?;
-        if let Some(v) = self.try_vm_call(&func, args.clone())? {
+        if let crate::vm::exec::VmOutcome::Hit(v) = self.try_vm_call(&func, args.clone())? {
             return Ok(v);
         }
         self.apply_function(&func, args)

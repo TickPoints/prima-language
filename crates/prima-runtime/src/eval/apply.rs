@@ -2,7 +2,7 @@
 //! (parallel and scalar-with-array), array binary ops, and the SIMD vector fast paths.
 
 use super::helpers::{
-    PARALLEL_BROADCAST_THRESHOLD, normalize_index, numeric_args, overload_key, path_key,
+    PARALLEL_BROADCAST_THRESHOLD, normalize_index, numeric_args, overload_key, path_key, real_args,
     require_numeric_array,
 };
 use super::*;
@@ -163,12 +163,19 @@ impl Evaluator {
                         args.len()
                     ));
                 }
-                // JIT hot path (spec §19.2): when every argument is a non-complex number, run the body
-                // natively. `@jit` forces compilation on the first call; otherwise the body is compiled
-                // once after `JIT_CALL_THRESHOLD` numeric calls. Failed compilations are cached so a
+                // JIT hot path (spec §19.2): `@jit` explicitly opts the function into `F64` numeric
+                // execution and accepts any non-complex number; automatic hot compilation is gated on
+                // all-`Real` arguments so `Integer`/`Rational` calls stay exact (§6.1). The body is
+                // compiled once after `JIT_CALL_THRESHOLD` calls. Failed compilations are cached so a
                 // non-numeric body always falls through to the interpreted path below.
-                if let Some(inputs) = numeric_args(&args) {
+                let jit_inputs = if hot.force {
+                    numeric_args(&args)
+                } else {
+                    real_args(&args)
+                };
+                if let Some(inputs) = jit_inputs {
                     if let Some(Some(f)) = hot.compiled.get() {
+                        self.path_stats.mfn_jit_hits += 1;
                         return Ok(Value::Number(Number::Real(Real::F64(f.call(&inputs)))));
                     }
                     if hot.compiled.get().is_none() {
@@ -176,7 +183,7 @@ impl Evaluator {
                         // compile on the call that makes the count reach `JIT_CALL_THRESHOLD` (spec §19.2
                         // default 100), so `for i in 1..100 { f(to_f64(i)) }` warms up and the next call
                         // (`f(to_f64(101))`) runs native. `@jit` (an execution-model annotation, §10.2)
-                        // forces compilation on the first numeric call at any tier.
+                        // forces compilation on the first call at any tier.
                         let c = hot.calls.fetch_add(1, AtomicOrdering::Relaxed);
                         let attempt = hot.force
                             || (self.current_config().opt_level >= OptLevel::O2
@@ -185,6 +192,7 @@ impl Evaluator {
                             let compiled = self.try_compile_body(params, body, f_env);
                             let _ = hot.compiled.set(compiled);
                             if let Some(Some(f)) = hot.compiled.get() {
+                                self.path_stats.mfn_jit_hits += 1;
                                 return Ok(Value::Number(Number::Real(Real::F64(f.call(&inputs)))));
                             }
                         }
@@ -210,17 +218,22 @@ impl Evaluator {
                 // out-of-range index) re-runs the call on the interpreter.
                 let tco = self.current_config().opt_level >= OptLevel::O2
                     && crate::opt::tail_call_of(body).is_some();
-                if !tco && let Some(v) = self.try_jit_call(params, body, jit, &args) {
-                    return Ok(v);
+                if !tco {
+                    match self.try_jit_call(params, body, jit, &args) {
+                        crate::jit_fn::JitOutcome::Hit(v) => return Ok(v),
+                        crate::jit_fn::JitOutcome::Deopt
+                        | crate::jit_fn::JitOutcome::Ineligible => {}
+                    }
                 }
                 // Bytecode VM fast path (spec §19.5, gated): when `vm` is enabled and the body is
                 // inside the compiled subset, run the chunk; otherwise fall back to the AST path.
-                if self.current_config().vm
-                    && !tco
-                    && let Some(v) = self.try_vm_single(params, body, f_env, vm, args.clone())?
-                {
-                    return Ok(v);
+                if self.current_config().vm && !tco {
+                    match self.try_vm_single(params, body, f_env, vm, args.clone())? {
+                        crate::vm::exec::VmOutcome::Hit(v) => return Ok(v),
+                        crate::vm::exec::VmOutcome::Fallback => {}
+                    }
                 }
+                self.path_stats.ast_calls += 1;
                 self.apply_host(params, body, f_env, args)
             }
             // A `@builtin(ON)` layered fn (spec §18.4): the Rust implementation is used when the
@@ -529,6 +542,15 @@ impl Evaluator {
             };
             av.with_mut(|items| items.extend(bv.to_vec()));
             return Ok(Value::Array(av));
+        }
+        // `broadcast := false` (spec §11.4) disables implicit scalar broadcasting for binary
+        // arithmetic too, not just pure-function calls. `Array + Array` concatenation returned
+        // above, and `Array ∘ Array` is documented elementwise, so only the scalar side is gated.
+        let scalar_side = matches!(&a, Value::Array(_)) != matches!(&b, Value::Array(_));
+        if scalar_side && !self.current_config().broadcast {
+            return crate::error::err(
+                "implicit broadcast is disabled (`broadcast := false`); use `@.`",
+            );
         }
         let out: Vec<Value> = match (a, b) {
             (Value::Array(av), Value::Array(bv)) => {

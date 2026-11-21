@@ -2158,8 +2158,8 @@ impl Evaluator {
                 }
                 let args = split_args(&mut vm.stack, argc as usize);
                 // Re-enter the VM through the per-definition chunk cache (spec §19.5);
-                // `Ok(None)` (outside the compiled subset) applies through the evaluator below.
-                if let Some(v) = self.try_vm_named(env, name, args.clone())? {
+                // `Fallback` (outside the compiled subset) applies through the evaluator below.
+                if let VmOutcome::Hit(v) = self.try_vm_named(env, name, args.clone())? {
                     vm.stack.push(v);
                     return Ok(());
                 }
@@ -2356,30 +2356,39 @@ fn single_entry_program(chunk: Chunk) -> VmProgram {
     }
 }
 
+/// Outcome of an attempted bytecode-VM call (spec §19.5). `Fallback` covers both "body outside the
+/// compiled subset" and a capability-limit fallback to the AST, so a caller (or a test) can never
+/// mistake a silent interpretation for a VM execution.
+pub(crate) enum VmOutcome {
+    Hit(Value),
+    Fallback,
+}
+
 impl Evaluator {
     /// Run a named function through the bytecode VM, compiling its body once per definition
     /// (spec §19.5): the compiled chunk is cached on the function value itself (an `OnceLock`,
     /// mirroring the JIT `HotState`); a redefinition binds a fresh function with a fresh cache.
     /// Compile failures are cached too, so a body outside the compiled subset is never
-    /// retried. Returns `Ok(None)` when the name does not resolve to a host `fn`, the arity
+    /// retried. Returns `Fallback` when the name does not resolve to a host `fn`, the arity
     /// mismatches, or the body is outside the compiled subset; genuine runtime errors propagate.
     pub(crate) fn try_vm_named(
         &mut self,
         env: &EnvRef,
         name: &str,
         args: Vec<Value>,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<VmOutcome, RuntimeError> {
         let Some(func) = env.borrow().get_func(name) else {
-            return Ok(None);
+            self.path_stats.vm_fallbacks += 1;
+            return Ok(VmOutcome::Fallback);
         };
         self.try_vm_call(&func, args)
     }
 
     /// Attempt to run a block-bodied function (`fn`) through the bytecode VM, compiling the body
     /// once per definition through `cache` (spec §19.5; compile failures are cached as `None`).
-    /// Returns `Ok(Some(value))` when the body compiles and runs, `Ok(None)` when the body
-    /// is outside the compiled subset (caller falls back to the AST), or a runtime error, which
-    /// propagates to the caller (an AST re-run would duplicate side effects, spec §19.5).
+    /// Returns `Hit` when the body compiles and runs, `Fallback` when it is outside the compiled
+    /// subset (caller falls back to the AST), or a runtime error, which propagates to the caller
+    /// (an AST re-run would duplicate side effects, spec §19.5).
     pub(crate) fn try_vm_single(
         &mut self,
         params: &[prima_syntax::ast::Param],
@@ -2387,10 +2396,11 @@ impl Evaluator {
         f_env: &EnvRef,
         cache: &crate::eval::VmChunkCache,
         args: Vec<Value>,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<VmOutcome, RuntimeError> {
         if args.len() != params.len() {
             // Arity errors are reported by the authoritative AST path (spec §11).
-            return Ok(None);
+            self.path_stats.vm_fallbacks += 1;
+            return Ok(VmOutcome::Fallback);
         }
         let program = cache.get_or_init(|| {
             crate::vm::comp::compile_function_body(params, body)
@@ -2399,28 +2409,35 @@ impl Evaluator {
                 .map(Rc::new)
         });
         let Some(program) = program else {
-            return Ok(None); // outside the compiled subset → AST fallback
+            self.path_stats.vm_fallbacks += 1;
+            return Ok(VmOutcome::Fallback); // outside the compiled subset → AST fallback
         };
         // Parameters bind into slots by the chunk's leading `BindParams`, which consumes the
         // argument values from the operand stack (and uses the closure env for free names).
         match self.run_vm(f_env, program, Some(("__entry", args))) {
-            Ok(v) => Ok(Some(v)),
+            Ok(v) => {
+                self.path_stats.vm_hits += 1;
+                Ok(VmOutcome::Hit(v))
+            }
             // A VM capability limit falls back to the AST interpreter; a genuine runtime error
             // propagates (re-running on the AST would duplicate side effects, spec §19.5).
-            Err(e) if is_vm_limit(&e) => Ok(None),
+            Err(e) if is_vm_limit(&e) => {
+                self.path_stats.vm_fallbacks += 1;
+                Ok(VmOutcome::Fallback)
+            }
             Err(e) => Err(e),
         }
     }
 
     /// Attempt to run a resolved function value through the bytecode VM (spec §19.5): like
     /// [`Self::try_vm_single`] but taking the function value, so `vm_call_function` (benchmarks,
-    /// C-ABI) shares the per-definition chunk cache. Returns `Ok(None)` for anything but a host
+    /// C-ABI) shares the per-definition chunk cache. Returns `Fallback` for anything but a host
     /// `fn` inside the compiled subset; genuine runtime errors propagate.
     pub(crate) fn try_vm_call(
         &mut self,
         func: &Function,
         args: Vec<Value>,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<VmOutcome, RuntimeError> {
         match func {
             Function::Host {
                 params,
@@ -2429,7 +2446,10 @@ impl Evaluator {
                 vm,
                 ..
             } => self.try_vm_single(params, body, f_env, vm, args),
-            _ => Ok(None),
+            _ => {
+                self.path_stats.vm_fallbacks += 1;
+                Ok(VmOutcome::Fallback)
+            }
         }
     }
 }

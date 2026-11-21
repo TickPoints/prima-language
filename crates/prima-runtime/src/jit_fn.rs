@@ -114,6 +114,13 @@ impl Lowerer {
         self.slot_types[slot as usize] = Some(ty);
     }
 
+    /// Materialize an `i64` constant in a fresh slot (operands such as omitted slice bounds).
+    fn i64_const(&mut self, v: i64) -> u16 {
+        let dst = self.alloc(Some(SlotType::Scalar(ScalarType::I64)));
+        self.ops.push(IrOp::ConstI64 { dst, v });
+        dst
+    }
+
     fn bind(&mut self, name: &str, slot: u16) {
         self.scopes
             .last_mut()
@@ -154,6 +161,7 @@ impl Lowerer {
             | IrOp::FloatCmp { dst, .. }
             | IrOp::BoolNot { dst, .. }
             | IrOp::NewArray { dst, .. }
+            | IrOp::ArrayCopy { dst, .. }
             | IrOp::ArrayLen { dst, .. }
             | IrOp::ArrayGet { dst, .. } => *dst,
             _ => 0,
@@ -209,12 +217,15 @@ impl Lowerer {
     fn stmt(&mut self, s: &Stmt, tail: bool) -> Option<()> {
         match s {
             Stmt::Let { pat, value, .. } => {
+                let aliases = matches!(&value.kind, ExprKind::Path { .. });
                 let v = self.expr(value)?;
-                self.bind_pat(pat, v)
+                self.bind_pat(pat, v, aliases)
             }
             Stmt::Const { name, value, .. } => {
+                let aliases = matches!(&value.kind, ExprKind::Path { .. });
                 let v = self.expr(value)?;
-                self.bind(&name.value, v.slot());
+                let slot = self.binding_slot(v, aliases)?;
+                self.bind(&name.value, slot);
                 Some(())
             }
             Stmt::Assign {
@@ -281,14 +292,44 @@ impl Lowerer {
         Some(())
     }
 
-    fn bind_pat(&mut self, pat: &Pattern, v: Val) -> Option<()> {
+    fn bind_pat(&mut self, pat: &Pattern, v: Val, aliases: bool) -> Option<()> {
         match pat {
             Pattern::Binding(name) => {
-                self.bind(&name.value, v.slot());
+                let slot = self.binding_slot(v, aliases)?;
+                self.bind(&name.value, slot);
                 Some(())
             }
             Pattern::Wildcard(_) => Some(()),
             _ => None,
+        }
+    }
+
+    /// Slot to bind a name to. Binding one local array to another (`let b = a`) must copy the buffer
+    /// (spec §11.3 value semantics): the JIT arena has no reference count, so sharing the header would
+    /// make `b[i] = v` mutate `a` as well.
+    fn binding_slot(&mut self, v: Val, aliases: bool) -> Option<u16> {
+        if !aliases {
+            return Some(v.slot());
+        }
+        let Val::Array(src) = v else {
+            return Some(v.slot());
+        };
+        match self.var_type(src) {
+            Some(SlotType::Array(et)) => {
+                let dst = self.alloc(Some(SlotType::Array(et)));
+                self.ops.push(IrOp::ArrayCopy { dst, src });
+                Some(dst)
+            }
+            // An unresolved empty array has no elements to share yet: give the copy its own buffer.
+            None => {
+                let dst = self.alloc(None);
+                self.ops.push(IrOp::NewArray {
+                    dst,
+                    elem: ElemType::F64,
+                });
+                Some(dst)
+            }
+            Some(SlotType::Scalar(_)) => None,
         }
     }
 
@@ -325,26 +366,99 @@ impl Lowerer {
                 if index.items.len() != 1 {
                     return None;
                 }
-                let IndexItem::Elem(ie) = &index.items[0] else {
-                    return None;
-                };
-                let idx = self.expr(ie)?.scalar()?;
-                let (idx_slot, _) = self.coerce(idx, ScalarType::I64)?;
-                if op != AssignOp::Assign {
-                    return None;
-                }
-                let v = self.expr(value)?;
-                match (v, elem) {
-                    (Val::Scalar(src, sty), et) => {
-                        let (src, _) = self.coerce((src, sty), elem_scalar(et))?;
-                        self.emit(IrOp::ArraySet {
+                match &index.items[0] {
+                    IndexItem::Elem(ie) => {
+                        let idx = self.expr(ie)?.scalar()?;
+                        let (idx_slot, _) = self.coerce(idx, ScalarType::I64)?;
+                        let et = elem_scalar(elem);
+                        match op {
+                            AssignOp::Assign => {
+                                let v = self.expr(value)?;
+                                match (v, elem) {
+                                    (Val::Scalar(src, sty), _) => {
+                                        let (src, _) = self.coerce((src, sty), et)?;
+                                        self.emit(IrOp::ArraySet {
+                                            arr: arr.0,
+                                            idx: idx_slot,
+                                            src,
+                                        });
+                                        Some(())
+                                    }
+                                    _ => None,
+                                }
+                            }
+                            // `a[i] += v` / `a[i] -= v` (spec §11.3): read the current element,
+                            // combine, and store it back through the same index register (CoW is
+                            // irrelevant here because the array slot is the sole handle the JIT can
+                            // mutate).
+                            AssignOp::AddAssign | AssignOp::SubAssign => {
+                                let cur = self.alloc(Some(SlotType::Scalar(et)));
+                                self.emit(IrOp::ArrayGet {
+                                    dst: cur,
+                                    arr: arr.0,
+                                    idx: idx_slot,
+                                });
+                                let (rhs, rty) = self.expr(value)?.scalar()?;
+                                let (rhs, _) = self.coerce((rhs, rty), et)?;
+                                let (iop, fop) = if op == AssignOp::AddAssign {
+                                    (IntOp::Add, FloatOp::Add)
+                                } else {
+                                    (IntOp::Sub, FloatOp::Sub)
+                                };
+                                self.emit_bin_into(cur, cur, rhs, et, iop, fop);
+                                self.emit(IrOp::ArraySet {
+                                    arr: arr.0,
+                                    idx: idx_slot,
+                                    src: cur,
+                                });
+                                Some(())
+                            }
+                        }
+                    }
+                    // `a[lo..hi] = rhs` (spec §11.3): the splice helper allocates a fresh buffer and
+                    // returns the new header; an invalid range deopts to the interpreter.
+                    IndexItem::Slice { start, end } => {
+                        if op != AssignOp::Assign {
+                            return None;
+                        }
+                        let lo = match start {
+                            Some(e) => {
+                                let (slot, ty) = self.expr(e)?.scalar()?;
+                                self.coerce((slot, ty), ScalarType::I64)?.0
+                            }
+                            None => self.i64_const(0),
+                        };
+                        // `i64::MAX` is the "omitted end" sentinel understood by `pj_array_splice`.
+                        let hi = match end {
+                            Some(e) => {
+                                let (slot, ty) = self.expr(e)?.scalar()?;
+                                self.coerce((slot, ty), ScalarType::I64)?.0
+                            }
+                            None => self.i64_const(i64::MAX),
+                        };
+                        // An empty literal has no element type of its own; give it the target's type so
+                        // the IR still has a fully resolved slot table.
+                        let (src, src_elem) = if matches!(&value.kind, ExprKind::Array(items) if items.is_empty())
+                        {
+                            let dst = self.alloc(Some(SlotType::Array(elem)));
+                            self.ops.push(IrOp::NewArray { dst, elem });
+                            (dst, Some(elem))
+                        } else {
+                            self.array_of(value)?
+                        };
+                        if let Some(se) = src_elem
+                            && se != elem
+                        {
+                            return None;
+                        }
+                        self.ops.push(IrOp::ArraySplice {
                             arr: arr.0,
-                            idx: idx_slot,
+                            lo,
+                            hi,
                             src,
                         });
                         Some(())
                     }
-                    _ => None,
                 }
             }
             _ => None,
@@ -838,34 +952,56 @@ fn slot_scalar_type(t: SlotType) -> Option<ScalarType> {
     }
 }
 
+/// Outcome of an attempted whole-function JIT call (spec §19.2). Callers use it to keep the
+/// observable behavior and the path counters in sync: only `Hit` means native code actually ran.
+pub(crate) enum JitOutcome {
+    Hit(Value),
+    /// Compiled code ran but deoptimized (exact-arithmetic overflow / out-of-range index), so the
+    /// caller re-runs the call on the interpreter.
+    Deopt,
+    /// The JIT declined before running: disabled by `opt_level`, body outside the numeric subset,
+    /// arity mismatch, or an argument that is not a faithful scalar.
+    Ineligible,
+}
+
 impl Evaluator {
-    /// Try to run a host `fn` through the whole-function JIT (spec §19.2). Returns `None` when the
-    /// JIT is disabled, the body is outside the numeric subset, an argument is incompatible, or the
-    /// compiled code deopted (exact-arithmetic overflow / out-of-range index); the caller then uses
-    /// the VM/AST path. The JIT is pure, so a deopt re-run cannot duplicate side effects.
+    /// Try to run a host `fn` through the whole-function JIT (spec §19.2). Returns `Ineligible` when
+    /// the JIT is disabled, the body is outside the numeric subset, or an argument is incompatible;
+    /// `Deopt` when the compiled code deoptimized (the caller then uses the VM/AST path). The JIT is
+    /// pure, so a deopt re-run cannot duplicate side effects.
     pub(crate) fn try_jit_call(
-        &self,
+        &mut self,
         params: &[Param],
         body: &Block,
         cache: &JitFnCache,
         args: &[Value],
-    ) -> Option<Value> {
+    ) -> JitOutcome {
         if self.current_config().opt_level < OptLevel::O2 || args.len() != params.len() {
-            return None;
+            self.path_stats.jit_ineligible += 1;
+            return JitOutcome::Ineligible;
         }
         let compiled =
             cache.get_or_init(|| lower_fn(params, body).and_then(|ir| prima_jit::compile_ir(&ir)));
-        let compiled = compiled.as_ref()?;
+        let Some(compiled) = compiled.as_ref() else {
+            self.path_stats.jit_ineligible += 1;
+            return JitOutcome::Ineligible;
+        };
         let mut words = Vec::with_capacity(args.len());
         for (v, ty) in args.iter().zip(&compiled.params) {
-            words.push(value_to_jit_word(v, *ty)?);
+            let Some(word) = value_to_jit_word(v, *ty) else {
+                self.path_stats.jit_ineligible += 1;
+                return JitOutcome::Ineligible;
+            };
+            words.push(word);
         }
         let mut ctx = prima_jit::JitContext::default();
         let raw = compiled.call_raw(&mut ctx, &words);
         if ctx.error != 0 {
-            return None;
+            self.path_stats.jit_deopts += 1;
+            return JitOutcome::Deopt;
         }
-        Some(jit_word_to_value(raw, compiled.ret))
+        self.path_stats.jit_hits += 1;
+        JitOutcome::Hit(jit_word_to_value(raw, compiled.ret))
     }
 }
 
@@ -912,6 +1048,28 @@ mod jit_lower_tests {
             }
         }
         None
+    }
+
+    #[test]
+    fn lower_slice_assignment() {
+        for (name, stmt) in [
+            ("bounded", "a[1..3] = [10, 20, 30];"),
+            ("insert", "a[0..0] = [7];"),
+            ("open_end_value", "a[1..] = [9];"),
+            ("negative_start_value", "a[-1..] = [9];"),
+            ("open_end_empty", "a[1..] = [];"),
+            ("negative_start_empty", "a[-1..] = [];"),
+        ] {
+            let src = format!(
+                "pub fn main(n: Integer) -> Integer {{\n    let mut a = [];\n    for i in 0..n {{ a.push(i); }}\n    {stmt}\n    a.len()\n}}"
+            );
+            let (params, body) = first_fn(&src).expect("fn");
+            let ir = lower_fn(&params, &body).unwrap_or_else(|| panic!("{name}: lowering failed"));
+            assert!(
+                prima_jit::compile_ir(&ir).is_some(),
+                "{name}: cranelift compilation failed"
+            );
+        }
     }
 
     #[test]

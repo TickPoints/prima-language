@@ -70,8 +70,24 @@ pub(crate) fn path_key(segments: &[Spanned<String>]) -> String {
         .join("::")
 }
 
+/// Map arguments to `f64` when every argument is a `Real`; otherwise `None`. Automatic hot-path
+/// compilation is restricted to `Real` arguments so `Integer`/`Rational` calls stay exact
+/// (spec §19.2, §6.1); `@jit` uses [`numeric_args`] instead because it explicitly opts into `F64`
+/// numeric execution.
+pub(crate) fn real_args(args: &[Value]) -> Option<Vec<f64>> {
+    let mut out = Vec::with_capacity(args.len());
+    for a in args {
+        if let Value::Number(n @ Number::Real(_)) = a {
+            out.push(n.to_f64_lossy());
+        } else {
+            return None;
+        }
+    }
+    Some(out)
+}
+
 /// Map arguments to `f64` when every argument is a non-complex number; otherwise `None` (spec §19.2:
-/// only numeric scalars participate in the JIT hot path).
+/// only numeric scalars participate in the JIT hot path). Used by explicit `@jit` functions.
 pub(crate) fn numeric_args(args: &[Value]) -> Option<Vec<f64>> {
     let mut out = Vec::with_capacity(args.len());
     for a in args {

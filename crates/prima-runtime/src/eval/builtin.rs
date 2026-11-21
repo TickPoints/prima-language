@@ -460,6 +460,19 @@ impl Evaluator {
                 if args.len() != 1 {
                     return crate::error::err("math function expects one argument");
                 }
+                // Real-domain policy (spec §6.5): `sqrt`/`log`/`ln` of a negative value is a domain
+                // error instead of being folded to `NaN`. Without this check `simplify` would turn
+                // `sqrt(-1.0)` into NaN before the policy could see it.
+                if self.current_config().domain == Domain::Real
+                    && matches!(b, Builtin::Sqrt | Builtin::Log | Builtin::Ln)
+                    && let Value::Number(n) = &args[0]
+                    && !n.is_complex()
+                    && n.to_f64_lossy() < 0.0
+                {
+                    return Err(RuntimeError::Domain(
+                        "negative argument requires `domain := complex`".into(),
+                    ));
+                }
                 let arg_id = self.to_expr_id(&args[0])?;
                 let app = self.pool.apply(f_id, &[arg_id]);
                 let simp = self.simplify_current(app);

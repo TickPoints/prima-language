@@ -336,6 +336,78 @@ impl Compiler {
                 chunk.emit(Op::Pop, 0);
                 Ok(())
             }
+            (ExprKind::Index { base, index }, op @ (AssignOp::AddAssign | AssignOp::SubAssign)) => {
+                // `a[i] += v` / `a[i] -= v` (spec §11.3): read-modify-write entirely in the register
+                // channel, so no stack copy of the array can be written back by mistake. Slice
+                // compound assignment is not meaningful and stays outside the subset.
+                if index.items.len() != 1 {
+                    return Err("VM compiler: multi-dimensional index-assign unsupported".into());
+                }
+                let IndexItem::Elem(idx) = &index.items[0] else {
+                    return Err("VM compiler: compound slice assignment unsupported".into());
+                };
+                let name = match &base.kind {
+                    ExprKind::Path { segments } if segments.len() == 1 => &segments[0].value,
+                    _ => {
+                        return Err(
+                            "VM compiler: compound index-assign target must be a variable".into(),
+                        );
+                    }
+                };
+                let Some(arr) = scope.slot_of(name) else {
+                    // Non-local targets use the AST authority (value write-back along the chain).
+                    return Err(
+                        "VM compiler: compound index-assign to a non-local unsupported".into(),
+                    );
+                };
+                let ai = match op {
+                    AssignOp::AddAssign => ArithOp::Add,
+                    AssignOp::SubAssign => ArithOp::Sub,
+                    _ => unreachable!("matched compound assignment"),
+                };
+                let idx_slot = scope.alloc_temp(chunk)?;
+                if let Err(e) = self.compile_expr_into(chunk, scope, idx, idx_slot) {
+                    scope.free_temp(idx_slot);
+                    return Err(e);
+                }
+                let cur = scope.alloc_temp(chunk)?;
+                chunk.emit(
+                    Op::RegIndex {
+                        dst: cur,
+                        arr,
+                        idx: idx_slot,
+                    },
+                    0,
+                );
+                let rhs = scope.alloc_temp(chunk)?;
+                if let Err(e) = self.compile_expr_into(chunk, scope, value, rhs) {
+                    scope.free_temp(rhs);
+                    scope.free_temp(cur);
+                    scope.free_temp(idx_slot);
+                    return Err(e);
+                }
+                chunk.emit(
+                    Op::RegBin {
+                        op: ai,
+                        dst: cur,
+                        a: cur,
+                        b: rhs,
+                    },
+                    0,
+                );
+                chunk.emit(
+                    Op::RegIndexStore {
+                        arr,
+                        idx: idx_slot,
+                        src: cur,
+                    },
+                    0,
+                );
+                scope.free_temp(rhs);
+                scope.free_temp(cur);
+                scope.free_temp(idx_slot);
+                Ok(())
+            }
             (ExprKind::Path { segments }, op) if segments.len() == 1 => {
                 // Compound `x op= v` → x = x op v (only for a local). Stack order [x, v].
                 let name = &segments[0].value;
