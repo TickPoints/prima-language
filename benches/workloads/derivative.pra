@@ -1,0 +1,13 @@
+// Symbolic differentiation workload (spec §19.4): differentiate and simplify a compound expression,
+// checksumming the rendered LaTeX length.
+pub fn main(n: Integer) -> Integer {
+    let mut acc = 0;
+    let mut i = 0;
+    while i < n {
+        let e = tex"\sin(x^2) * \exp(x) + x^3";
+        let d = derivative(e, x);
+        acc += to_string(simplify(d)).len();
+        i += 1;
+    }
+    acc
+}

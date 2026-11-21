@@ -1,0 +1,12 @@
+// String workload (spec §18.1): split and re-join a fixed CSV row repeatedly, checksumming the
+// joined length.
+pub fn main(n: Integer) -> Integer {
+    let mut acc = 0;
+    let mut i = 0;
+    while i < n {
+        let parts = "alpha,beta,gamma,delta".split(",");
+        acc += "-".join(parts).len();
+        i += 1;
+    }
+    acc
+}

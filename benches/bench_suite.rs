@@ -1,18 +1,25 @@
-//! Cross-language performance benchmark suite (bench/RESULTS.md).
+//! Cross-language and internal performance baseline (benches/RESULTS.md).
 //!
-//! Measures the steady-state execution time of a fixed set of deterministic kernels across three
-//! implementations of the *same* semantics:
+//! Measures the steady-state execution time of a fixed set of deterministic kernels:
 //!
-//! - **Prima**: loaded in-process through `Evaluator::eval_file_keep_env` and invoked via
-//!   `call_function` on a warm environment (no per-run parse/startup cost; the symbol + numeric
-//!   layers stay resident). This is the number the language reports.
-//! - **Rust**: a native reference closure with the identical loop structure (upper bound).
+//! - **Prima**: loaded in-process through `Evaluator::eval_file_keep_env` and invoked on a warm
+//!   environment (no per-run parse/startup cost). Each kernel is measured on the authoritative AST
+//!   path (`ast_call_function`), the bytecode VM (`vm_call_function`), and the default dispatch
+//!   chain JIT → VM → AST (`call_function`).
+//! - **Rust**: a native reference closure with the identical loop structure (upper bound), for the
+//!   numeric kernels where an equivalent scalar reference is meaningful.
 //! - **Python**: the CPython reference (`benches/bench_ref.py`), run as a subprocess that times its
-//!   own kernel via `perf_counter` so interpreter startup is excluded (best-effort parity with the
-//!   in-process Prima/Rust measurement).
+//!   own kernel via `perf_counter` so interpreter startup is excluded.
 //!
-//! Run with `cargo bench --bench bench_suite` (harness = false) or `cargo run --release --bench bench_suite`.
-//! Results are written to `benches/RESULTS.md` (`--update` to regenerate; default prints the table).
+//! Symbolic and collection workloads have no cross-language reference: they establish an internal
+//! baseline for the parts of the language that have no natural Python/Rust one-liner. They still
+//! assert AST/VM/default correctness before timing is reported.
+//!
+//! Run with `cargo bench --bench bench_suite` (harness = false) or
+//! `cargo run --release --bench bench_suite`. Results are written to `benches/RESULTS.md`.
+//!
+//! NOTE: results are only comparable on the same machine, toolchain, and build profile; the file
+//! records all three. Existing numbers are historical references, not cross-machine thresholds.
 
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
@@ -24,14 +31,26 @@ use prima_language::{
     prima_runtime::Evaluator,
 };
 
-/// Per-workload configuration: a Prima `.pra` kernel file, a Python reference name, the parameter,
-/// and a Rust reference closure returning `f64` (kernels are scalar-valued).
+/// Which Prima execution path a timed run uses.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PrimaPath {
+    /// Authoritative AST interpreter (`ast_call_function`).
+    Ast,
+    /// Bytecode VM (`vm_call_function`; falls back to the default dispatch when the body is outside
+    /// the compiled subset).
+    Vm,
+    /// Default dispatch: whole-function JIT → bytecode VM → AST (`call_function`).
+    Default,
+}
+
+/// Per-workload configuration. `py`/`rust` are `None` for symbolic and collection workloads, which
+/// have no cross-language reference with identical semantics.
 struct Workload {
     name: &'static str,
     pra: &'static str,
-    py: &'static str,
+    py: Option<&'static str>,
     n: i64,
-    rust: fn(i64) -> f64,
+    rust: Option<fn(i64) -> f64>,
 }
 
 /// Rudimentary median-of-runs timing: run `warmup` untimed iterations, then time `samples` runs and
@@ -51,11 +70,11 @@ fn time_median(mut func: impl FnMut(), samples: u32, warmup: u32) -> Duration {
     times.sort();
     times[times.len() / 2]
 }
-/// Time one Prima workload at a fixed parameter `n`. When `vm` is true, the kernel is run through
-/// the bytecode VM (spec §19.5) via `Evaluator::vm_call_function`; otherwise the AST interpreter runs
-/// it via `call_function`. Both run in-process and warm, so parsing/module loading are excluded.
-/// Returns the median wall time and the kernel's result value for cross-language verification.
-fn time_prima(pra: &str, n: i64, samples: u32, warmup: u32, vm: bool) -> (Duration, f64) {
+
+/// Time one Prima workload at a fixed parameter `n` on `path`. The environment is warm, so parsing
+/// and module loading are excluded. Returns the median wall time and the kernel's result value for
+/// cross-path correctness checks.
+fn time_prima(pra: &str, n: i64, samples: u32, warmup: u32, path: PrimaPath) -> (Duration, f64) {
     let mut ev = Evaluator::with_sink(|_| {});
     let env = ev
         .eval_file_keep_env(Path::new(pra))
@@ -64,11 +83,10 @@ fn time_prima(pra: &str, n: i64, samples: u32, warmup: u32, vm: bool) -> (Durati
     let mut result = 0.0f64;
     let d = time_median(
         || {
-            let v = if vm {
-                // Default execution path: whole-function JIT → bytecode VM → AST.
-                ev.call_function(&env, "main", vec![arg.clone()])
-            } else {
-                ev.ast_call_function(&env, "main", vec![arg.clone()])
+            let v = match path {
+                PrimaPath::Ast => ev.ast_call_function(&env, "main", vec![arg.clone()]),
+                PrimaPath::Vm => ev.vm_call_function(&env, "main", vec![arg.clone()]),
+                PrimaPath::Default => ev.call_function(&env, "main", vec![arg.clone()]),
             }
             .expect("kernel must run");
             result = value_to_f64(&v);
@@ -237,44 +255,83 @@ fn workloads() -> Vec<Workload> {
         Workload {
             name: "sumsq",
             pra: "benches/workloads/sumsq.pra",
-            py: "sumsq",
+            py: Some("sumsq"),
             n: 200_000,
-            rust: ref_sumsq,
+            rust: Some(ref_sumsq),
         },
         Workload {
             name: "pi",
             pra: "benches/workloads/pi.pra",
-            py: "pi",
+            py: Some("pi"),
             n: 100_000,
-            rust: ref_pi,
+            rust: Some(ref_pi),
         },
         Workload {
             name: "fib",
             pra: "benches/workloads/fib.pra",
-            py: "fib",
+            py: Some("fib"),
             n: 30,
-            rust: ref_fib,
+            rust: Some(ref_fib),
         },
         Workload {
             name: "sieve",
             pra: "benches/workloads/sieve.pra",
-            py: "sieve",
+            py: Some("sieve"),
             n: 5_000,
-            rust: ref_sieve,
+            rust: Some(ref_sieve),
         },
         Workload {
             name: "dot",
             pra: "benches/workloads/dot.pra",
-            py: "dot",
+            py: Some("dot"),
             n: 3_000,
-            rust: ref_dot,
+            rust: Some(ref_dot),
         },
         Workload {
             name: "poly",
             pra: "benches/workloads/poly.pra",
-            py: "poly",
+            py: Some("poly"),
             n: 50_000,
-            rust: ref_poly,
+            rust: Some(ref_poly),
+        },
+        // Internal baseline: symbolic work has no natural Python/Rust scalar reference.
+        Workload {
+            name: "simplify",
+            pra: "benches/workloads/simplify.pra",
+            py: None,
+            n: 2_000,
+            rust: None,
+        },
+        Workload {
+            name: "derivative",
+            pra: "benches/workloads/derivative.pra",
+            py: None,
+            n: 2_000,
+            rust: None,
+        },
+        // Internal baseline: collections exercise the AST/VM array, dict, and string paths.
+        // Kept small enough to stay a baseline rather than an O(n²) stress test: the AST array
+        // `push` and dict index-assignment paths copy on write, so large sizes dominate wall time.
+        Workload {
+            name: "sort",
+            pra: "benches/workloads/sort.pra",
+            py: None,
+            n: 5_000,
+            rust: None,
+        },
+        Workload {
+            name: "dict",
+            pra: "benches/workloads/dict.pra",
+            py: None,
+            n: 2_000,
+            rust: None,
+        },
+        Workload {
+            name: "strings",
+            pra: "benches/workloads/strings.pra",
+            py: None,
+            n: 5_000,
+            rust: None,
         },
     ]
 }
@@ -283,41 +340,127 @@ fn fmt_ns(d: Duration) -> String {
     format!("{:.0} ns", d.as_nanos())
 }
 
+fn fmt_opt_ns(d: Option<Duration>) -> String {
+    d.map_or_else(|| "-".to_string(), fmt_ns)
+}
+
+fn fmt_mult(a: Duration, b: Option<Duration>) -> String {
+    b.map_or_else(
+        || "-".to_string(),
+        |b| {
+            let x = a.as_secs_f64() / b.as_secs_f64();
+            // Sub-0.1 multipliers would round to "0.0×" and hide which side is faster.
+            if x < 0.1 {
+                format!("{x:.2}×")
+            } else {
+                format!("{x:.1}×")
+            }
+        },
+    )
+}
+
+/// CPU model for the results header (Linux `/proc/cpuinfo`; falls back to the architecture).
+fn cpu_model() -> String {
+    if let Ok(text) = std::fs::read_to_string("/proc/cpuinfo")
+        && let Some(line) = text
+            .lines()
+            .find(|l| l.starts_with("model name") || l.starts_with("Model"))
+        && let Some(value) = line.split(':').nth(1)
+    {
+        return value.trim().to_string();
+    }
+    std::env::consts::ARCH.to_string()
+}
+
+/// `rustc -V`, or `-` when the toolchain is not on `PATH`.
+fn rustc_version() -> String {
+    Command::new("rustc")
+        .arg("-V")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+/// Short commit hash, or `-` outside a git checkout. A dirty worktree is marked so results are not
+/// mistaken for a tagged revision.
+fn commit_hash() -> String {
+    let mut hash = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| "-".to_string());
+    if let Ok(status) = Command::new("git").args(["status", "--porcelain"]).output()
+        && !status.stdout.is_empty()
+    {
+        hash.push_str("-dirty");
+    }
+    hash
+}
+
+/// UTC timestamp (`date -u`), or `-` when the command is unavailable.
+fn utc_now() -> String {
+    Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn environment_header() -> String {
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    format!(
+        "- CPU: {}\n- OS: {} {}\n- Toolchain: {}\n- Build: `{}` (cargo bench)\n- Commit: `{}`\n- Measured: {}\n- Samples: {SAMPLES} timed runs after {WARMUP} warmup runs per combination\n\n",
+        cpu_model(),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        rustc_version(),
+        profile,
+        commit_hash(),
+        utc_now()
+    )
+}
+
 fn main() {
     prima_language::prima_stdlib::init();
     let py_file = PathBuf::from("benches/bench_ref.py");
     let wl = workloads();
     let mut table = String::new();
-    table.push_str("# Prima vs Python vs Rust — benchmark results\n\n");
-    table.push_str("Deterministic, scalar-valued kernels measured in steady state: Prima and Rust run in-process\n");
-    table.push_str("(warm interpreter/native, so parsing and module loading are excluded); Python times its own\n");
+    table.push_str("# Prima execution-path and cross-language baseline\n\n");
     table.push_str(
-        "kernel with `perf_counter` so interpreter startup is excluded too. Times are medians of\n",
-    );
-    table.push_str("repeated runs; the `Python ×` and `Rust ×` columns are the multiplier by which the reference\n");
-    table.push_str(
-        "implementation is *faster* than Prima (1.0× = equal, higher = reference wins).\n\n",
+        "Deterministic, scalar-valued kernels measured in steady state: Prima runs in-process\n",
     );
     table.push_str(
-        "NOTE: the `Prima default` column is the default execution path — the whole-function JIT\n",
+        "(warm environment, so parsing and module loading are excluded); Python times its own\n",
+    );
+    table.push_str("kernel with `perf_counter` so interpreter startup is excluded too.\n\n");
+    table.push_str(
+        "**Columns**: `AST` is the authoritative interpreter, `VM` forces the bytecode VM, and\n",
     );
     table.push_str(
-        "(spec §19.2) at `opt_level >= O2`, else the bytecode VM (spec §19.5), else the AST; the\n",
+        "`default` is the JIT → VM → AST dispatch. `AST/default` and `VM/default` are how many\n",
     );
+    table.push_str("times faster the default path is than each interpreter (higher = the fast path helps more).\n");
+    table.push_str("`Python ×` and `Rust ×` are the multiplier by which the reference is *faster* than Prima\n");
+    table.push_str("(1.0× = equal; below 1 means Prima is faster).\n\n");
     table.push_str(
-        "`Prima AST` column is the authoritative AST interpreter (`Evaluator::ast_call_function`).\n",
+        "Numeric kernels have Python/Rust references; `-` marks symbolic and collection\n",
     );
-    table.push_str(
-        "`Python ×` and `Rust ×` are the default-path multipliers — the acceptance metric.\n\n",
-    );
-    table.push_str(
-        "Regenerate with `cargo bench --bench bench_suite` (see benches/bench_suite.rs).\n\n",
-    );
-    table.push_str(
-        "`default/AST ×` is how much faster the default path is than the AST interpreter.\n\n",
-    );
-    table.push_str("| workload | n | Prima AST (ns) | Prima default (ns) | Python (ns) | Rust (ns) | default/AST × | Python × | Rust × |\n");
-    table.push_str("|---|---|---|---|---|---|---|---|---|\n");
+    table.push_str("workloads that only establish an internal before/after baseline.\n\n");
+    table.push_str("**Comparability**: these results are only meaningful on the same machine, toolchain, and\n");
+    table.push_str("build profile. Existing numbers are historical references, not cross-machine thresholds.\n\n");
+    table.push_str(&environment_header());
+    table.push_str("| workload | n | AST (ns) | VM (ns) | default (ns) | Python (ns) | Rust (ns) | AST/default | VM/default | Python × | Rust × |\n");
+    table.push_str("|---|---|---|---|---|---|---|---|---|---|---|\n");
 
     println!(
         "running {} workloads ({SAMPLES} samples, {WARMUP} warmup)...",
@@ -325,56 +468,65 @@ fn main() {
     );
 
     for w in &wl {
-        let (p, pv) = time_prima(w.pra, w.n, SAMPLES, WARMUP, false);
-        let (pv_t, pv_v) = time_prima(w.pra, w.n, SAMPLES, WARMUP, true);
-        let (py, pyv) = time_python(&py_file, w.py, w.n, SAMPLES);
-        let rv = (w.rust)(w.n);
-        let r = time_rust(w.rust, w.n, SAMPLES, WARMUP);
+        let (ast, ast_v) = time_prima(w.pra, w.n, SAMPLES, WARMUP, PrimaPath::Ast);
+        let (vm, vm_v) = time_prima(w.pra, w.n, SAMPLES, WARMUP, PrimaPath::Vm);
+        let (default, default_v) = time_prima(w.pra, w.n, SAMPLES, WARMUP, PrimaPath::Default);
 
-        // Cross-language correctness: the three implementations of the same kernel must agree.
+        // Cross-path correctness: the three Prima paths must agree before timing is reported.
         let name = w.name;
-        let prim_vs_py = (pv - pyv).abs() / pv.abs().max(1e-12);
-        let prim_vs_rust = (pv - rv).abs() / pv.abs().max(1e-12);
         assert!(
-            prim_vs_py < 1e-6,
-            "{}: prima={pv} python={pyv} disagree",
-            name
+            (ast_v - default_v).abs() / ast_v.abs().max(1e-12) < 1e-6,
+            "{name}: ast={ast_v} default={default_v} disagree"
         );
         assert!(
-            prim_vs_rust < 1e-6,
-            "{}: prima={pv} rust={rv} disagree",
-            name
-        );
-        assert!(
-            (pv - pv_v).abs() / pv.abs().max(1e-12) < 1e-6,
-            "{}: ast={pv} vm={pv_v} disagree",
-            name
+            (vm_v - default_v).abs() / vm_v.abs().max(1e-12) < 1e-6,
+            "{name}: vm={vm_v} default={default_v} disagree"
         );
 
-        let vm_ast = p.as_secs_f64() / pv_t.as_secs_f64();
-        // Acceptance is measured on the default execution path, not the AST reference.
-        let py_mult = pv_t.as_secs_f64() / py.as_secs_f64();
-        let rust_mult = pv_t.as_secs_f64() / r.as_secs_f64();
+        let (py, rust) = match (w.py, w.rust) {
+            (Some(py_name), Some(rust_fn)) => {
+                let (py_t, py_v) = time_python(&py_file, py_name, w.n, SAMPLES);
+                let rust_v = rust_fn(w.n);
+                let rust_t = time_rust(rust_fn, w.n, SAMPLES, WARMUP);
+                // Cross-language correctness: the three implementations of the same kernel must agree.
+                assert!(
+                    (default_v - py_v).abs() / default_v.abs().max(1e-12) < 1e-6,
+                    "{name}: prima={default_v} python={py_v} disagree"
+                );
+                assert!(
+                    (default_v - rust_v).abs() / default_v.abs().max(1e-12) < 1e-6,
+                    "{name}: prima={default_v} rust={rust_v} disagree"
+                );
+                (Some(py_t), Some(rust_t))
+            }
+            _ => (None, None),
+        };
+
+        let vm_gain = vm.as_secs_f64() / default.as_secs_f64();
+        let ast_gain = ast.as_secs_f64() / default.as_secs_f64();
         println!(
-            "{:<8} ast={:<14} vm={:<14} python={:<14} rust={:<14} vm/ast={:.1}×",
-            w.name,
-            fmt_ns(p),
-            fmt_ns(pv_t),
-            fmt_ns(py),
-            fmt_ns(r),
-            vm_ast
+            "{:<10} ast={:<14} vm={:<14} default={:<14} py={:<14} rust={:<14} ast/default={:.1}×",
+            name,
+            fmt_ns(ast),
+            fmt_ns(vm),
+            fmt_ns(default),
+            fmt_opt_ns(py),
+            fmt_opt_ns(rust),
+            ast_gain
         );
         table.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {:.1}× | {:.1}× | {:.2}× |\n",
-            w.name,
+            "| {} | {} | {} | {} | {} | {} | {} | {:.1}× | {:.1}× | {} | {} |\n",
+            name,
             w.n,
-            fmt_ns(p),
-            fmt_ns(pv_t),
-            fmt_ns(py),
-            fmt_ns(r),
-            vm_ast,
-            py_mult,
-            rust_mult
+            fmt_ns(ast),
+            fmt_ns(vm),
+            fmt_ns(default),
+            fmt_opt_ns(py),
+            fmt_opt_ns(rust),
+            ast_gain,
+            vm_gain,
+            fmt_mult(default, py),
+            fmt_mult(default, rust)
         ));
     }
 
