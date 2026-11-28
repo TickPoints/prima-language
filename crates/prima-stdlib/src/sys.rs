@@ -18,30 +18,16 @@ use std::time::UNIX_EPOCH;
 
 use num_bigint::BigInt;
 use prima_core::{Number, Real, Value, ValueKey};
+use prima_runtime::args::Args;
 use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
-    if args.len() == n {
-        Ok(())
-    } else {
-        Err(RuntimeError::Message(format!(
-            "`{fname}` expects {n} argument(s), got {}",
-            args.len()
-        )))
-    }
+    Args::new(fname, args).exact(n)
 }
 
 fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeError> {
-    match args.get(i) {
-        Some(Value::String(s)) => Ok(s.to_string()),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be a string, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Args::new(fname, args).string(i)
 }
 
 /// Wrap a success value in `Result<_, String>` (spec §16.2).

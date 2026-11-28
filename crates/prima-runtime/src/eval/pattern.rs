@@ -22,13 +22,13 @@ impl Evaluator {
                     match self.eval_expr(&scope, g)? {
                         Value::Bool(true) => return self.eval_expr(&scope, &arm.body),
                         Value::Bool(false) => continue,
-                        _ => return crate::error::err("match guard must be a boolean"),
+                        _ => return crate::error::type_err("match guard must be a boolean"),
                     }
                 }
                 return self.eval_expr(&scope, &arm.body);
             }
         }
-        crate::error::err("match is non-exhaustive")
+        crate::error::type_err("match is non-exhaustive")
     }
 
     /// Full pattern matching (spec §4.4): returns the bindings the pattern produces, or `None` on mismatch.

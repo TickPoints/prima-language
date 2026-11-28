@@ -8,7 +8,9 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use prima_core::Value;
+use prima_runtime::args::Args;
 use prima_runtime::builtin;
+use prima_runtime::error::{IoFailure, ValueProblem};
 use prima_runtime::{Evaluator, RuntimeError};
 
 /// Plot series kind (spec §B.4): `plot`/`line` draw lines, `scatter` draws point markers,
@@ -78,38 +80,15 @@ fn lock_state() -> std::sync::MutexGuard<'static, PlotState> {
 }
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
-    if args.len() == n {
-        Ok(())
-    } else {
-        Err(RuntimeError::Message(format!(
-            "`{fname}` expects {n} argument(s), got {}",
-            args.len()
-        )))
-    }
+    Args::new(fname, args).exact(n)
 }
 
 fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeError> {
-    match args.get(i) {
-        Some(Value::String(s)) => Ok(s.to_string()),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be a string, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Args::new(fname, args).string(i)
 }
 
 fn number_arg(args: &[Value], i: usize, fname: &str) -> Result<f64, RuntimeError> {
-    match args.get(i) {
-        Some(Value::Number(n)) => Ok(n.to_f64_lossy()),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be a number, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Args::new(fname, args).real(i)
 }
 
 fn optional_string(
@@ -144,20 +123,19 @@ fn optional_bool(
 
 /// Extract `x, y` number arrays; they must have equal length (spec §B.4).
 fn xy_arg(args: &[Value], fname: &str) -> Result<(Vec<f64>, Vec<f64>), RuntimeError> {
-    if args.len() < 2 {
-        return Err(RuntimeError::Message(format!(
-            "`{fname}` expects at least (x, y), got {}",
-            args.len()
-        )));
-    }
+    Args::new(fname, args).at_least(2)?;
     let x = numeric_array(&args[0], fname, 0)?;
     let y = numeric_array(&args[1], fname, 1)?;
     if x.len() != y.len() {
-        return Err(RuntimeError::Message(format!(
-            "`{fname}` x and y must have equal length ({} vs {})",
-            x.len(),
-            y.len()
-        )));
+        return Err(RuntimeError::invalid(
+            fname.into(),
+            ValueProblem::UnequalLengths {
+                left: "x",
+                right: "y",
+                first: x.len(),
+                second: y.len(),
+            },
+        ));
     }
     Ok((x, y))
 }
@@ -185,19 +163,7 @@ fn numeric_array(v: &Value, fname: &str, i: usize) -> Result<Vec<f64>, RuntimeEr
 }
 
 fn integer_arg(args: &[Value], i: usize, fname: &str) -> Result<i64, RuntimeError> {
-    match args.get(i) {
-        Some(Value::Number(n)) => n.as_i64().ok_or_else(|| {
-            RuntimeError::Type(format!(
-                "`{fname}` argument {i} must be an integer, got {n}"
-            ))
-        }),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be an integer, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Args::new(fname, args).i64(i)
 }
 
 /// Extract a rectangular, non-empty `Array<Array<F64>>` argument. Ragged or empty grids are
@@ -212,22 +178,25 @@ fn grid_arg(args: &[Value], i: usize, fname: &str) -> Result<Vec<Vec<f64>>, Runt
             )));
         }
         None => {
-            return Err(RuntimeError::Message(format!(
-                "`{fname}` missing argument {i}"
-            )));
+            return Err(RuntimeError::MissingArgument {
+                callable: fname.into(),
+                position: i,
+            });
         }
     };
     if rows.is_empty() {
-        return Err(RuntimeError::Message(format!(
-            "`{fname}` grid must not be empty"
-        )));
+        return Err(RuntimeError::invalid(
+            fname.into(),
+            ValueProblem::Empty { what: "grid" },
+        ));
     }
     let ncols = match rows.get(0) {
         Some(Value::Array(r)) if !r.is_empty() => r.len(),
         Some(Value::Array(_)) => {
-            return Err(RuntimeError::Message(format!(
-                "`{fname}` grid rows must not be empty"
-            )));
+            return Err(RuntimeError::invalid(
+                fname.into(),
+                ValueProblem::Empty { what: "grid rows" },
+            ));
         }
         _ => {
             return Err(RuntimeError::Type(format!(
@@ -243,10 +212,14 @@ fn grid_arg(args: &[Value], i: usize, fname: &str) -> Result<Vec<Vec<f64>>, Runt
             )));
         };
         if r.len() != ncols {
-            return Err(RuntimeError::Message(format!(
-                "`{fname}` grid must be rectangular: row {ri} has {} columns, expected {ncols}",
-                r.len()
-            )));
+            return Err(RuntimeError::invalid(
+                fname.into(),
+                ValueProblem::NotRectangular {
+                    row: ri,
+                    got: r.len(),
+                    expected: ncols,
+                },
+            ));
         }
         let mut vals = Vec::with_capacity(ncols);
         for (ci, el) in r.iter().enumerate() {
@@ -388,8 +361,13 @@ fn contour(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     let z = grid_arg(args, 0, "plot::contour")?;
     let levels = integer_arg(args, 1, "plot::contour")?;
     if levels < 1 {
-        return Err(RuntimeError::Message(
-            "`plot::contour` levels must be at least 1".into(),
+        return Err(RuntimeError::invalid(
+            "plot::contour".into(),
+            ValueProblem::BelowMinimum {
+                what: "levels",
+                minimum: 1,
+                got: levels,
+            },
         ));
     }
     let label = label(optional_string(args, 2, "", "plot::contour")?);
@@ -406,22 +384,28 @@ fn contour(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
 /// `hist(values, bins, label = "")` — bin `values` into `bins` equal-width bins and add the counts
 /// as a bar series (spec §18.6). `bins` must be at least 1; non-finite values are ignored.
 fn hist(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.is_empty() {
-        return Err(RuntimeError::Message(
-            "`plot::hist` expects at least a values array".into(),
-        ));
-    }
+    Args::new("plot::hist", args).at_least(1)?;
     let values = numeric_array(&args[0], "plot::hist", 0)?;
     let bins = integer_arg(args, 1, "plot::hist")?;
     if bins < 1 {
-        return Err(RuntimeError::Message(
-            "`plot::hist` bins must be at least 1".into(),
+        return Err(RuntimeError::invalid(
+            "plot::hist".into(),
+            ValueProblem::BelowMinimum {
+                what: "bins",
+                minimum: 1,
+                got: bins,
+            },
         ));
     }
     // Cap the allocation so an absurd bin count cannot exhaust memory (no panic).
     if bins > 1_000_000 {
-        return Err(RuntimeError::Message(
-            "`plot::hist` bins must be at most 1000000".into(),
+        return Err(RuntimeError::invalid(
+            "plot::hist".into(),
+            ValueProblem::AboveMaximum {
+                what: "bins",
+                maximum: 1_000_000,
+                got: bins,
+            },
         ));
     }
     let mut lo = f64::INFINITY;
@@ -435,8 +419,9 @@ fn hist(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
         }
     }
     if !any {
-        return Err(RuntimeError::Message(
-            "`plot::hist` values must contain at least one finite number".into(),
+        return Err(RuntimeError::invalid(
+            "plot::hist".into(),
+            ValueProblem::NoFinite { what: "values" },
         ));
     }
     let (lo, hi) = if (hi - lo).abs() < 1e-12 {
@@ -500,9 +485,13 @@ fn title(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
 fn legend(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     let location = optional_string(args, 0, "best", "plot::legend")?;
     if !args.is_empty() && location != "best" {
-        return Err(RuntimeError::Message(format!(
-            "`plot::legend` only supports location \"best\", got {location:?}"
-        )));
+        return Err(RuntimeError::invalid(
+            "plot::legend".into(),
+            ValueProblem::Unsupported {
+                got: format!("{location:?}"),
+                supported: "\"best\"",
+            },
+        ));
     }
     lock_state().legend = true;
     Ok(Value::Nil)
@@ -537,26 +526,38 @@ fn grid(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
 /// (spec §B.4). Only the `svg` format is supported; `dpi` is accepted but ignored (SVG is vector).
 fn savefig(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     if args.is_empty() {
-        return Err(RuntimeError::Message(
-            "`plot::savefig` expects a filename".into(),
-        ));
+        return Err(RuntimeError::MissingArgument {
+            callable: "plot::savefig".into(),
+            position: 0,
+        });
     }
     let filename = string_arg(args, 0, "plot::savefig")?;
     let format = optional_string(args, 1, "svg", "plot::savefig")?;
     if format != "svg" {
-        return Err(RuntimeError::Message("only svg is supported".into()));
+        return Err(RuntimeError::invalid(
+            "plot::savefig".into(),
+            ValueProblem::Unsupported {
+                got: format,
+                supported: "svg",
+            },
+        ));
     }
     let ext = Path::new(&filename)
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase());
     if ext.as_deref() != Some("svg") {
-        return Err(RuntimeError::Message("only svg is supported".into()));
+        return Err(RuntimeError::invalid(
+            "plot::savefig".into(),
+            ValueProblem::Unsupported {
+                got: ext.unwrap_or_else(|| "<none>".into()),
+                supported: "svg",
+            },
+        ));
     }
     let s = lock_state();
     let svg = render_svg(&s);
     drop(s);
-    std::fs::write(&filename, svg)
-        .map_err(|e| RuntimeError::Message(format!("cannot write `{filename}`: {e}")))?;
+    std::fs::write(&filename, svg).map_err(|e| IoFailure::new("write", &filename, e))?;
     Ok(Value::Nil)
 }
 

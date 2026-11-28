@@ -285,7 +285,7 @@ impl Evaluator {
     /// is set (spec §16).
     pub(crate) fn check_cancelled(&self) -> Result<(), RuntimeError> {
         if Self::is_cancelled() {
-            Err(RuntimeError::Message("interrupted".into()))
+            Err(RuntimeError::Interrupted)
         } else {
             Ok(())
         }
@@ -599,7 +599,11 @@ g.greet(1)";
                         if args.is_empty() {
                             Ok(Value::Number(Number::from(42)))
                         } else {
-                            Err(RuntimeError::Message("`answer` takes no arguments".into()))
+                            Err(RuntimeError::Arity {
+                                callable: "answer".into(),
+                                expected: crate::error::Arity::Exact(0),
+                                got: args.len(),
+                            })
                         }
                     },
                 }),

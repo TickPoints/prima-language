@@ -56,7 +56,24 @@ pub enum Builtin {
     Collapse(&'static str),
 }
 
+/// Whether the evaluator must see this builtin's arguments unevaluated (spec §19.4, appendix B.1).
+/// The VM compiler rejects such calls up front, so the executor never declines them after the
+/// arguments have been evaluated (which could already have produced side effects).
 impl Builtin {
+    pub fn needs_unevaluated_args(self) -> bool {
+        matches!(
+            self,
+            Builtin::Derivative
+                | Builtin::Partial
+                | Builtin::Grad
+                | Builtin::Limit
+                | Builtin::Jit
+                | Builtin::Map
+                | Builtin::Filter
+                | Builtin::Reduce
+        )
+    }
+
     pub fn from_name(name: &str) -> Option<Builtin> {
         match name {
             "print" => Some(Builtin::Print),

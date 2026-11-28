@@ -277,7 +277,7 @@ fn parity_slice_assignment_variants() {
 fn parity_invalid_slice_range_errors_on_every_path() {
     let src = "fn main() -> Integer {\n    let mut a = [1, 2, 3];\n    a[2..1] = [];\n    a[0]\n}\nmain()";
     let (ast, _, _) = assert_parity("invalid slice range", src, "");
-    assert_eq!(ast.error, Some("R0011"));
+    assert_eq!(ast.error, Some("R0003"));
 }
 
 #[test]
@@ -489,6 +489,19 @@ fn parity_try_on_none_returns_none() {
 }
 
 #[test]
+fn documented_associated_try_returns_the_err_value() {
+    // A documented associated function attaches a diagnostic note to errors. `?` propagation is
+    // return control flow, not an error, so the note wrapper must not swallow the marker (spec §16.3).
+    let src = "class Fallible {\n    /// Parses a value.\n    pub fn parse() -> Result<Integer, String> {\n        let x = try_i32(1e20)?;\n        Ok(x)\n    }\n}\nFallible::parse()";
+    let (ast, _, _) = assert_parity("documented associated try", src, "");
+    assert!(
+        matches!(ast.value, Some(Value::Result(ref result)) if result.is_err()),
+        "`?` must return the Err value, got {:?}",
+        ast.value
+    );
+}
+
+#[test]
 fn parity_nested_error_code_propagates() {
     let src =
         "fn inner() -> Integer { let a = [1]; a[9] }\nfn main() -> Integer { inner() + 1 }\nmain()";
@@ -531,6 +544,39 @@ fn parity_print_before_error_is_not_duplicated() {
         ast.output
     );
     assert_eq!(ast.error, Some("R0003"));
+}
+
+#[test]
+fn parity_string_push_after_print_does_not_replay() {
+    // A non-array `push` receiver is outside the in-place collection path. It must delegate the
+    // method in place instead of re-running the body on the AST, which would print twice (spec §19.5).
+    let src = "fn main() -> Integer {\n    print(\"once\");\n    let s = \"abc\";\n    s.push(\"d\");\n    s.len()\n}\nmain()";
+    let (ast, vm, _) = assert_parity("string push after print", src, "");
+    assert_is_integer(
+        ast.value.as_ref(),
+        3,
+        "String::push leaves the binding unchanged",
+    );
+    assert_eq!(vm.output, "once", "the body must not run twice");
+    assert!(
+        vm.stats.vm_hits > 0,
+        "the VM must execute the body: {:?}",
+        vm.stats
+    );
+}
+
+#[test]
+fn parity_global_array_push_runs_in_vm() {
+    // `MethodName` carries both the receiver binding and the method name, so a top-level array's
+    // mutating method executes in the VM instead of silently falling back (spec §11.3/§12.2).
+    let src = "let mut g = [];\nfn main(n: Integer) -> Integer { for i in 0..n { g.push(i * 2); } g.len() }\nmain(5)";
+    let (ast, vm, _) = assert_parity("global array push", src, "");
+    assert_is_integer(ast.value.as_ref(), 5, "global array length");
+    assert!(
+        vm.stats.vm_hits > 0,
+        "the VM must execute the global mutation: {:?}",
+        vm.stats
+    );
 }
 
 #[test]

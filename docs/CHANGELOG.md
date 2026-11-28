@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-28
+
+### Added
+
+- CI guards against quality regressions: `tests/code_quality.rs` rejects reintroduced catch-all
+  error variants (`RuntimeError::Message`/`Coded`, `CoreError::Other`, the old `coded()` helper)
+  and unfinished placeholders (`dbg!`, `todo!`, `unimplemented!`), and
+  `crates/prima-stdlib/tests/registry_consistency.rs` verifies that every `@builtin` declaration
+  has a Rust registration (and vice versa), including the declared `O0..=O3` tier metadata.
+
+### Changed
+
+- Rust callers of `ModuleGraph::load` can match `RuntimeError::ModuleIo` and
+  `RuntimeError::ModuleImport` in place of the former `Coded` payloads. Module I/O errors retain
+  their underlying cause; Prima diagnostic codes and output are unchanged.
+- `Evaluator::run_vm` now returns the typed `prima_runtime::vm::VmError` instead of a
+  `RuntimeError`; the former `"VM: "` message-prefix protocol for capability limits is gone.
+  Builtins that need unevaluated arguments are rejected at compile time, before their arguments
+  can produce side effects.
+- Remaining runtime capability limits delegate the individual operation to the authoritative path
+  in place, so a function body is never re-run after producing output or mutations (spec §19.5).
+- Mutating methods on a top-level collection (`g.push(...)` for a global `g`) now execute in the
+  bytecode VM; previously they silently fell back because the instruction merged the receiver and
+  method names.
+- Runtime argument diagnostics are now structured: `RuntimeError::Arity`, `MissingArgument`,
+  `MissingReceiver`, `ArgumentType`, and `ReceiverType` replace ad-hoc `Message` strings for these
+  failures. Builtin and standard-library argument validation share `prima_runtime::args::Args`,
+  removing the duplicated arity checks. Argument/receiver type mismatches report `R0009`;
+  arity and missing-argument errors keep `R0011`.
+- Standard-library value validation is typed as well: `RuntimeError::InvalidValue` with a
+  `ValueProblem` (range, limit, shape, unsupported option), plus `NotDirectlyCallable`,
+  `ComputationFailed`, and `IoFailure`. The standard library no longer constructs
+  `RuntimeError::Message`; plot file writes report `R0007` and retain the OS error as their source.
+- Runtime failures are structured rather than free-text: unknown names, visibility and call-form
+  errors, hashability, boolean conditions, indexing/slicing, configuration values, interrupts,
+  division/modulo by zero, and internal invariants now carry typed variants. Invalid slice ranges
+  report `R0003`; hashability/boolean/comparison failures report `R0009`; division and modulo by
+  zero report `R0005`.
+- Internal layout: the collapse family is split into `collapse/{props,convert,wrappers}`, the
+  bytecode VM into `vm/exec/{step,calls,numeric,registers,ops,admission,vm_state}`, the bytecode
+  compiler into `vm/comp/{stmt,expr}`, and class/builtin-value dispatch into
+  `eval/class/{builtin,mutation,arc}`. No behavior change.
+
+### Removed
+
+- Removed the unused public Rust variant `prima_core::CoreError::Other`.
+  `DivisionByZero` is unchanged.
+- Removed `RuntimeError::Message` and `RuntimeError::Coded`, together with the crate-internal
+  `err()`/`coded()` constructors. Remaining shape/type checks use the typed `Type` category
+  (`R0009`); explicit runtime codes now have dedicated variants (`Underflow`, `DimensionMismatch`,
+  `RuntimeImport`, `NotFound`, `EmptyCollection`), and compile diagnostics surfaced through
+  evaluation use `CompileDiagnostic`. Large payloads are boxed so `RuntimeError` stays at 64 bytes.
+
+### Fixed
+
+- Side effects are no longer duplicated when an operation outside the in-place collection path
+  (for example `String::push`) follows output in a VM-compiled function.
+- `?` propagation inside a documented associated function is no longer wrapped in diagnostic
+  notes, so the function returns its `Err`/`None` value instead of surfacing a runtime error
+  (spec §16.3).
+
 ## [0.7.2] - 2026-11-21
 
 ### Added

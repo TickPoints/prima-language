@@ -6,65 +6,35 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use num_bigint::BigInt;
 use prima_core::{Number, Value};
+use prima_runtime::args::Args;
 use prima_runtime::builtin;
+use prima_runtime::error::ValueProblem;
 use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
-    if args.len() == n {
-        Ok(())
-    } else {
-        Err(RuntimeError::Message(format!(
-            "`{fname}` expects {n} argument(s), got {}",
-            args.len()
-        )))
-    }
+    Args::new(fname, args).exact(n)
 }
 
 fn int_arg(args: &[Value], i: usize, fname: &str) -> Result<BigInt, RuntimeError> {
-    match args.get(i) {
-        Some(Value::Number(n)) => n.as_bigint().ok_or_else(|| {
-            RuntimeError::Type(format!(
-                "`{fname}` argument {i} must be an integer, got {n}"
-            ))
-        }),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be an integer, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Args::new(fname, args).bigint(i)
 }
 
 fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeError> {
-    match args.get(i) {
-        Some(Value::String(s)) => Ok(s.to_string()),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be a string, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Args::new(fname, args).string(i)
 }
 
 fn radix_arg(args: &[Value], i: usize, fname: &str) -> Result<u32, RuntimeError> {
-    match args.get(i) {
-        Some(Value::Number(n)) => match n.as_i64() {
-            Some(r) if (2..=36).contains(&r) => Ok(r as u32),
-            Some(r) => Err(RuntimeError::Message(format!(
-                "`{fname}` radix must be in 2..=36, got {r}"
-            ))),
-            None => Err(RuntimeError::Type(format!(
-                "`{fname}` radix must be an integer, got {n}"
-            ))),
-        },
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` radix must be an integer, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
+    let radix = Args::new(fname, args).i64(i)?;
+    if (2..=36).contains(&radix) {
+        Ok(radix as u32)
+    } else {
+        Err(RuntimeError::invalid(
+            fname.into(),
+            ValueProblem::Unsupported {
+                got: radix.to_string(),
+                supported: "2..=36",
+            },
+        ))
     }
 }
 
@@ -88,8 +58,9 @@ fn fibonacci(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError>
     arity(args, 1, "num::fibonacci")?;
     let n = int_arg(args, 0, "num::fibonacci")?;
     if n < BigInt::from(0) {
-        return Err(RuntimeError::Message(
-            "num::fibonacci expects a non-negative integer".into(),
+        return Err(RuntimeError::invalid(
+            "num::fibonacci".into(),
+            ValueProblem::MustBeNonNegative,
         ));
     }
     let mut a = BigInt::from(0);
@@ -142,8 +113,11 @@ fn random_integer(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeE
     let a = int_arg(args, 0, "num::random_integer")?;
     let b = int_arg(args, 1, "num::random_integer")?;
     if a > b {
-        return Err(RuntimeError::Message(
-            "`num::random_integer` requires a <= b".into(),
+        return Err(RuntimeError::argument_type(
+            "num::random_integer".into(),
+            1,
+            "an upper bound greater than or equal to the lower bound",
+            b.to_string(),
         ));
     }
     let range = &b - &a + BigInt::from(1);

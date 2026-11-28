@@ -109,6 +109,15 @@ pub fn get_impl(key: &str) -> Option<NativeCall> {
     map.get(key).copied()
 }
 
+/// All registered `@builtin` implementation keys, sorted. Used by the stdlib consistency test to
+/// detect declarations without implementations and stale registrations.
+pub fn registered_impl_keys() -> Vec<String> {
+    let map = impls().lock().unwrap_or_else(|e| e.into_inner());
+    let mut keys: Vec<String> = map.keys().cloned().collect();
+    keys.sort();
+    keys
+}
+
 /// Look up the declared tier of a registered `@builtin` implementation (metadata; default `O0`).
 pub fn get_impl_level(key: &str) -> u8 {
     let map = impl_levels().lock().unwrap_or_else(|e| e.into_inner());

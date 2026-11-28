@@ -8,18 +8,12 @@
 //! Both accept a symbolic `Value::Expr`/`Value::Symbol` or a `String` containing LaTeX.
 
 use prima_core::{Number, Value, render_latex};
+use prima_runtime::args::Args;
 use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
-    if args.len() == n {
-        Ok(())
-    } else {
-        Err(RuntimeError::Message(format!(
-            "`{fname}` expects {n} argument(s), got {}",
-            args.len()
-        )))
-    }
+    Args::new(fname, args).exact(n)
 }
 
 /// The LaTeX source for the single `render` argument: an `Expr`/`Symbol` through the core renderer,

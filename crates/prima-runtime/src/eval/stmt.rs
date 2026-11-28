@@ -86,11 +86,11 @@ impl Evaluator {
                 let v = self.eval_expr(env, value)?;
                 // `let` accepts only irrefutable patterns (spec §4.4; `E0053`).
                 if pattern_is_refutable(pat) {
-                    return crate::error::err("refutable pattern in `let`");
+                    return crate::error::type_err("refutable pattern in `let`");
                 }
                 let bindings = self
                     .match_pattern(env, &v, pat)
-                    .ok_or_else(|| RuntimeError::Message("refutable pattern in `let`".into()))?;
+                    .ok_or_else(|| RuntimeError::Type("refutable pattern in `let`".into()))?;
                 let mut e = env.borrow_mut();
                 for (name, val) in bindings {
                     e.set_value(&name, val);
@@ -213,7 +213,7 @@ impl Evaluator {
                             self.overloads.insert(overload_key(&target.value, *op), def);
                         }
                         _ => {
-                            return crate::error::err(
+                            return crate::error::type_err(
                                 "`impl` body must contain function definitions",
                             );
                         }
@@ -238,24 +238,28 @@ impl Evaluator {
                         ExprKind::Path { segments } if segments.len() == 1 => {
                             segments[0].value.clone()
                         }
-                        _ => return crate::error::err("assignment target must be a variable"),
+                        _ => {
+                            return crate::error::type_err("assignment target must be a variable");
+                        }
                     };
                     let base_v = self.eval_expr(env, base)?;
                     match base_v {
                         Value::Dict(mut d) => {
                             if index.items.len() != 1 {
-                                return crate::error::err(
+                                return crate::error::type_err(
                                     "multi-dimensional indexing is not supported yet",
                                 );
                             }
                             let k = match &index.items[0] {
                                 IndexItem::Elem(e) => self.eval_expr(env, e)?,
                                 IndexItem::Slice { .. } => {
-                                    return crate::error::err("cannot slice-assign a dict");
+                                    return crate::error::type_err("cannot slice-assign a dict");
                                 }
                             };
                             let key = ValueKey::from_value(&k).ok_or_else(|| {
-                                RuntimeError::Message("dict key must be a hashable value".into())
+                                RuntimeError::Unhashable {
+                                    role: crate::error::HashRole::DictKey,
+                                }
                             })?;
                             let merged = match op {
                                 AssignOp::Assign => v,
@@ -280,7 +284,7 @@ impl Evaluator {
                         }
                         Value::Array(a) => {
                             if index.items.len() != 1 {
-                                return crate::error::err(
+                                return crate::error::type_err(
                                     "multi-dimensional indexing is not supported yet",
                                 );
                             }
@@ -349,7 +353,7 @@ impl Evaluator {
                                             }
                                         });
                                         if !ok {
-                                            return crate::error::err(
+                                            return crate::error::type_err(
                                                 "assignment target must be an array or dict",
                                             );
                                         }
@@ -366,12 +370,12 @@ impl Evaluator {
                                 }
                                 IndexItem::Slice { start, end } => {
                                     if !matches!(op, AssignOp::Assign) {
-                                        return crate::error::err(
+                                        return crate::error::type_err(
                                             "slice assignment only supports `=`",
                                         );
                                     }
                                     let Value::Array(rhs) = v else {
-                                        return crate::error::err(
+                                        return crate::error::type_err(
                                             "slice assignment right-hand side must be an array",
                                         );
                                     };
@@ -392,7 +396,7 @@ impl Evaluator {
                             }
                         }
                         other => {
-                            return crate::error::err(format!(
+                            return crate::error::type_err(format!(
                                 "assignment target must be an array or dict, got {}",
                                 value_type_name(&other)
                             ));
@@ -402,7 +406,9 @@ impl Evaluator {
                 // Simple variable assignment (spec §4.2 examples: `s = 0`, `s += i`).
                 let name = match &target.kind {
                     ExprKind::Path { segments } if segments.len() == 1 => &segments[0].value,
-                    _ => return crate::error::err("assignment target must be a variable"),
+                    _ => {
+                        return crate::error::type_err("assignment target must be a variable");
+                    }
                 };
                 let merged = {
                     let prev = env.borrow().get_value(name);
@@ -610,7 +616,13 @@ impl Evaluator {
             raw_hi.min(len_i)
         };
         if lo > hi {
-            return crate::error::err(format!("invalid slice range {lo}..{hi} (length {len})"));
+            return Err(RuntimeError::InvalidIndex {
+                problem: crate::error::IndexProblem::OutOfRange {
+                    start: lo,
+                    end: hi,
+                    length: len,
+                },
+            });
         }
         Ok((lo as usize, hi as usize))
     }
@@ -634,17 +646,17 @@ impl Evaluator {
             None => 1,
         };
         if step_v == 0 {
-            return crate::error::err("parfor step cannot be zero");
+            return crate::error::type_err("parfor step cannot be zero");
         }
         let steps = check_parfor_body(body)?;
         for s in &steps {
             if let ParforStep::Eval(e) = s
                 && !self.expr_is_pure_call(env, e)
             {
-                return Err(crate::error::coded(
-                    "E0082",
-                    "parfor iteration body must only call pure functions",
-                ));
+                return Err(RuntimeError::CompileDiagnostic {
+                    code: "E0082",
+                    message: ("parfor iteration body must only call pure functions").into(),
+                });
             }
         }
         let cfg = self.current_config().clone();
@@ -664,7 +676,7 @@ impl Evaluator {
                                 arrays.insert(w.array.clone(), a);
                             }
                             _ => {
-                                return crate::error::err(format!(
+                                return crate::error::type_err(format!(
                                     "parfor target `{}` must be an array",
                                     w.array
                                 ));
@@ -755,7 +767,7 @@ impl Evaluator {
                 for &i in chunk {
                     // Cancellation is checked per index so a long `parfor` stops promptly.
                     if Evaluator::is_cancelled() {
-                        return Err(RuntimeError::Message("interrupted".into()));
+                        return Err(RuntimeError::Interrupted);
                     }
                     call_env
                         .borrow_mut()
@@ -767,15 +779,19 @@ impl Evaluator {
                             }
                             ParforStep::Assign(w) => {
                                 let idx = match ev.eval_expr(&call_env, &w.index)? {
-                                    Value::Number(n) => n.as_usize().ok_or_else(|| {
-                                        RuntimeError::Message(
-                                            "parfor index must be a non-negative integer".into(),
-                                        )
-                                    })?,
+                                    Value::Number(n) => {
+                                        n.as_usize().ok_or_else(|| RuntimeError::InvalidIndex {
+                                            problem: crate::error::IndexProblem::Negative {
+                                                what: "parfor index",
+                                            },
+                                        })?
+                                    }
                                     _ => {
-                                        return Err(RuntimeError::Message(
-                                            "parfor index must be an integer".into(),
-                                        ));
+                                        return Err(RuntimeError::InvalidIndex {
+                                            problem: crate::error::IndexProblem::NotInteger {
+                                                what: "parfor index",
+                                            },
+                                        });
                                     }
                                 };
                                 let nv = ev.eval_expr(&call_env, &w.value)?;
@@ -842,14 +858,14 @@ impl Evaluator {
     pub(crate) fn scalar_value(&self, v: Value) -> Result<Number, RuntimeError> {
         match v {
             Value::Number(n) => Ok(n),
-            _ => crate::error::err("array elements must be numbers"),
+            _ => crate::error::type_err("array elements must be numbers"),
         }
     }
 
     pub(crate) fn eval_cond(&mut self, env: &EnvRef, e: &Expr) -> Result<bool, RuntimeError> {
         match self.eval_expr(env, e)? {
             Value::Bool(b) => Ok(b),
-            _ => crate::error::err("condition must be a boolean"),
+            _ => crate::error::type_err("condition must be a boolean"),
         }
     }
 
@@ -858,7 +874,7 @@ impl Evaluator {
             Value::Number(n) => n
                 .as_i64()
                 .ok_or_else(|| RuntimeError::Type(format!("loop range must be integers, got {n}"))),
-            other => crate::error::err(format!("loop range must be integers, got {other:?}")),
+            other => crate::error::type_err(format!("loop range must be integers, got {other:?}")),
         }
     }
 

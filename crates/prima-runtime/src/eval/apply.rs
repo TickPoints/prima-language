@@ -33,7 +33,13 @@ pub(crate) fn slice_bounds_values(
     let lo = clamp(lo.unwrap_or(0));
     let hi = clamp(hi.unwrap_or(len_i));
     if lo > hi {
-        return crate::error::err(format!("invalid slice range {lo}..{hi} (length {len})"));
+        return Err(RuntimeError::InvalidIndex {
+            problem: crate::error::IndexProblem::OutOfRange {
+                start: lo,
+                end: hi,
+                length: len,
+            },
+        });
     }
     Ok((lo as usize, hi as usize))
 }
@@ -81,7 +87,7 @@ impl Evaluator {
         let a = match value {
             Value::Array(a) => a,
             other => {
-                return crate::error::err(format!(
+                return crate::error::type_err(format!(
                     "indexing requires nested arrays, got {}",
                     value_type_name(&other)
                 ));
@@ -131,21 +137,21 @@ impl Evaluator {
                     .contains_key(&overload_key(&class, ImplOp::Index))
                 {
                     if index.items.len() != 1 {
-                        return crate::error::err(
+                        return crate::error::type_err(
                             "multi-dimensional indexing is not supported yet",
                         );
                     }
                     let idx_v = match &index.items[0] {
                         IndexItem::Elem(e) => self.eval_expr(env, e)?,
                         IndexItem::Slice { .. } => {
-                            return crate::error::err(
+                            return crate::error::type_err(
                                 "slice indexing is not supported for overloads",
                             );
                         }
                     };
                     return self.overload_dispatch(&class, ImplOp::Index, arr_v, vec![idx_v]);
                 }
-                return crate::error::err("cannot index a class instance");
+                return crate::error::type_err("cannot index a class instance");
             }
         }
         match arr_v {
@@ -158,22 +164,23 @@ impl Evaluator {
             // Dict indexing by key (spec §11.6): a missing key is `R0012`.
             Value::Dict(d) => {
                 if index.items.len() != 1 {
-                    return crate::error::err("multi-dimensional indexing is not supported yet");
+                    return crate::error::type_err(
+                        "multi-dimensional indexing is not supported yet",
+                    );
                 }
                 match &index.items[0] {
                     IndexItem::Elem(e) => {
                         let k = self.eval_expr(env, e)?;
-                        let key = ValueKey::from_value(&k).ok_or_else(|| {
-                            RuntimeError::Message("dict key must be a hashable value".into())
-                        })?;
-                        d.get(&key)
-                            .cloned()
-                            .ok_or_else(|| crate::error::coded("R0012", "key not found"))
+                        let key =
+                            ValueKey::from_value(&k).ok_or_else(|| RuntimeError::Unhashable {
+                                role: crate::error::HashRole::DictKey,
+                            })?;
+                        d.get(&key).cloned().ok_or_else(|| RuntimeError::MissingKey)
                     }
-                    IndexItem::Slice { .. } => crate::error::err("cannot slice a dict"),
+                    IndexItem::Slice { .. } => crate::error::type_err("cannot slice a dict"),
                 }
             }
-            other => crate::error::err(format!(
+            other => crate::error::type_err(format!(
                 "indexing requires an array or dict, got {}",
                 value_type_name(&other)
             )),
@@ -183,10 +190,12 @@ impl Evaluator {
     /// Evaluate an index expression to a raw `i64` (negative allowed; normalized by the caller).
     pub(crate) fn eval_index_i64(&mut self, env: &EnvRef, e: &Expr) -> Result<i64, RuntimeError> {
         match self.eval_expr(env, e)? {
-            Value::Number(n) => n
-                .as_i64()
-                .ok_or_else(|| RuntimeError::Message("array index must be an integer".into())),
-            _ => crate::error::err("array index must be an integer"),
+            Value::Number(n) => n.as_i64().ok_or_else(|| RuntimeError::InvalidIndex {
+                problem: crate::error::IndexProblem::NotInteger {
+                    what: "array index",
+                },
+            }),
+            _ => crate::error::type_err("array index must be an integer"),
         }
     }
 
@@ -221,15 +230,13 @@ impl Evaluator {
             if self.current_config().broadcast {
                 return self.broadcast_call(func, args, &array_positions);
             }
-            return crate::error::err(
-                "implicit broadcast is disabled (`broadcast := false`); use `@.`",
-            );
+            return Err(RuntimeError::BroadcastDisabled);
         }
         match func {
             Function::Builtin(b) => self.call_builtin(*b, args),
             Function::NativeGet => {
                 if args.len() != 2 {
-                    return crate::error::err("`get` expects 2 arguments");
+                    return crate::error::type_err("`get` expects 2 arguments");
                 }
                 self.call_array_get(args[0].clone(), args[1].clone())
             }
@@ -242,7 +249,7 @@ impl Evaluator {
                 ..
             } => {
                 if args.len() != params.len() {
-                    return crate::error::err(format!(
+                    return crate::error::type_err(format!(
                         "expected {} arguments, got {}",
                         params.len(),
                         args.len()
@@ -333,7 +340,7 @@ impl Evaluator {
                 ..
             } => {
                 if args.len() != params.len() {
-                    return crate::error::err(format!(
+                    return crate::error::type_err(format!(
                         "expected {} arguments, got {}",
                         params.len(),
                         args.len()
@@ -375,7 +382,7 @@ impl Evaluator {
         tco: bool,
     ) -> Result<Value, RuntimeError> {
         if args.len() != params.len() {
-            return crate::error::err(format!(
+            return crate::error::type_err(format!(
                 "expected {} arguments, got {}",
                 params.len(),
                 args.len()
@@ -440,7 +447,7 @@ impl Evaluator {
                     ..
                 } => {
                     if nargs.len() != np.len() {
-                        return crate::error::err(format!(
+                        return crate::error::type_err(format!(
                             "expected {} arguments, got {}",
                             np.len(),
                             nargs.len()
@@ -472,17 +479,15 @@ impl Evaluator {
                     len = a.len();
                     first = false;
                 } else if a.len() != len {
-                    return Err(crate::error::coded(
-                        "R0004",
-                        "dimension mismatch in broadcast",
+                    return Err(RuntimeError::DimensionMismatch(
+                        ("dimension mismatch in broadcast").into(),
                     ));
                 }
             }
         }
         if len == 0 {
-            return Err(crate::error::coded(
-                "R0014",
-                "cannot broadcast over an empty array",
+            return Err(RuntimeError::EmptyCollection(
+                ("cannot broadcast over an empty array").into(),
             ));
         }
         if let Function::User {
@@ -506,10 +511,9 @@ impl Evaluator {
                         match a.get(i) {
                             Some(Value::Number(n)) => cargs.push(Value::Number(n)),
                             _ => {
-                                return Err(crate::error::coded(
-                                    "R0009",
+                                return crate::error::type_err(
                                     "cannot broadcast a non-numeric element",
-                                ));
+                                );
                             }
                         }
                     }
@@ -517,10 +521,7 @@ impl Evaluator {
                     match v {
                         Value::Number(_) => cargs.push(v.clone()),
                         _ => {
-                            return Err(crate::error::coded(
-                                "R0009",
-                                "cannot broadcast a non-numeric scalar",
-                            ));
+                            return crate::error::type_err("cannot broadcast a non-numeric scalar");
                         }
                     }
                 }
@@ -528,10 +529,7 @@ impl Evaluator {
             match self.apply_function(func, cargs)? {
                 Value::Number(n) => results.push(Value::Number(n)),
                 _ => {
-                    return Err(crate::error::coded(
-                        "R0009",
-                        "broadcast result must be numeric",
-                    ));
+                    return crate::error::type_err("broadcast result must be numeric");
                 }
             }
         }
@@ -563,26 +561,21 @@ impl Evaluator {
                             match a.get(i) {
                                 Some(Value::Number(n)) => cargs.push(Value::Number(n)),
                                 _ => {
-                                    return Err(crate::error::coded(
-                                        "R0009",
+                                    return crate::error::type_err(
                                         "cannot broadcast a non-numeric element",
-                                    ));
+                                    );
                                 }
                             }
                         } else {
-                            return Err(crate::error::coded(
-                                "R0009",
-                                "cannot broadcast a non-numeric scalar",
-                            ));
+                            return crate::error::type_err("cannot broadcast a non-numeric scalar");
                         }
                     } else {
                         match v {
                             Value::Number(_) => cargs.push(v.clone()),
                             _ => {
-                                return Err(crate::error::coded(
-                                    "R0009",
+                                return crate::error::type_err(
                                     "cannot broadcast a non-numeric scalar",
-                                ));
+                                );
                             }
                         }
                     }
@@ -594,10 +587,7 @@ impl Evaluator {
                 }
                 match ev.eval_expr(&call_env, &body_owned)? {
                     Value::Number(n) => Ok(n),
-                    _ => Err(crate::error::coded(
-                        "R0009",
-                        "broadcast result must be numeric",
-                    )),
+                    _ => crate::error::type_err("broadcast result must be numeric"),
                 }
             })
             .collect();
@@ -633,22 +623,18 @@ impl Evaluator {
         // above, and `Array ∘ Array` is documented elementwise, so only the scalar side is gated.
         let scalar_side = matches!(&a, Value::Array(_)) != matches!(&b, Value::Array(_));
         if scalar_side && !self.current_config().broadcast {
-            return crate::error::err(
-                "implicit broadcast is disabled (`broadcast := false`); use `@.`",
-            );
+            return Err(RuntimeError::BroadcastDisabled);
         }
         let out: Vec<Value> = match (a, b) {
             (Value::Array(av), Value::Array(bv)) => {
                 if av.len() != bv.len() {
-                    return Err(crate::error::coded(
-                        "R0004",
-                        "dimension mismatch in array operation",
+                    return Err(RuntimeError::DimensionMismatch(
+                        ("dimension mismatch in array operation").into(),
                     ));
                 }
                 if av.is_empty() {
-                    return Err(crate::error::coded(
-                        "R0014",
-                        "cannot operate on an empty array",
+                    return Err(RuntimeError::EmptyCollection(
+                        ("cannot operate on an empty array").into(),
                     ));
                 }
                 let av = av.with(require_numeric_array)?;
@@ -661,10 +647,9 @@ impl Evaluator {
                     match self.eval_number_binary(op, x, y)? {
                         Value::Number(n) => out.push(Value::Number(n)),
                         _ => {
-                            return Err(crate::error::coded(
-                                "R0009",
+                            return crate::error::type_err(
                                 "array operation result must be numeric",
-                            ));
+                            );
                         }
                     }
                 }
@@ -673,9 +658,8 @@ impl Evaluator {
             (Value::Array(av), other) => {
                 let scalar = self.scalar_for_broadcast(other)?;
                 if av.is_empty() {
-                    return Err(crate::error::coded(
-                        "R0014",
-                        "cannot operate on an empty array",
+                    return Err(RuntimeError::EmptyCollection(
+                        ("cannot operate on an empty array").into(),
                     ));
                 }
                 let av = av.with(require_numeric_array)?;
@@ -687,10 +671,9 @@ impl Evaluator {
                     match self.eval_number_binary(op, x, scalar.clone())? {
                         Value::Number(n) => out.push(Value::Number(n)),
                         _ => {
-                            return Err(crate::error::coded(
-                                "R0009",
+                            return crate::error::type_err(
                                 "array operation result must be numeric",
-                            ));
+                            );
                         }
                     }
                 }
@@ -699,9 +682,8 @@ impl Evaluator {
             (other, Value::Array(bv)) => {
                 let scalar = self.scalar_for_broadcast(other)?;
                 if bv.is_empty() {
-                    return Err(crate::error::coded(
-                        "R0014",
-                        "cannot operate on an empty array",
+                    return Err(RuntimeError::EmptyCollection(
+                        ("cannot operate on an empty array").into(),
                     ));
                 }
                 let bv = bv.with(require_numeric_array)?;
@@ -713,16 +695,15 @@ impl Evaluator {
                     match self.eval_number_binary(op, scalar.clone(), y)? {
                         Value::Number(n) => out.push(Value::Number(n)),
                         _ => {
-                            return Err(crate::error::coded(
-                                "R0009",
+                            return crate::error::type_err(
                                 "array operation result must be numeric",
-                            ));
+                            );
                         }
                     }
                 }
                 out
             }
-            _ => return crate::error::err("invalid array operation"),
+            _ => return crate::error::type_err("invalid array operation"),
         };
         Ok(Value::Array(out.into()))
     }
@@ -730,7 +711,7 @@ impl Evaluator {
     pub(crate) fn scalar_for_broadcast(&self, v: Value) -> Result<Number, RuntimeError> {
         match v {
             Value::Number(n) => Ok(n),
-            _ => crate::error::err("cannot broadcast with a non-numeric scalar"),
+            _ => crate::error::type_err("cannot broadcast with a non-numeric scalar"),
         }
     }
 

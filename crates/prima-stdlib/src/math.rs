@@ -10,7 +10,9 @@ use std::cmp::Ordering;
 
 use num_bigint::BigInt;
 use prima_core::{Number, Real, Value};
+use prima_runtime::args::Args;
 use prima_runtime::builtin;
+use prima_runtime::error::ValueProblem;
 use prima_runtime::{Evaluator, RuntimeError};
 
 /// Largest `limit` accepted by `primes` (bounds the sieve allocation to ~50 MB of flags).
@@ -39,72 +41,28 @@ pub fn register() {
 }
 
 fn taylor(_: &mut Evaluator, _: &[Value]) -> Result<Value, RuntimeError> {
-    Err(RuntimeError::Message(
-        "`math::taylor` must be called directly".into(),
-    ))
+    Err(RuntimeError::NotDirectlyCallable {
+        callable: "math::taylor".into(),
+    })
 }
 
 // —— argument helpers (mirroring the `num`/`stats` module conventions) ——
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
-    if args.len() == n {
-        Ok(())
-    } else {
-        Err(RuntimeError::Message(format!(
-            "`{fname}` expects {n} argument(s), got {}",
-            args.len()
-        )))
-    }
+    Args::new(fname, args).exact(n)
 }
 
 fn int_arg(args: &[Value], i: usize, fname: &str) -> Result<BigInt, RuntimeError> {
-    match args.get(i) {
-        Some(Value::Number(n)) => n.as_bigint().ok_or_else(|| {
-            RuntimeError::Type(format!(
-                "`{fname}` argument {i} must be an integer, got {n}"
-            ))
-        }),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be an integer, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Args::new(fname, args).bigint(i)
 }
 
 fn f64_arg(args: &[Value], i: usize, fname: &str) -> Result<f64, RuntimeError> {
-    match args.get(i) {
-        Some(Value::Number(n)) => Ok(n.to_f64_lossy()),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be a number, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Args::new(fname, args).real(i)
 }
 
 /// Extract an `Array<F64>` argument to a `Vec<f64>`.
 fn f64_slice_arg(args: &[Value], i: usize, fname: &str) -> Result<Vec<f64>, RuntimeError> {
-    match args.get(i) {
-        Some(Value::Array(items)) => items
-            .iter()
-            .enumerate()
-            .map(|(j, v)| match v {
-                Value::Number(n) => Ok(n.to_f64_lossy()),
-                other => Err(RuntimeError::Type(format!(
-                    "`{fname}` element {j} must be a number, got {other:?}"
-                ))),
-            })
-            .collect(),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be an array of numbers, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Args::new(fname, args).f64_array(i)
 }
 
 /// Extract an `Array<Integer>` argument to a `Vec<BigInt>`.
@@ -125,9 +83,10 @@ fn int_slice_arg(args: &[Value], i: usize, fname: &str) -> Result<Vec<BigInt>, R
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be an array of integers, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
+        None => Err(RuntimeError::MissingArgument {
+            callable: fname.into(),
+            position: i,
+        }),
     }
 }
 
@@ -178,8 +137,9 @@ fn factor(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "math::factor")?;
     let n = int_arg(args, 0, "math::factor")?;
     if n <= BigInt::from(0) {
-        return Err(RuntimeError::Message(
-            "`math::factor` expects a positive integer".into(),
+        return Err(RuntimeError::invalid(
+            "math::factor".into(),
+            ValueProblem::MustBePositive,
         ));
     }
     let two = BigInt::from(2);
@@ -237,9 +197,10 @@ fn factor_large(n: &BigInt, out: &mut Vec<BigInt>) -> Result<(), RuntimeError> {
         // input that defeats the search budget errors instead of hanging.
         _ => {
             if *n > BigInt::from(MAX_RHO_FALLBACK) {
-                return Err(RuntimeError::Message(
-                    "`math::factor` exceeded its factorization search budget".into(),
-                ));
+                return Err(RuntimeError::ComputationFailed {
+                    operation: "math::factor".into(),
+                    detail: "factorization search budget exhausted".into(),
+                });
             }
             let two = BigInt::from(2);
             let mut d = BigInt::from(2);
@@ -390,9 +351,13 @@ fn primes(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     let limit = bigint_to_usize(&limit)
         .filter(|&v| v <= MAX_SIEVE_LIMIT)
         .ok_or_else(|| {
-            RuntimeError::Message(format!(
-                "`math::primes` limit must be at most {MAX_SIEVE_LIMIT}"
-            ))
+            RuntimeError::invalid(
+                "math::primes".into(),
+                ValueProblem::ExceedsLimit {
+                    value: limit.to_string(),
+                    limit: MAX_SIEVE_LIMIT.to_string(),
+                },
+            )
         })?;
     let mut sieve = vec![true; limit + 1];
     sieve[0] = false;
@@ -471,13 +436,15 @@ fn mod_pow(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     let exp = int_arg(args, 1, "math::mod_pow")?;
     let modulus = int_arg(args, 2, "math::mod_pow")?;
     if exp < BigInt::from(0) {
-        return Err(RuntimeError::Message(
-            "`math::mod_pow` requires exp >= 0".into(),
+        return Err(RuntimeError::invalid(
+            "math::mod_pow".into(),
+            ValueProblem::MustBeNonNegative,
         ));
     }
     if modulus == BigInt::from(0) {
-        return Err(RuntimeError::Message(
-            "`math::mod_pow` requires a non-zero modulus".into(),
+        return Err(RuntimeError::invalid(
+            "math::mod_pow".into(),
+            ValueProblem::MustBeNonZero,
         ));
     }
     let m = crate::num::bigint_abs(modulus);
@@ -734,21 +701,29 @@ fn continued_fraction(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, Runt
     let x = f64_arg(args, 0, "math::continued_fraction")?;
     let n = int_arg(args, 1, "math::continued_fraction")?;
     if n < BigInt::from(1) {
-        return Err(RuntimeError::Message(
-            "`math::continued_fraction` expects n >= 1".into(),
+        return Err(RuntimeError::argument_type(
+            "math::continued_fraction".into(),
+            1,
+            "an integer >= 1",
+            n.to_string(),
         ));
     }
     if !x.is_finite() {
-        return Err(RuntimeError::Message(
-            "`math::continued_fraction` expects a finite x".into(),
+        return Err(RuntimeError::invalid(
+            "math::continued_fraction".into(),
+            ValueProblem::MustBeFinite,
         ));
     }
     let n = bigint_to_usize(&n)
         .filter(|&v| v <= MAX_CF_TERMS)
         .ok_or_else(|| {
-            RuntimeError::Message(format!(
-                "`math::continued_fraction` n must be at most {MAX_CF_TERMS}"
-            ))
+            RuntimeError::invalid(
+                "math::continued_fraction".into(),
+                ValueProblem::ExceedsLimit {
+                    value: n.to_string(),
+                    limit: MAX_CF_TERMS.to_string(),
+                },
+            )
         })?;
     let mut out = Vec::with_capacity(n);
     let mut cur = x;

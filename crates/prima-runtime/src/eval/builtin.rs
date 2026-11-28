@@ -46,21 +46,23 @@ impl Evaluator {
             // Symbolic differentiation is intercepted in `eval_call` (spec §19.4); reaching here means
             // it was used indirectly (e.g. as a value), which the interpreter does not support.
             Builtin::Derivative | Builtin::Partial | Builtin::Grad | Builtin::Limit => {
-                crate::error::err(
+                crate::error::type_err(
                     "`derivative`/`partial`/`grad`/`limit` must be called directly with a variable",
                 )
             }
             Builtin::Simplify => {
-                let arg = args
-                    .first()
-                    .ok_or_else(|| RuntimeError::Message("simplify expects one argument".into()))?;
+                let arg = args.first().ok_or_else(|| RuntimeError::Arity {
+                    callable: "simplify".into(),
+                    expected: crate::error::Arity::Exact(1),
+                    got: 0,
+                })?;
                 let id = self.to_expr_id(arg)?;
                 let simp = simplify(self.pool, self.builtins, id);
                 Ok(self.value_from_expr(simp))
             }
             Builtin::Range => {
                 if args.len() < 2 || args.len() > 3 {
-                    return crate::error::err("`range` expects (start, end, step?)");
+                    return crate::error::type_err("`range` expects (start, end, step?)");
                 }
                 let start = self.scalar_value(args[0].clone())?;
                 let end = self.scalar_value(args[1].clone())?;
@@ -78,7 +80,7 @@ impl Evaluator {
                     RuntimeError::Type(format!("range step must be an integer, got {step}"))
                 })?;
                 if step_i == 0 {
-                    return crate::error::err("`range` step cannot be zero");
+                    return crate::error::type_err("`range` step cannot be zero");
                 }
                 // Element count in `i128` (spec §16.1 R0001): `end - start` can overflow `i64`,
                 // and the count must never wrap or become negative.
@@ -120,7 +122,7 @@ impl Evaluator {
                     Value::String(s) => s.chars().count(),
                     Value::Tuple(t) => t.len(),
                     other => {
-                        return crate::error::err(format!(
+                        return crate::error::type_err(format!(
                             "`len` expects an array, dict, set, string, or tuple, got {}",
                             value_type_name(other)
                         ));
@@ -131,7 +133,7 @@ impl Evaluator {
             Builtin::Enumerate => {
                 check_arity("enumerate", &args, 1)?;
                 let Value::Array(a) = &args[0] else {
-                    return crate::error::err("`enumerate` expects an array");
+                    return crate::error::type_err("`enumerate` expects an array");
                 };
                 Ok(Value::Array(
                     a.with(|items| {
@@ -151,7 +153,7 @@ impl Evaluator {
             Builtin::Zip => {
                 check_arity("zip", &args, 2)?;
                 let (Value::Array(x), Value::Array(y)) = (&args[0], &args[1]) else {
-                    return crate::error::err("`zip` expects two arrays");
+                    return crate::error::type_err("`zip` expects two arrays");
                 };
                 Ok(Value::Array(
                     x.with(|xs| {
@@ -168,13 +170,15 @@ impl Evaluator {
             Builtin::Sorted => {
                 check_arity("sorted", &args, 1)?;
                 let Value::Array(a) = &args[0] else {
-                    return crate::error::err("`sorted` expects an array");
+                    return crate::error::type_err("`sorted` expects an array");
                 };
                 let mut nums = Vec::with_capacity(a.len());
                 for e in a.iter() {
                     match e {
                         Value::Number(n) => nums.push(n.clone()),
-                        _ => return crate::error::err("`sorted` requires an array of numbers"),
+                        _ => {
+                            return crate::error::type_err("`sorted` requires an array of numbers");
+                        }
                     }
                 }
                 nums.sort_by(|x, y| self.number_cmp(x, y).unwrap_or(Ordering::Equal));
@@ -188,7 +192,7 @@ impl Evaluator {
             Builtin::Reversed => {
                 check_arity("reversed", &args, 1)?;
                 let Value::Array(mut a) = args[0].clone() else {
-                    return crate::error::err("`reversed` expects an array");
+                    return crate::error::type_err("`reversed` expects an array");
                 };
                 a.with_mut(|items| items.reverse());
                 Ok(Value::Array(a))
@@ -201,10 +205,10 @@ impl Evaluator {
                 };
                 check_arity(name, &args, 1)?;
                 let Value::Array(a) = &args[0] else {
-                    return crate::error::err(format!("`{name}` expects an array"));
+                    return crate::error::type_err(format!("`{name}` expects an array"));
                 };
                 if a.is_empty() {
-                    return Err(crate::error::coded("R0014", "empty collection"));
+                    return Err(RuntimeError::EmptyCollection(("empty collection").into()));
                 }
                 let op = if matches!(b, Builtin::Sum) {
                     BinOp::Add
@@ -214,7 +218,9 @@ impl Evaluator {
                 let mut acc = match a.get(0) {
                     Some(Value::Number(n)) => n,
                     _ => {
-                        return crate::error::err(format!("`{name}` requires an array of numbers"));
+                        return crate::error::type_err(format!(
+                            "`{name}` requires an array of numbers"
+                        ));
                     }
                 };
                 a.with(|items| -> Result<(), RuntimeError> {
@@ -222,7 +228,7 @@ impl Evaluator {
                         let n = match e {
                             Value::Number(n) => n.clone(),
                             _ => {
-                                return crate::error::err(format!(
+                                return crate::error::type_err(format!(
                                     "`{name}` requires an array of numbers"
                                 ));
                             }
@@ -230,7 +236,7 @@ impl Evaluator {
                         match self.eval_number_binary(op, acc.clone(), n)? {
                             Value::Number(n) => acc = n,
                             _ => {
-                                return crate::error::err(format!(
+                                return crate::error::type_err(format!(
                                     "`{name}` result must be numeric"
                                 ));
                             }
@@ -248,15 +254,17 @@ impl Evaluator {
                 };
                 check_arity(name, &args, 1)?;
                 let Value::Array(a) = &args[0] else {
-                    return crate::error::err(format!("`{name}` expects an array"));
+                    return crate::error::type_err(format!("`{name}` expects an array"));
                 };
                 if a.is_empty() {
-                    return Err(crate::error::coded("R0014", "empty collection"));
+                    return Err(RuntimeError::EmptyCollection(("empty collection").into()));
                 }
                 let mut best = match a.get(0) {
                     Some(Value::Number(n)) => n,
                     _ => {
-                        return crate::error::err(format!("`{name}` requires an array of numbers"));
+                        return crate::error::type_err(format!(
+                            "`{name}` requires an array of numbers"
+                        ));
                     }
                 };
                 a.with(|items| -> Result<(), RuntimeError> {
@@ -264,14 +272,14 @@ impl Evaluator {
                         let n = match e {
                             Value::Number(n) => n.clone(),
                             _ => {
-                                return crate::error::err(format!(
+                                return crate::error::type_err(format!(
                                     "`{name}` requires an array of numbers"
                                 ));
                             }
                         };
-                        let ord = self.number_cmp(&n, &best).ok_or_else(|| {
-                            RuntimeError::Message("cannot compare these numbers".into())
-                        })?;
+                        let ord = self
+                            .number_cmp(&n, &best)
+                            .ok_or_else(|| RuntimeError::UncomparableNumbers)?;
                         let better = if matches!(b, Builtin::Min) {
                             ord == Ordering::Less
                         } else {
@@ -293,7 +301,7 @@ impl Evaluator {
                 };
                 check_arity(name, &args, 1)?;
                 let Value::Array(a) = &args[0] else {
-                    return crate::error::err(format!("`{name}` expects an array"));
+                    return crate::error::type_err(format!("`{name}` expects an array"));
                 };
                 let is_all = matches!(b, Builtin::All);
                 Ok(a.with(|items| -> Result<Value, RuntimeError> {
@@ -302,7 +310,7 @@ impl Evaluator {
                         let ok = match e {
                             Value::Bool(x) => *x,
                             _ => {
-                                return crate::error::err(format!(
+                                return crate::error::type_err(format!(
                                     "`{name}` requires an array of booleans"
                                 ));
                             }
@@ -325,10 +333,10 @@ impl Evaluator {
             Builtin::Join => {
                 check_arity("join", &args, 2)?;
                 let Value::Array(parts) = &args[0] else {
-                    return crate::error::err("`join` expects an array of strings");
+                    return crate::error::type_err("`join` expects an array of strings");
                 };
                 let Value::String(sep) = &args[1] else {
-                    return crate::error::err("`join` separator must be a string");
+                    return crate::error::type_err("`join` separator must be a string");
                 };
                 let out = parts.with(|items| -> Result<String, RuntimeError> {
                     let mut out = String::new();
@@ -338,7 +346,11 @@ impl Evaluator {
                         }
                         match p {
                             Value::String(s) => out.push_str(s),
-                            _ => return crate::error::err("`join` requires an array of strings"),
+                            _ => {
+                                return crate::error::type_err(
+                                    "`join` requires an array of strings",
+                                );
+                            }
                         }
                     }
                     Ok(out)
@@ -348,7 +360,7 @@ impl Evaluator {
             Builtin::Count => {
                 check_arity("count", &args, 2)?;
                 let Value::Array(a) = &args[0] else {
-                    return crate::error::err("`count` expects an array");
+                    return crate::error::type_err("`count` expects an array");
                 };
                 Ok(Value::Number(Number::from(
                     a.with(|items| items.iter().filter(|e| self.value_eq(e, &args[1])).count())
@@ -358,11 +370,11 @@ impl Evaluator {
             Builtin::Index => {
                 check_arity("index", &args, 2)?;
                 let Value::Array(a) = &args[0] else {
-                    return crate::error::err("`index` expects an array");
+                    return crate::error::type_err("`index` expects an array");
                 };
                 match a.with(|items| items.iter().position(|e| self.value_eq(e, &args[1]))) {
                     Some(i) => Ok(Value::Number(Number::from(i as i64))),
-                    None => Err(crate::error::coded("R0013", "element not found")),
+                    None => Err(RuntimeError::NotFound(("element not found").into())),
                 }
             }
             Builtin::First | Builtin::Last => {
@@ -373,7 +385,7 @@ impl Evaluator {
                 };
                 check_arity(name, &args, 1)?;
                 let Value::Array(a) = &args[0] else {
-                    return crate::error::err(format!("`{name}` expects an array"));
+                    return crate::error::type_err(format!("`{name}` expects an array"));
                 };
                 let elem = a.with(|items| {
                     if matches!(b, Builtin::First) {
@@ -394,10 +406,10 @@ impl Evaluator {
                     Value::Number(n) => n.as_i64().ok_or_else(|| {
                         RuntimeError::Type("`linspace` count must be an integer".into())
                     })?,
-                    _ => return crate::error::err("`linspace` count must be an integer"),
+                    _ => return crate::error::type_err("`linspace` count must be an integer"),
                 };
                 if n < 0 {
-                    return crate::error::err("`linspace` count must be non-negative");
+                    return crate::error::type_err("`linspace` count must be non-negative");
                 }
                 let n = n as usize;
                 if n == 0 {
@@ -420,14 +432,14 @@ impl Evaluator {
             }
             // `map`/`filter`/`reduce` are intercepted in `eval_call` (the function argument is an
             // un-evaluated expression); reaching here means the name was used as a value.
-            Builtin::Map | Builtin::Filter | Builtin::Reduce => {
-                crate::error::err("`map`/`filter`/`reduce` must be called directly with a function")
-            }
+            Builtin::Map | Builtin::Filter | Builtin::Reduce => crate::error::type_err(
+                "`map`/`filter`/`reduce` must be called directly with a function",
+            ),
             // `jit` is intercepted in `eval_call` (the argument is an un-evaluated function/expression);
             // reaching here means the name was used as a value.
-            Builtin::Jit => {
-                crate::error::err("`jit` must be called directly with a function or expression")
-            }
+            Builtin::Jit => crate::error::type_err(
+                "`jit` must be called directly with a function or expression",
+            ),
             Builtin::Collapse(name) => {
                 if self.current_config().print_format != crate::config::PrintFormat::Latex {
                     match (name, args.as_slice()) {
@@ -458,7 +470,7 @@ impl Evaluator {
                     _ => unreachable!(),
                 });
                 if args.len() != 1 {
-                    return crate::error::err("math function expects one argument");
+                    return crate::error::type_err("math function expects one argument");
                 }
                 // Real-domain policy (spec §6.5): `sqrt`/`log`/`ln` of a negative value is a domain
                 // error instead of being folded to `NaN`. Without this check `simplify` would turn
@@ -484,12 +496,12 @@ impl Evaluator {
     pub(crate) fn to_expr_id(&self, v: &Value) -> Result<ExprId, RuntimeError> {
         match v {
             Value::Number(n) => self.pool.try_number(n).ok_or_else(|| {
-                RuntimeError::Message(
+                RuntimeError::Type(
                     "complex numbers cannot be used as symbolic expression nodes".into(),
                 )
             }),
             Value::Expr(id) => Ok(*id),
-            _ => crate::error::err("expected a numeric or symbolic expression"),
+            _ => crate::error::type_err("expected a numeric or symbolic expression"),
         }
     }
 
@@ -510,7 +522,7 @@ impl Evaluator {
         args: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
         if args.len() > 1 {
-            return crate::error::err(if matches!(b, Builtin::ReadLine) {
+            return crate::error::type_err(if matches!(b, Builtin::ReadLine) {
                 "`read_line` takes no arguments"
             } else {
                 "`input` takes at most one (prompt) argument"

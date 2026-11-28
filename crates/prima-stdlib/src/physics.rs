@@ -8,6 +8,7 @@
 //! [`RuntimeError`].
 
 use prima_core::{Number, Real, Value};
+use prima_runtime::args::Args;
 use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
@@ -49,29 +50,25 @@ pub fn register() {
 // —— argument helpers (mirroring the `math`/`stats` module conventions) ——
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
-    if args.len() == n {
-        Ok(())
-    } else {
-        Err(RuntimeError::Message(format!(
-            "`{fname}` expects {n} argument(s), got {}",
-            args.len()
-        )))
-    }
+    Args::new(fname, args).exact(n)
 }
 
 /// Extract argument `i` as an `f64`; complex numbers are rejected rather than silently truncated.
 fn real_arg(args: &[Value], i: usize, fname: &str) -> Result<f64, RuntimeError> {
-    match args.get(i) {
-        Some(Value::Number(n)) if !n.is_complex() => Ok(n.to_f64_lossy()),
-        Some(Value::Number(n)) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be a real number, got {n}"
-        ))),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be a number, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
+    match Args::new(fname, args).get(i)? {
+        Value::Number(n) if !n.is_complex() => Ok(n.to_f64_lossy()),
+        Value::Number(n) => Err(RuntimeError::argument_type(
+            fname.into(),
+            i,
+            "a real number",
+            n.to_string(),
+        )),
+        other => Err(RuntimeError::argument_type(
+            fname.into(),
+            i,
+            "a number",
+            prima_runtime::value_type_name(other),
+        )),
     }
 }
 

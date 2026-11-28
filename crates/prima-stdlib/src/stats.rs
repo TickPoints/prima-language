@@ -12,57 +12,22 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use prima_core::{Number, Real, Value, ValueKey};
+use prima_runtime::args::Args;
 use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
-    if args.len() == n {
-        Ok(())
-    } else {
-        Err(RuntimeError::Message(format!(
-            "`{fname}` expects {n} argument(s), got {}",
-            args.len()
-        )))
-    }
+    Args::new(fname, args).exact(n)
 }
 
 /// A numeric argument converted to `f64` (spec §B.3: stats are computed in f64).
 fn f64_arg(args: &[Value], i: usize, fname: &str) -> Result<f64, RuntimeError> {
-    match args.get(i) {
-        Some(Value::Number(n)) => Ok(n.to_f64_lossy()),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be a number, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Args::new(fname, args).real(i)
 }
 
 /// A numeric-array argument converted to `Vec<f64>`.
 fn data_arg(args: &[Value], i: usize, fname: &str) -> Result<Vec<f64>, RuntimeError> {
-    match args.get(i) {
-        Some(Value::Array(items)) => {
-            let mut out = Vec::with_capacity(items.len());
-            for (j, v) in items.iter().enumerate() {
-                match v {
-                    Value::Number(n) => out.push(n.to_f64_lossy()),
-                    other => {
-                        return Err(RuntimeError::Type(format!(
-                            "`{fname}` data element {j} must be a number, got {other:?}"
-                        )));
-                    }
-                }
-            }
-            Ok(out)
-        }
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be an array of numbers, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Args::new(fname, args).f64_array(i)
 }
 
 /// Wrap an `f64` as a `Value::Number`.
@@ -380,9 +345,10 @@ fn dist_arg(
         Some(other) => Err(RuntimeError::Type(format!(
             "`{fname}` argument {i} must be a distribution descriptor, got {other:?}"
         ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
+        None => Err(RuntimeError::MissingArgument {
+            callable: fname.into(),
+            position: i,
+        }),
     }
 }
 

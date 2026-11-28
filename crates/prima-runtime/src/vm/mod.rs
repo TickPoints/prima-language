@@ -7,8 +7,10 @@
 //! so the VM can be extended incrementally without ever changing observable behavior.
 
 pub mod comp;
+pub mod error;
 pub mod exec;
 pub mod helpers;
 pub mod op;
 
+pub use error::{VmError, VmLimit};
 pub use op::{Chunk, Const, Op, Program};

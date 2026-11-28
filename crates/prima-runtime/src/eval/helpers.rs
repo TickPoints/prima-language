@@ -247,18 +247,16 @@ pub(crate) fn check_parfor_body(body: &Block) -> Result<Vec<ParforStep>, Runtime
                         value: value.clone(),
                     }));
                 } else {
-                    return Err(crate::error::coded(
-                        "E0082",
-                        "parfor iteration body may only assign to index slots `A[i]`",
-                    ));
+                    return Err(RuntimeError::CompileDiagnostic {
+                        code: "E0082",
+                        message: ("parfor iteration body may only assign to index slots `A[i]`")
+                            .into(),
+                    });
                 }
             }
             Stmt::Expr(e) => steps.push(ParforStep::Eval(e.clone())),
             _ => {
-                return Err(crate::error::coded(
-                    "E0082",
-                    "parfor iteration body must be side-effect free: only index-slot assignments and pure calls allowed",
-                ));
+                return Err(RuntimeError::CompileDiagnostic { code: "E0082", message: ("parfor iteration body must be side-effect free: only index-slot assignments and pure calls allowed").into() });
             }
         }
     }
@@ -500,6 +498,11 @@ pub(crate) fn with_notes(
     help: Option<String>,
 ) -> RuntimeError {
     let notes: Vec<String> = notes.into_iter().collect();
+    // `?` propagation is return control flow, not a diagnostic: wrapping it here would hide the
+    // marker from the function-call boundary (spec §16.3).
+    if matches!(error, RuntimeError::Propagate(_)) {
+        return error;
+    }
     if notes.is_empty() && help.is_none() {
         error
     } else {
@@ -592,16 +595,9 @@ fn levenshtein(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
-/// Arity guard for builtin functions (spec §16): wrong argument counts are `Message` errors.
+/// Arity guard for builtin functions (spec §16): wrong argument counts are `R0011` errors.
 pub(crate) fn check_arity(name: &str, args: &[Value], n: usize) -> Result<(), RuntimeError> {
-    if args.len() == n {
-        Ok(())
-    } else {
-        crate::error::err(format!(
-            "`{name}` expects {n} argument(s), got {}",
-            args.len()
-        ))
-    }
+    crate::args::Args::new(name, args).exact(n)
 }
 
 /// Every element of an array must be numeric for elementwise operations/broadcast (spec §11.4, `R0009`).
@@ -611,10 +607,7 @@ pub(crate) fn require_numeric_array(elems: &[Value]) -> Result<Vec<Number>, Runt
         match e {
             Value::Number(n) => out.push(n.clone()),
             _ => {
-                return Err(crate::error::coded(
-                    "R0009",
-                    "array elements must be numeric",
-                ));
+                return crate::error::type_err("array elements must be numeric");
             }
         }
     }
@@ -647,7 +640,7 @@ pub(crate) fn normalize_insert(idx: i64, len: usize) -> Option<usize> {
 /// Remainder for the `%` operator (spec §11.4 elementwise Mod): exact for integers, f64 otherwise.
 pub(crate) fn number_mod(x: &Number, y: &Number) -> Result<Number, RuntimeError> {
     if y.is_zero() {
-        return crate::error::err("modulo by zero");
+        return crate::error::type_err("modulo by zero");
     }
     if let (Some(a), Some(b)) = (x.as_bigint(), y.as_bigint()) {
         return Ok(Number::Integer(Box::new(a % b)));
@@ -855,7 +848,9 @@ pub(crate) fn literal_value(e: &Expr) -> Option<Value> {
 /// in `env` (spec §16.4). Shared by every runtime call-resolution failure.
 pub(crate) fn unknown_function_error(env: &crate::eval::EnvRef, attempted: &str) -> RuntimeError {
     let names = env.borrow().visible_names();
-    let err = RuntimeError::Message(format!("unknown function `{attempted}`"));
+    let err = RuntimeError::UnknownFunction {
+        name: attempted.to_string(),
+    };
     match prima_core::suggest::did_you_mean_help(attempted, &names) {
         Some(help) => err.with_help(help),
         None => err,
@@ -866,7 +861,7 @@ pub(crate) fn syntax_err(e: SyntaxError) -> RuntimeError {
     // Preserve the syntax error's own code and help so `error[E00xx]` and `= help:` survive the
     // bridge into runtime diagnostics (spec §16.4). The message is prefixed once; the code is
     // carried structured, never re-embedded in the text.
-    let err = RuntimeError::Coded {
+    let err = RuntimeError::CompileDiagnostic {
         code: e.code,
         message: format!("syntax error: {}", e.message),
     };
@@ -879,6 +874,25 @@ pub(crate) fn syntax_err(e: SyntaxError) -> RuntimeError {
 pub(crate) fn syntax_errors(errors: Vec<SyntaxError>) -> RuntimeError {
     match errors.first() {
         Some(e) => syntax_err(e.clone()),
-        None => RuntimeError::Message("syntax error".into()),
+        None => RuntimeError::CompileDiagnostic {
+            code: "E0010",
+            message: "syntax error".into(),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prima_core::Value;
+
+    #[test]
+    fn with_notes_keeps_the_propagation_marker() {
+        let error = RuntimeError::Propagate(Box::new(Value::Nil));
+        let wrapped = with_notes(error.clone(), ["note".to_string()], Some("help".into()));
+        assert_eq!(
+            wrapped, error,
+            "`?` propagation must stay return control flow, not a diagnostic"
+        );
     }
 }

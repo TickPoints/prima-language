@@ -51,10 +51,10 @@ impl Evaluator {
         let method = match def.methods.get(method_name) {
             Some(m) => m.clone(),
             None => {
-                let err = RuntimeError::Message(format!(
-                    "unknown associated function `{}::{}`",
-                    def.name, method_name
-                ));
+                let err = RuntimeError::UnknownAssociatedFunction {
+                    class: def.name.clone(),
+                    name: method_name.to_string(),
+                };
                 // Attach a `did you mean` help and a doc note from the nearest candidate (spec §16.4).
                 let mut notes = Vec::new();
                 let mut help = None;
@@ -73,26 +73,23 @@ impl Evaluator {
         };
         let note = |e: RuntimeError| with_notes(e, method_note(method_name, &method), None);
         if method.params.iter().any(|p| p.is_self) {
-            return Err(note(RuntimeError::Message(format!(
-                "`{}::{}` is a method; call it on an instance",
-                def.name, method_name
-            ))));
+            return Err(note(RuntimeError::MethodNeedsInstance {
+                class: def.name.clone(),
+                member: method_name.to_string(),
+            }));
         }
         if method.body.is_none() {
-            return Err(note(RuntimeError::Message(format!(
-                "`{}::{}` is an unregistered `@builtin` method",
-                def.name, method_name
-            ))));
+            return Err(note(RuntimeError::UnregisteredBuiltin {
+                target: format!("{}::{}", def.name, method_name),
+            }));
         }
         let body = method.body.as_ref().expect("body checked above");
         if args.len() != method.params.len() {
-            return Err(note(RuntimeError::Message(format!(
-                "`{}::{}` expects {} arguments, got {}",
-                def.name,
-                method_name,
-                method.params.len(),
-                args.len()
-            ))));
+            return Err(note(RuntimeError::Arity {
+                callable: format!("{}::{}", def.name, method_name),
+                expected: crate::error::Arity::Exact(method.params.len()),
+                got: args.len(),
+            }));
         }
         let call_env = Env::child(&method.env);
         for (p, a) in method.params.iter().zip(args) {
@@ -120,19 +117,21 @@ impl Evaluator {
                     .instances
                     .get(&id)
                     .cloned()
-                    .ok_or_else(|| RuntimeError::Message("unknown class instance".into()))?;
+                    .ok_or_else(|| RuntimeError::UnknownClassInstance)?;
                 let def = self.class_defs.get(&inst.class).cloned().ok_or_else(|| {
-                    RuntimeError::Message(format!("unknown class `{}`", inst.class))
+                    RuntimeError::UnknownClass {
+                        name: inst.class.clone(),
+                    }
                 })?;
                 let method = match def.methods.get(&name.value) {
                     Some(m) => m.clone(),
                     None => {
                         // Unknown method: attach a `did you mean` help and a doc note from the
                         // nearest candidate method (spec §16.4).
-                        let err = RuntimeError::Message(format!(
-                            "unknown method `{}` on `{}`",
-                            name.value, def.name
-                        ));
+                        let err = RuntimeError::UnknownMethod {
+                            name: name.value.clone(),
+                            class: def.name.clone(),
+                        };
                         let mut notes = Vec::new();
                         let mut help = None;
                         if let Some(cand) =
@@ -150,30 +149,29 @@ impl Evaluator {
                 };
                 if method.vis == Visibility::Private && !self.in_method_of(&def.name) {
                     return Err(with_notes(
-                        RuntimeError::Message(format!(
-                            "private method `{}` cannot be called",
-                            name.value
-                        )),
+                        RuntimeError::PrivateMethod {
+                            name: name.value.clone(),
+                        },
                         method_note(&name.value, &method),
                         None,
                     ));
                 }
                 if method.vis == Visibility::Module && self.current_module != def.module {
                     return Err(with_notes(
-                        RuntimeError::Message(format!(
-                            "method `{}` of `{}` is `pub(mod)` and not accessible from this module",
-                            name.value, def.name
-                        )),
+                        RuntimeError::ModuleOnlyMethod {
+                            name: name.value.clone(),
+                            class: def.name.clone(),
+                        },
                         method_note(&name.value, &method),
                         None,
                     ));
                 }
                 if !method.params.first().map(|p| p.is_self).unwrap_or(false) {
                     return Err(with_notes(
-                        RuntimeError::Message(format!(
-                            "`{}` on `{}` is an associated function; call it as `{}::{}(...)`",
-                            name.value, def.name, def.name, name.value
-                        )),
+                        RuntimeError::AssociatedFunctionCalled {
+                            class: def.name.clone(),
+                            member: name.value.clone(),
+                        },
                         method_note(&name.value, &method),
                         None,
                     ));
@@ -285,89 +283,12 @@ impl Evaluator {
                 arg_values,
                 Some(BuiltinBackend::Collapse),
             ),
-            other => crate::error::err(format!(
+            other => crate::error::type_err(format!(
                 "cannot call method `{}` on {}",
                 name.value,
                 value_type_name(&other)
             )),
         }
-    }
-
-    /// Dispatch a builtin-class method call through its class definition (spec §18.1): a registered
-    /// Rust fast path or `.pra` fallback body when the method declares one (layered `@builtin(ON)`,
-    /// spec §18.4), otherwise the runtime backend. Errors are wrapped with the method's doc note
-    /// (spec §16.4).
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn dispatch_builtin_method(
-        &mut self,
-        env: &EnvRef,
-        receiver: &Expr,
-        class: &str,
-        rcv: Value,
-        name: &str,
-        args: Vec<Value>,
-        backend: Option<BuiltinBackend>,
-    ) -> Result<Value, RuntimeError> {
-        let Some(method) = self.builtin_method(class, name)? else {
-            let err = RuntimeError::Message(format!("unknown `{class}` method `{name}`"));
-            return Err(native_method_error(class, name, err));
-        };
-        // Registered impl and/or `.pra` body: `call_method` applies the `@builtin(ON)` layering.
-        if method.body.is_some() || method.native.is_some() {
-            return self
-                .call_method(&method, rcv, args)
-                .map_err(|e| native_method_error(class, name, e));
-        }
-        let backend = backend.ok_or_else(|| {
-            RuntimeError::Message(format!("unregistered `{class}` method `{name}`"))
-        })?;
-        let result = match backend {
-            BuiltinBackend::Array => {
-                let Value::Array(a) = &rcv else {
-                    return crate::error::err("expected an array receiver");
-                };
-                self.call_array_method(a, name, args)
-            }
-            BuiltinBackend::Dict => {
-                let Value::Dict(d) = &rcv else {
-                    return crate::error::err("expected a dict receiver");
-                };
-                self.call_dict_method(d, name, args)
-            }
-            BuiltinBackend::Set => {
-                let Value::Set(s) = &rcv else {
-                    return crate::error::err("expected a set receiver");
-                };
-                self.call_set_method(s, name, args)
-            }
-            BuiltinBackend::MutateArray => self.mutate_array(env, receiver, name, args),
-            BuiltinBackend::MutateDict => self.mutate_dict(env, receiver, name, args),
-            BuiltinBackend::MutateSet => self.mutate_set(env, receiver, name, args),
-            BuiltinBackend::Char => {
-                let Value::Char(c) = &rcv else {
-                    return crate::error::err("expected a char receiver");
-                };
-                self.call_char_method(*c, name, args)
-            }
-            BuiltinBackend::Tuple => {
-                let Value::Tuple(t) = &rcv else {
-                    return crate::error::err("expected a tuple receiver");
-                };
-                self.call_tuple_method(t, name, args)
-            }
-            BuiltinBackend::Collapse | BuiltinBackend::CollapseNumber => {
-                let collapse_name = if matches!(backend, BuiltinBackend::CollapseNumber) {
-                    numeric_method_name(name)
-                } else {
-                    name.to_string()
-                };
-                let mut cargs = Vec::with_capacity(args.len() + 1);
-                cargs.push(rcv);
-                cargs.extend(args);
-                crate::collapse::call(&collapse_name, &cargs, self.pool, self.builtins)
-            }
-        };
-        result.map_err(|e| native_method_error(class, name, e))
     }
 
     /// Call a method: `self` is bound to the receiver (a shallow copy — same instance handle, spec §12.3).
@@ -390,10 +311,10 @@ impl Evaluator {
             .params
             .first()
             .filter(|p| p.is_self)
-            .ok_or_else(|| RuntimeError::Message("method requires a `self` receiver".into()))?;
+            .ok_or_else(|| RuntimeError::MissingSelfReceiver)?;
         let expected = method.params.len() - 1;
         if args.len() != expected {
-            return crate::error::err(format!(
+            return crate::error::type_err(format!(
                 "method expects {expected} arguments, got {}",
                 args.len()
             ));
@@ -408,10 +329,9 @@ impl Evaluator {
             full.extend(args);
             return native(self, &full);
         }
-        let body = method
-            .body
-            .as_ref()
-            .ok_or_else(|| RuntimeError::Message("unregistered `@builtin` method".into()))?;
+        let body = method.body.as_ref().ok_or_else(|| RuntimeError::Internal {
+            problem: crate::error::InternalProblem::UnregisteredBuiltin,
+        })?;
         let instance_id = match &receiver {
             Value::Class(id) => Some(*id),
             _ => None,
@@ -501,24 +421,34 @@ impl Evaluator {
                     .instances
                     .get(&id)
                     .cloned()
-                    .ok_or_else(|| RuntimeError::Message("unknown class instance".into()))?;
+                    .ok_or_else(|| RuntimeError::UnknownClassInstance)?;
                 let def = self.class_defs.get(&inst.class).cloned().ok_or_else(|| {
-                    RuntimeError::Message(format!("unknown class `{}`", inst.class))
+                    RuntimeError::UnknownClass {
+                        name: inst.class.clone(),
+                    }
                 })?;
-                let field = def.fields.get(name).cloned().ok_or_else(|| {
-                    RuntimeError::Message(format!("`{}` has no field `{}`", def.name, name))
-                })?;
+                let field =
+                    def.fields
+                        .get(name)
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::UnknownField {
+                            class: def.name.clone(),
+                            name: name.to_string(),
+                        })?;
                 if !self.field_accessible(&def, &field) {
-                    return crate::error::err(format!(
+                    return crate::error::type_err(format!(
                         "field `{}` of `{}` is not accessible here",
                         name, def.name
                     ));
                 }
-                inst.fields.get(name).cloned().ok_or_else(|| {
-                    RuntimeError::Message(format!("field `{}` is uninitialized", name))
-                })
+                inst.fields
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::UninitializedField {
+                        field: name.to_string(),
+                    })
             }
-            other => crate::error::err(format!(
+            other => crate::error::type_err(format!(
                 "field access requires a class instance, got {}",
                 value_type_name(&other)
             )),
@@ -533,22 +463,22 @@ impl Evaluator {
         fields: &[FieldValue],
         base: Option<&Expr>,
     ) -> Result<Value, RuntimeError> {
-        let def = self
-            .class_defs
-            .get(&name.value)
-            .cloned()
-            .ok_or_else(|| RuntimeError::Message(format!("unknown class `{}`", name.value)))?;
+        let def = self.class_defs.get(&name.value).cloned().ok_or_else(|| {
+            RuntimeError::UnknownClass {
+                name: name.value.clone(),
+            }
+        })?;
         let mut provided: HashSet<String> = HashSet::new();
         let mut out_fields: HashMap<String, Value> = HashMap::new();
         for fv in fields {
             if !def.fields.contains_key(&fv.name.value) {
-                let err = crate::error::coded(
-                    "E0060",
-                    format!(
+                let err = RuntimeError::CompileDiagnostic {
+                    code: "E0060",
+                    message: format!(
                         "unknown field `{}` in `{}` literal",
                         fv.name.value, name.value
                     ),
-                );
+                };
                 // Suggest the nearest declared field (spec §16.4).
                 let help = did_you_mean_help(&fv.name.value, def.fields.keys());
                 return Err(match help {
@@ -559,10 +489,9 @@ impl Evaluator {
             let v = match &fv.value {
                 Some(e) => self.eval_expr(env, e)?,
                 None => env.borrow().get_value(&fv.name.value).ok_or_else(|| {
-                    RuntimeError::Message(format!(
-                        "no value `{}` in scope for field shorthand",
-                        fv.name.value
-                    ))
+                    RuntimeError::UnknownVariable {
+                        name: fv.name.value.clone(),
+                    }
                 })?,
             };
             provided.insert(fv.name.value.clone());
@@ -571,12 +500,13 @@ impl Evaluator {
         if let Some(b) = base {
             match self.eval_expr(env, b)? {
                 Value::Class(bid) => {
-                    let binst =
-                        self.instances.get(&bid).cloned().ok_or_else(|| {
-                            RuntimeError::Message("unknown class instance".into())
-                        })?;
+                    let binst = self
+                        .instances
+                        .get(&bid)
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::UnknownClassInstance)?;
                     if binst.class != def.name {
-                        return crate::error::err(format!(
+                        return crate::error::type_err(format!(
                             "`{}` literal base must be a `{}` instance",
                             name.value, def.name
                         ));
@@ -587,15 +517,17 @@ impl Evaluator {
                         }
                     }
                 }
-                _ => return crate::error::err("struct literal base must be a class instance"),
+                _ => {
+                    return crate::error::type_err("struct literal base must be a class instance");
+                }
             }
         }
         for f in def.fields.keys() {
             if !out_fields.contains_key(f) {
-                return Err(crate::error::coded(
-                    "E0061",
-                    format!("missing field `{f}` in `{}` literal", name.value),
-                ));
+                return Err(RuntimeError::CompileDiagnostic {
+                    code: "E0061",
+                    message: format!("missing field `{f}` in `{}` literal", name.value),
+                });
             }
         }
         let id = self.next_instance_id;
@@ -677,31 +609,31 @@ impl Evaluator {
                     };
                     // Validation (spec §18.4): `E0055` unregistered `@builtin`, `E0056` wrong body.
                     if is_builtin && level == 0 && body.is_some() {
-                        return Err(crate::error::coded(
-                            "E0056",
-                            format!(
+                        return Err(RuntimeError::CompileDiagnostic {
+                            code: "E0056",
+                            message: format!(
                                 "`@builtin` method `{}` of `{}` must not have a body",
                                 mname.value, def.name
                             ),
-                        ));
+                        });
                     }
                     if is_builtin && level > 0 && body.is_none() {
-                        return Err(crate::error::coded(
-                            "E0056",
-                            format!(
+                        return Err(RuntimeError::CompileDiagnostic {
+                            code: "E0056",
+                            message: format!(
                                 "`@builtin(O{level})` method `{}` of `{}` must have a `.pra` fallback body",
                                 mname.value, def.name
                             ),
-                        ));
+                        });
                     }
                     if body.is_none() && native.is_none() && nature == MethodNature::Plain {
-                        return Err(crate::error::coded(
-                            "E0055",
-                            format!(
+                        return Err(RuntimeError::CompileDiagnostic {
+                            code: "E0055",
+                            message: format!(
                                 "unregistered `@builtin` method `{}` of `{}`",
                                 mname.value, def.name
                             ),
-                        ));
+                        });
                     }
                     def.methods.insert(
                         mname.value.clone(),
@@ -738,14 +670,14 @@ impl Evaluator {
         }
         let module_path = format!("core::{}", class.to_ascii_lowercase());
         let src = crate::stdlib::get_module_source(&module_path).ok_or_else(|| {
-            RuntimeError::Message(format!(
-                "`{class}` methods are unavailable: the standard library is not initialized"
-            ))
+            RuntimeError::NotInitialized {
+                subject: class.to_string(),
+            }
         })?;
-        let program = prima_syntax::parse(src).map_err(|_| {
-            RuntimeError::Message(format!(
-                "internal error: embedded `{module_path}` module does not parse"
-            ))
+        let program = prima_syntax::parse(src).map_err(|_| RuntimeError::Internal {
+            problem: crate::error::InternalProblem::EmbeddedModuleParse {
+                module: module_path.clone(),
+            },
         })?;
         let env = Env::new().into_ref();
         let prev_module = std::mem::take(&mut self.current_module);
@@ -767,7 +699,7 @@ impl Evaluator {
             if self.class_defs.contains_key(class) {
                 Ok(())
             } else {
-                crate::error::err(format!(
+                crate::error::type_err(format!(
                     "internal error: `{module_path}` does not define `class {class}`"
                 ))
             }
@@ -775,865 +707,8 @@ impl Evaluator {
         self.current_module = prev_module;
         result
     }
-
-    /// Look up a builtin-class method, loading the class definition first (spec §18.1). `None` for an
-    /// unknown method; loading fails with a runtime error when the standard library is missing.
-    pub(crate) fn builtin_method(
-        &mut self,
-        class: &str,
-        method: &str,
-    ) -> Result<Option<MethodDef>, RuntimeError> {
-        self.ensure_class(class)?;
-        Ok(self
-            .class_defs
-            .get(class)
-            .and_then(|d| d.methods.get(method))
-            .cloned())
-    }
-
-    /// Builtin `Char` methods (spec §18.1): predicates, case mapping, and conversion. All are
-    /// zero-argument; `to_upper`/`to_lower` map a single char (a multi-char expansion, e.g. `ß`,
-    /// keeps only the first code point).
-    pub(crate) fn call_char_method(
-        &mut self,
-        c: char,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value, RuntimeError> {
-        if !args.is_empty() {
-            return crate::error::err(format!(
-                "`Char.{name}` takes no arguments, got {}",
-                args.len()
-            ));
-        }
-        match name {
-            "len" => Ok(Value::Number(Number::from(1))),
-            "is_digit" => Ok(Value::Bool(c.is_ascii_digit())),
-            "is_alpha" => Ok(Value::Bool(c.is_alphabetic())),
-            "is_alnum" => Ok(Value::Bool(c.is_alphanumeric())),
-            "is_upper" => Ok(Value::Bool(c.is_uppercase())),
-            "is_lower" => Ok(Value::Bool(c.is_lowercase())),
-            "is_space" => Ok(Value::Bool(c.is_whitespace())),
-            "is_ascii" => Ok(Value::Bool(c.is_ascii())),
-            "to_upper" => Ok(Value::Char(c.to_uppercase().next().unwrap_or(c))),
-            "to_lower" => Ok(Value::Char(c.to_lowercase().next().unwrap_or(c))),
-            "to_string" => Ok(Value::String(c.to_string().into())),
-            "code" => Ok(Value::Number(Number::from(u32::from(c) as i64))),
-            _ => crate::error::err(format!("unknown `Char` method `{name}`")),
-        }
-    }
-
-    /// Builtin `Tuple` methods (spec §18.1): `len`/`get`/`count`/`index`/`first`/`last`.
-    pub(crate) fn call_tuple_method(
-        &mut self,
-        t: &[Value],
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value, RuntimeError> {
-        let arity = |n: usize| -> Result<(), RuntimeError> {
-            if args.len() == n {
-                Ok(())
-            } else {
-                crate::error::err(format!(
-                    "`Tuple.{name}` expects {n} argument(s), got {}",
-                    args.len()
-                ))
-            }
-        };
-        match name {
-            "len" => {
-                arity(0)?;
-                Ok(Value::Number(Number::from(t.len() as i64)))
-            }
-            "get" => {
-                arity(1)?;
-                let i = match &args[0] {
-                    Value::Number(n) => n.as_i64(),
-                    _ => None,
-                };
-                let Some(i) = i else {
-                    return crate::error::err("`Tuple.get` expects an integer index");
-                };
-                match normalize_index(i, t.len()) {
-                    Some(i) => Ok(Value::Option(Some(Box::new(t[i].clone())))),
-                    None => Ok(Value::Option(None)),
-                }
-            }
-            "count" => {
-                arity(1)?;
-                Ok(Value::Number(Number::from(
-                    t.iter().filter(|e| self.value_eq(e, &args[0])).count() as i64,
-                )))
-            }
-            "index" => {
-                arity(1)?;
-                match t.iter().position(|e| self.value_eq(e, &args[0])) {
-                    Some(i) => Ok(Value::Number(Number::from(i as i64))),
-                    None => Err(crate::error::coded("R0013", "element not found")),
-                }
-            }
-            "first" => {
-                arity(0)?;
-                Ok(t.first()
-                    .map(|v| Value::Option(Some(Box::new(v.clone()))))
-                    .unwrap_or(Value::Option(None)))
-            }
-            "last" => {
-                arity(0)?;
-                Ok(t.last()
-                    .map(|v| Value::Option(Some(Box::new(v.clone()))))
-                    .unwrap_or(Value::Option(None)))
-            }
-            _ => crate::error::err(format!("unknown `Tuple` method `{name}`")),
-        }
-    }
-
-    /// `String::new()` / `String::from(x)` associated functions (spec §18.1).
-    pub(crate) fn try_string_associated(
-        &mut self,
-        env: &EnvRef,
-        segments: &[Spanned<String>],
-        args: &[Expr],
-    ) -> Result<Option<Value>, RuntimeError> {
-        if segments.len() != 2 || segments[0].value != "String" {
-            return Ok(None);
-        }
-        match segments[1].value.as_str() {
-            "new" => {
-                if !args.is_empty() {
-                    return crate::error::err("`String::new` takes no arguments");
-                }
-                Ok(Some(Value::String(String::new().into())))
-            }
-            "from" => {
-                if args.len() != 1 {
-                    return crate::error::err("`String::from` expects 1 argument");
-                }
-                let v = self.eval_expr(env, &args[0])?;
-                Ok(Some(Value::String(self.format_value(&v).into())))
-            }
-            _ => Ok(None),
-        }
-    }
-
-    /// `get(array, index) -> Option<T>`: safe array access (spec §11.3); a negative index counts from
-    /// the end, out-of-range yields `None`.
-    pub(crate) fn call_array_get(&mut self, arr: Value, idx: Value) -> Result<Value, RuntimeError> {
-        let Value::Array(a) = arr else {
-            return crate::error::err("`get` expects an array");
-        };
-        let i = match idx {
-            Value::Number(n) => n.as_i64(),
-            _ => None,
-        };
-        let Some(i) = i else {
-            return crate::error::err("`get` expects an integer index");
-        };
-        match normalize_index(i, a.len()) {
-            Some(i) => Ok(Value::Option(Some(Box::new(
-                a.get(i).unwrap_or(Value::Nil),
-            )))),
-            None => Ok(Value::Option(None)),
-        }
-    }
-
-    /// Read-only array methods (spec §11.3): operate on the receiver's buffer through a read-only
-    /// borrow; results are fresh values.
-    pub(crate) fn call_array_method(
-        &mut self,
-        a: &ArrayVal,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value, RuntimeError> {
-        let arity = |n: usize| -> Result<(), RuntimeError> {
-            if args.len() == n {
-                Ok(())
-            } else {
-                crate::error::err(format!(
-                    "`Array.{name}` expects {n} argument(s), got {}",
-                    args.len()
-                ))
-            }
-        };
-        match name {
-            "len" => {
-                arity(0)?;
-                Ok(Value::Number(Number::from(a.len() as i64)))
-            }
-            "is_empty" => {
-                arity(0)?;
-                Ok(Value::Bool(a.is_empty()))
-            }
-            "get" => {
-                arity(1)?;
-                self.call_array_get(Value::Array(a.snapshot()), args[0].clone())
-            }
-            "contains" => {
-                arity(1)?;
-                Ok(Value::Bool(a.with(|items| {
-                    items.iter().any(|e| self.value_eq(e, &args[0]))
-                })))
-            }
-            "index" => {
-                arity(1)?;
-                match a.with(|items| items.iter().position(|e| self.value_eq(e, &args[0]))) {
-                    Some(i) => Ok(Value::Number(Number::from(i as i64))),
-                    None => Err(crate::error::coded("R0013", "element not found")),
-                }
-            }
-            "count" => {
-                arity(1)?;
-                Ok(Value::Number(Number::from(
-                    a.with(|items| items.iter().filter(|e| self.value_eq(e, &args[0])).count())
-                        as i64,
-                )))
-            }
-            "first" => {
-                arity(0)?;
-                Ok(a.with(|items| {
-                    items
-                        .first()
-                        .map(|v| Value::Option(Some(Box::new(v.clone()))))
-                        .unwrap_or(Value::Option(None))
-                }))
-            }
-            "last" => {
-                arity(0)?;
-                Ok(a.with(|items| {
-                    items
-                        .last()
-                        .map(|v| Value::Option(Some(Box::new(v.clone()))))
-                        .unwrap_or(Value::Option(None))
-                }))
-            }
-            "copy" => {
-                arity(0)?;
-                Ok(Value::Array(a.snapshot()))
-            }
-            _ => crate::error::err(format!("unknown `Array` method `{name}`")),
-        }
-    }
-
-    /// Mutating array methods (spec §11.3): the receiver must be a single-segment path (a variable
-    /// binding); the binding's buffer is mutated in place through the chain (copy-on-write when
-    /// the handle is aliased, spec §11.3 value semantics).
-    pub(crate) fn mutate_array(
-        &self,
-        env: &EnvRef,
-        receiver: &Expr,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value, RuntimeError> {
-        let var = match &receiver.kind {
-            ExprKind::Path { segments } if segments.len() == 1 => segments[0].value.clone(),
-            _ => return crate::error::err("cannot mutate a temporary value"),
-        };
-        match env.borrow().get_value(&var) {
-            Some(Value::Array(_)) => {}
-            Some(_) => return crate::error::err("expected an array binding"),
-            None => return Err(RuntimeError::Message(format!("unknown variable `{var}`"))),
-        }
-        let mut out: Option<Result<Value, RuntimeError>> = None;
-        env.borrow_mut().update_value(&var, |slot| {
-            if let Value::Array(a) = slot {
-                out = Some(self.mutate_array_handle(a, name, args));
-            }
-        });
-        out.unwrap_or_else(|| Err(RuntimeError::Message(format!("unknown variable `{var}`"))))
-    }
-
-    /// Apply a mutating `Array` method to an owned array handle in place (spec §11.3): the mutation
-    /// runs through `with_mut` (copy-on-write when the handle is aliased). Shared by the AST
-    /// receiver path (mutating through the binding) and the VM local-slot path. Payloads that
-    /// reference the target buffer itself are replaced by snapshot copies so no reference cycle
-    /// can form.
-    pub(crate) fn mutate_array_handle(
-        &self,
-        arr: &mut ArrayVal,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value, RuntimeError> {
-        let mut args = args;
-        for a in &mut args {
-            if value_contains_array_buffer(a, arr) {
-                unalias_array_cycles(a, arr);
-            }
-        }
-        arr.with_mut(|items| self.apply_array_mutation(items, name, &args))
-    }
-
-    /// The item-level application of a mutating array method over the element buffer (spec §11.3).
-    /// Arity and index errors match the whole-value path exactly.
-    fn apply_array_mutation(
-        &self,
-        arr: &mut Vec<Value>,
-        name: &str,
-        args: &[Value],
-    ) -> Result<Value, RuntimeError> {
-        let arity = |n: usize| -> Result<(), RuntimeError> {
-            if args.len() == n {
-                Ok(())
-            } else {
-                crate::error::err(format!(
-                    "`Array.{name}` expects {n} argument(s), got {}",
-                    args.len()
-                ))
-            }
-        };
-        let index = |v: &Value| -> Result<i64, RuntimeError> {
-            match v {
-                Value::Number(n) => n.as_i64().ok_or_else(|| {
-                    RuntimeError::Type(format!("`Array.{name}` index must be an integer"))
-                }),
-                _ => crate::error::err(format!("`Array.{name}` index must be an integer")),
-            }
-        };
-        match name {
-            "push" => {
-                arity(1)?;
-                arr.push(args[0].clone());
-                Ok(Value::Nil)
-            }
-            "pop" => {
-                arity(0)?;
-                Ok(arr
-                    .pop()
-                    .map(|v| Value::Option(Some(Box::new(v))))
-                    .unwrap_or(Value::Option(None)))
-            }
-            "append" => {
-                arity(1)?;
-                arr.push(args[0].clone());
-                Ok(Value::Nil)
-            }
-            "extend" => {
-                arity(1)?;
-                match &args[0] {
-                    Value::Array(elems) => {
-                        arr.extend(elems.to_vec());
-                        Ok(Value::Nil)
-                    }
-                    other => crate::error::err(format!(
-                        "`Array.extend` expects an array, got {}",
-                        value_type_name(other)
-                    )),
-                }
-            }
-            "insert" => {
-                arity(2)?;
-                let i = index(&args[0])?;
-                let i = normalize_insert(i, arr.len()).ok_or_else(|| {
-                    RuntimeError::IndexOutOfBounds(format!("index {i} (length {})", arr.len()))
-                })?;
-                arr.insert(i, args[1].clone());
-                Ok(Value::Nil)
-            }
-            "remove" => {
-                arity(1)?;
-                let i = index(&args[0])?;
-                let i = normalize_index(i, arr.len()).ok_or_else(|| {
-                    RuntimeError::IndexOutOfBounds(format!("index {i} (length {})", arr.len()))
-                })?;
-                Ok(arr.remove(i))
-            }
-            "clear" => {
-                arity(0)?;
-                arr.clear();
-                Ok(Value::Nil)
-            }
-            // `sort` orders numeric elements only (spec §11.3); `reverse` works on any elements.
-            "sort" => {
-                arity(0)?;
-                let mut nums = Vec::with_capacity(arr.len());
-                for e in arr.iter() {
-                    match e {
-                        Value::Number(n) => nums.push(n.clone()),
-                        _ => return crate::error::err("`Array.sort` requires an array of numbers"),
-                    }
-                }
-                nums.sort_by(|x, y| self.number_cmp(x, y).unwrap_or(Ordering::Equal));
-                *arr = nums.into_iter().map(Value::Number).collect();
-                Ok(Value::Nil)
-            }
-            "reverse" => {
-                arity(0)?;
-                arr.reverse();
-                Ok(Value::Nil)
-            }
-            _ => crate::error::err(format!("unknown `Array` method `{name}`")),
-        }
-    }
-
-    /// Read-only dict methods (spec §11.6): `keys`/`values`/`items` return arrays in deterministic
-    /// (canonical-key sorted) order.
-    pub(crate) fn call_dict_method(
-        &mut self,
-        d: &HashMap<ValueKey, Value>,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value, RuntimeError> {
-        let arity = |n: usize| -> Result<(), RuntimeError> {
-            if args.len() == n {
-                Ok(())
-            } else {
-                crate::error::err(format!(
-                    "`Dict.{name}` expects {n} argument(s), got {}",
-                    args.len()
-                ))
-            }
-        };
-        match name {
-            "len" => {
-                arity(0)?;
-                Ok(Value::Number(Number::from(d.len() as i64)))
-            }
-            "get" => {
-                arity(1)?;
-                let key = ValueKey::from_value(&args[0]).ok_or_else(|| {
-                    RuntimeError::Message("dict key must be a hashable value".into())
-                })?;
-                Ok(d.get(&key)
-                    .map(|v| Value::Option(Some(Box::new(v.clone()))))
-                    .unwrap_or(Value::Option(None)))
-            }
-            "contains" => {
-                arity(1)?;
-                let key = ValueKey::from_value(&args[0]).ok_or_else(|| {
-                    RuntimeError::Message("dict key must be a hashable value".into())
-                })?;
-                Ok(Value::Bool(d.contains_key(&key)))
-            }
-            "keys" => {
-                arity(0)?;
-                Ok(Value::Array(
-                    self.sorted_dict_keys(d)
-                        .iter()
-                        .map(|k| k.to_value())
-                        .collect::<Vec<Value>>()
-                        .into(),
-                ))
-            }
-            "values" => {
-                arity(0)?;
-                Ok(Value::Array(
-                    self.sorted_dict_keys(d)
-                        .iter()
-                        .map(|k| d[k].clone())
-                        .collect::<Vec<Value>>()
-                        .into(),
-                ))
-            }
-            "items" => {
-                arity(0)?;
-                Ok(Value::Array(
-                    self.sorted_dict_keys(d)
-                        .iter()
-                        .map(|k| Value::Tuple(vec![k.to_value(), d[k].clone()].into()))
-                        .collect::<Vec<Value>>()
-                        .into(),
-                ))
-            }
-            _ => crate::error::err(format!("unknown `Dict` method `{name}`")),
-        }
-    }
-
-    /// Mutating dict methods (spec §11.6): receiver must be a single-segment path; write-back pattern
-    /// mirrors `mutate_array`.
-    pub(crate) fn mutate_dict(
-        &mut self,
-        env: &EnvRef,
-        receiver: &Expr,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value, RuntimeError> {
-        let var = match &receiver.kind {
-            ExprKind::Path { segments } if segments.len() == 1 => segments[0].value.clone(),
-            _ => return crate::error::err("cannot mutate a temporary value"),
-        };
-        let cur = env
-            .borrow()
-            .get_value(&var)
-            .ok_or_else(|| RuntimeError::Message(format!("unknown variable `{var}`")))?;
-        let Value::Dict(mut d) = cur else {
-            return crate::error::err("expected a dict binding");
-        };
-        let out = self.mutate_dict_handle(&mut d, name, args)?;
-        self.write_back(env, &var, Value::Dict(d));
-        Ok(out)
-    }
-
-    /// Apply a mutating `Dict` method to an already-resolved map (spec §11.6). Shared by the
-    /// whole-value AST path (which writes the map back to its binding) and the bytecode VM (which
-    /// mutates a local slot or an environment binding in place).
-    pub(crate) fn mutate_dict_handle(
-        &self,
-        d: &mut HashMap<ValueKey, Value>,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value, RuntimeError> {
-        let arity = |n: usize| -> Result<(), RuntimeError> {
-            if args.len() == n {
-                Ok(())
-            } else {
-                crate::error::err(format!(
-                    "`Dict.{name}` expects {n} argument(s), got {}",
-                    args.len()
-                ))
-            }
-        };
-        let key = |i: usize| -> Result<ValueKey, RuntimeError> {
-            args.get(i)
-                .and_then(ValueKey::from_value)
-                .ok_or_else(|| RuntimeError::Message("dict key must be a hashable value".into()))
-        };
-        let out = match name {
-            "insert" => {
-                arity(2)?;
-                d.insert(key(0)?, args[1].clone());
-                Value::Nil
-            }
-            "remove" => {
-                arity(1)?;
-                d.remove(&key(0)?)
-                    .map(|v| Value::Option(Some(Box::new(v))))
-                    .unwrap_or(Value::Option(None))
-            }
-            "clear" => {
-                arity(0)?;
-                d.clear();
-                Value::Nil
-            }
-            "update" => {
-                arity(1)?;
-                let Value::Dict(other) = &args[0] else {
-                    return crate::error::err("`Dict.update` expects a dict argument");
-                };
-                for (k, v) in other.iter() {
-                    d.insert(k.clone(), v.clone());
-                }
-                // `d.update(other)` returns the merged dict (spec §11.6 example `let dd = d.update(…)`).
-                Value::Dict(Box::new(d.clone()))
-            }
-            "setdefault" => {
-                // Python `dict.setdefault`: return the value for `key`, inserting `default` when absent.
-                arity(2)?;
-                let k = key(0)?;
-                if let Some(v) = d.get(&k).cloned() {
-                    v
-                } else {
-                    let v = args[1].clone();
-                    d.insert(k, v.clone());
-                    v
-                }
-            }
-            "popitem" => {
-                arity(0)?;
-                let k = self.sorted_dict_keys(d).into_iter().next().ok_or_else(|| {
-                    crate::error::coded("R0014", "`Dict.popitem` on an empty dict")
-                })?;
-                let v = d.remove(&k).unwrap();
-                Value::Tuple(vec![k.to_value(), v].into())
-            }
-            _ => return crate::error::err(format!("unknown `Dict` method `{name}`")),
-        };
-        Ok(out)
-    }
-
-    /// Read-only set methods (spec §11.6): `union`/`intersection`/`difference` return new sets.
-    pub(crate) fn call_set_method(
-        &mut self,
-        s: &HashSet<ValueKey>,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value, RuntimeError> {
-        let arity = |n: usize| -> Result<(), RuntimeError> {
-            if args.len() == n {
-                Ok(())
-            } else {
-                crate::error::err(format!(
-                    "`Set.{name}` expects {n} argument(s), got {}",
-                    args.len()
-                ))
-            }
-        };
-        match name {
-            "len" => {
-                arity(0)?;
-                Ok(Value::Number(Number::from(s.len() as i64)))
-            }
-            "contains" => {
-                arity(1)?;
-                let key = ValueKey::from_value(&args[0]).ok_or_else(|| {
-                    RuntimeError::Message("set element must be a hashable value".into())
-                })?;
-                Ok(Value::Bool(s.contains(&key)))
-            }
-            "union" | "intersection" | "difference" | "symmetric_difference" => {
-                arity(1)?;
-                let Value::Set(other) = &args[0] else {
-                    return crate::error::err("`Set.{name}` expects a set argument");
-                };
-                let out: HashSet<ValueKey> = match name {
-                    "union" => s.union(other).cloned().collect(),
-                    "intersection" => s.intersection(other).cloned().collect(),
-                    "difference" => s.difference(other).cloned().collect(),
-                    "symmetric_difference" => s.symmetric_difference(other).cloned().collect(),
-                    _ => unreachable!(),
-                };
-                Ok(Value::Set(Box::new(out)))
-            }
-            "issubset" | "issuperset" | "isdisjoint" => {
-                arity(1)?;
-                let Value::Set(other) = &args[0] else {
-                    return crate::error::err("`Set.{name}` expects a set argument");
-                };
-                let out = match name {
-                    "issubset" => s.is_subset(other),
-                    "issuperset" => s.is_superset(other),
-                    "isdisjoint" => s.is_disjoint(other),
-                    _ => unreachable!(),
-                };
-                Ok(Value::Bool(out))
-            }
-            "copy" => {
-                arity(0)?;
-                Ok(Value::Set(Box::new(s.clone())))
-            }
-            _ => crate::error::err(format!("unknown `Set` method `{name}`")),
-        }
-    }
-
-    /// Mutating set methods (spec §11.6): `remove` reports `R0013` on an absent element, `discard` is silent.
-    pub(crate) fn mutate_set(
-        &mut self,
-        env: &EnvRef,
-        receiver: &Expr,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value, RuntimeError> {
-        let var = match &receiver.kind {
-            ExprKind::Path { segments } if segments.len() == 1 => segments[0].value.clone(),
-            _ => return crate::error::err("cannot mutate a temporary value"),
-        };
-        let cur = env
-            .borrow()
-            .get_value(&var)
-            .ok_or_else(|| RuntimeError::Message(format!("unknown variable `{var}`")))?;
-        let Value::Set(mut s) = cur else {
-            return crate::error::err("expected a set binding");
-        };
-        let out = self.mutate_set_handle(&mut s, name, args)?;
-        self.write_back(env, &var, Value::Set(s));
-        Ok(out)
-    }
-
-    /// Apply a mutating `Set` method to an already-resolved set (spec §11.6). Shared by the AST
-    /// write-back path and the bytecode VM's in-place slot/binding mutation.
-    pub(crate) fn mutate_set_handle(
-        &self,
-        s: &mut HashSet<ValueKey>,
-        name: &str,
-        args: Vec<Value>,
-    ) -> Result<Value, RuntimeError> {
-        let arity = |n: usize| -> Result<(), RuntimeError> {
-            if args.len() == n {
-                Ok(())
-            } else {
-                crate::error::err(format!(
-                    "`Set.{name}` expects {n} argument(s), got {}",
-                    args.len()
-                ))
-            }
-        };
-        let key = |i: usize| -> Result<ValueKey, RuntimeError> {
-            args.get(i)
-                .and_then(ValueKey::from_value)
-                .ok_or_else(|| RuntimeError::Message("set element must be a hashable value".into()))
-        };
-        let out = match name {
-            "add" => {
-                arity(1)?;
-                s.insert(key(0)?);
-                Value::Nil
-            }
-            "remove" => {
-                arity(1)?;
-                if !s.remove(&key(0)?) {
-                    return Err(crate::error::coded("R0013", "element not found"));
-                }
-                Value::Nil
-            }
-            "discard" => {
-                arity(1)?;
-                s.remove(&key(0)?);
-                Value::Nil
-            }
-            "pop" => {
-                arity(0)?;
-                if let Some(k) = s.iter().next().cloned() {
-                    s.remove(&k);
-                    Value::Option(Some(Box::new(k.to_value())))
-                } else {
-                    Value::Option(None)
-                }
-            }
-            "clear" => {
-                arity(0)?;
-                s.clear();
-                Value::Nil
-            }
-            "update" => {
-                arity(1)?;
-                match &args[0] {
-                    Value::Set(other) => {
-                        for k in other.iter() {
-                            s.insert(k.clone());
-                        }
-                    }
-                    Value::Array(elems) => {
-                        for e in elems.iter() {
-                            let k = ValueKey::from_value(&e).ok_or_else(|| {
-                                RuntimeError::Message("set element must be a hashable value".into())
-                            })?;
-                            s.insert(k);
-                        }
-                    }
-                    other => {
-                        return crate::error::err(format!(
-                            "`Set.update` expects a set or array, got {}",
-                            value_type_name(other)
-                        ));
-                    }
-                }
-                Value::Nil
-            }
-            _ => return crate::error::err(format!("unknown `Set` method `{name}`")),
-        };
-        Ok(out)
-    }
-
-    /// Deterministic key order for a dict (spec §11.6): sorted by the `format_value` of each key, with
-    /// the key's debug rendering as a tiebreaker, so snapshots/tests are stable.
-    pub(crate) fn sorted_dict_keys(&self, d: &HashMap<ValueKey, Value>) -> Vec<ValueKey> {
-        let mut keys: Vec<ValueKey> = d.keys().cloned().collect();
-        keys.sort_by(|a, b| {
-            let ka = self.format_value(&a.to_value());
-            let kb = self.format_value(&b.to_value());
-            ka.cmp(&kb)
-                .then_with(|| format!("{a:?}").cmp(&format!("{b:?}")))
-        });
-        keys
-    }
-
-    /// Deterministic element order for a set, sorted by `format_value` (spec §11.6).
-    pub(crate) fn sorted_set_values(&self, s: &HashSet<ValueKey>) -> Vec<Value> {
-        let mut elems: Vec<Value> = s.iter().map(|k| k.to_value()).collect();
-        elems.sort_by(|a, b| {
-            let ka = self.format_value(a);
-            let kb = self.format_value(b);
-            ka.cmp(&kb)
-                .then_with(|| format!("{a:?}").cmp(&format!("{b:?}")))
-        });
-        elems
-    }
-
-    /// Structural dict equality (spec §11.6): same keys with promotion-equal values.
-    pub(crate) fn dict_eq(
-        &self,
-        x: &HashMap<ValueKey, Value>,
-        y: &HashMap<ValueKey, Value>,
-    ) -> bool {
-        if x.len() != y.len() {
-            return false;
-        }
-        for (k, v) in x {
-            match y.get(k) {
-                Some(w) if self.value_eq(v, w) => {}
-                _ => return false,
-            }
-        }
-        true
-    }
-
-    // —— `mem::Arc` host interface (spec §12.3) ——
-    //
-    // `Arc` is an ordinary class defined in the embedded `mem` module; these narrow accessors let
-    // its `@builtin` methods maintain the explicit count without exposing the instance registry to
-    // `prima-stdlib`. They are not general-purpose reflection.
-
-    /// Raise the explicit count of an `Arc` instance by one and return the same handle
-    /// (`mem::Arc::clone`).
-    pub fn mem_arc_clone(&mut self, arc: Value) -> Result<Value, RuntimeError> {
-        let id = match &arc {
-            Value::Class(id) => *id,
-            other => {
-                return Err(RuntimeError::Type(format!(
-                    "`Arc.clone` expects an Arc receiver, got {}",
-                    value_type_name(other)
-                )));
-            }
-        };
-        let instance = self
-            .instances
-            .get_mut(&id)
-            .ok_or_else(|| RuntimeError::Message("unknown class instance".into()))?;
-        if instance.class != "Arc" {
-            return Err(RuntimeError::Type(format!(
-                "`Arc.clone` expects an Arc receiver, got `{}`",
-                instance.class
-            )));
-        }
-        let count = match instance.fields.get("count") {
-            Some(Value::Number(n)) => n
-                .as_i64()
-                .ok_or_else(|| RuntimeError::Message("`Arc` count is not an integer".into()))?,
-            _ => {
-                return Err(RuntimeError::Message(
-                    "`Arc` instance has no integer `count` field".into(),
-                ));
-            }
-        };
-        let next = count
-            .checked_add(1)
-            .ok_or_else(|| RuntimeError::Overflow("`Arc` reference count overflowed".into()))?;
-        instance
-            .fields
-            .insert("count".into(), Value::Number(Number::from(next)));
-        Ok(arc)
-    }
-
-    /// The payload held by an `Arc` (`mem::Arc::get`).
-    pub fn mem_arc_payload(&self, arc: &Value) -> Result<Value, RuntimeError> {
-        self.mem_arc_field(arc, "value", "Arc.get")
-    }
-
-    /// The explicit count of an `Arc` (`mem::Arc::strong_count`).
-    pub fn mem_arc_count(&self, arc: &Value) -> Result<Value, RuntimeError> {
-        self.mem_arc_field(arc, "count", "Arc.strong_count")
-    }
-
-    /// Shared field lookup for the `mem::Arc` accessors.
-    fn mem_arc_field(&self, arc: &Value, field: &str, method: &str) -> Result<Value, RuntimeError> {
-        let Value::Class(id) = arc else {
-            return Err(RuntimeError::Type(format!(
-                "`{method}` expects an Arc receiver, got {}",
-                value_type_name(arc)
-            )));
-        };
-        let instance = self
-            .instances
-            .get(id)
-            .ok_or_else(|| RuntimeError::Message("unknown class instance".into()))?;
-        if instance.class != "Arc" {
-            return Err(RuntimeError::Type(format!(
-                "`{method}` expects an Arc receiver, got `{}`",
-                instance.class
-            )));
-        }
-        instance
-            .fields
-            .get(field)
-            .cloned()
-            .ok_or_else(|| RuntimeError::Message(format!("`Arc` instance has no `{field}` field")))
-    }
 }
+
+mod arc;
+mod builtin;
+mod mutation;

@@ -8,64 +8,38 @@
 //! value-semantic copy; `args[0]` is the receiver.
 
 use prima_core::{Number, Value};
+use prima_runtime::args::Args;
 use prima_runtime::builtin;
+use prima_runtime::error::ValueProblem;
 use prima_runtime::{Evaluator, RuntimeError, value_type_name};
 
 /// Extract the `String` receiver (`args[0]`).
 fn recv(args: &[Value], name: &str) -> Result<String, RuntimeError> {
     match args.first() {
         Some(Value::String(s)) => Ok(s.to_string()),
-        Some(other) => Err(RuntimeError::Message(format!(
-            "`String.{name}` expects a string receiver, got {}",
-            value_type_name(other)
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`String.{name}` expects a string receiver"
-        ))),
+        Some(other) => Err(RuntimeError::receiver_type(
+            format!("String.{name}"),
+            "a string",
+            value_type_name(other),
+        )),
+        None => Err(RuntimeError::MissingReceiver {
+            callable: format!("String.{name}"),
+        }),
     }
 }
 
 /// Method argument `i` (1-based, after the receiver) as a `String`.
 fn str_arg(args: &[Value], i: usize, name: &str) -> Result<String, RuntimeError> {
-    match args.get(i) {
-        Some(Value::String(s)) => Ok(s.to_string()),
-        Some(other) => Err(RuntimeError::Message(format!(
-            "`String.{name}` argument {i} must be a string, got {}",
-            value_type_name(other)
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`String.{name}` missing argument {i}"
-        ))),
-    }
+    Args::new(&format!("String.{name}"), args).string(i)
 }
 
 /// Method argument `i` (1-based, after the receiver) as an `i64`.
 fn int_arg(args: &[Value], i: usize, name: &str) -> Result<i64, RuntimeError> {
-    match args.get(i) {
-        Some(Value::Number(n)) => n.as_i64().ok_or_else(|| {
-            RuntimeError::Type(format!(
-                "`String.{name}` argument {i} must be an integer, got {n}"
-            ))
-        }),
-        Some(other) => Err(RuntimeError::Message(format!(
-            "`String.{name}` argument {i} must be an integer, got {}",
-            value_type_name(other)
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`String.{name}` missing argument {i}"
-        ))),
-    }
+    Args::new(&format!("String.{name}"), args).i64(i)
 }
 
 fn arity(args: &[Value], n: usize, name: &str) -> Result<(), RuntimeError> {
-    let got = args.len().saturating_sub(1);
-    if got == n {
-        Ok(())
-    } else {
-        Err(RuntimeError::Message(format!(
-            "`String.{name}` expects {n} argument(s), got {got}"
-        )))
-    }
+    Args::new(&format!("String.{name}"), args).exact_after_receiver(n)
 }
 
 // ---- primitive accessors (O0) ----
@@ -125,17 +99,27 @@ fn string_substring(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, Runtim
     let a = int_arg(args, 1, "substring")?;
     let b = int_arg(args, 2, "substring")?;
     if a < 0 {
-        return Err(RuntimeError::Message(
-            "`String.substring` start must be non-negative".into(),
+        return Err(RuntimeError::invalid(
+            "String.substring".into(),
+            ValueProblem::BelowMinimum {
+                what: "start",
+                minimum: 0,
+                got: a,
+            },
         ));
     }
     let (a, b) = (a as usize, b as usize);
     let chars: Vec<char> = s.chars().collect();
     if a > chars.len() || b > chars.len() || a > b {
-        return Err(RuntimeError::Message(format!(
-            "invalid substring range {a}..{b} (length {})",
-            chars.len()
-        )));
+        return Err(RuntimeError::invalid(
+            "String.substring".into(),
+            ValueProblem::InvalidRange {
+                what: "substring",
+                start: a,
+                end: b,
+                length: chars.len(),
+            },
+        ));
     }
     Ok(Value::String(chars[a..b].iter().collect::<String>().into()))
 }
@@ -161,8 +145,13 @@ fn string_repeat(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeEr
     arity(args, 1, "repeat")?;
     let n = int_arg(args, 1, "repeat")?;
     if n < 0 {
-        return Err(RuntimeError::Message(
-            "`String.repeat` count must be non-negative".into(),
+        return Err(RuntimeError::invalid(
+            "String.repeat".into(),
+            ValueProblem::BelowMinimum {
+                what: "count",
+                minimum: 0,
+                got: n,
+            },
         ));
     }
     // Resource limit (OOM guard): the result byte length is checked in `u128` before the
@@ -170,9 +159,13 @@ fn string_repeat(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeEr
     const MAX_REPEAT_BYTES: u128 = 256 * 1024 * 1024; // 256 MiB
     let result_bytes = s.len() as u128 * n as u128;
     if result_bytes > MAX_REPEAT_BYTES {
-        return Err(RuntimeError::Message(format!(
-            "`String.repeat` result of {result_bytes} bytes exceeds the {MAX_REPEAT_BYTES} byte limit"
-        )));
+        return Err(RuntimeError::invalid(
+            "String.repeat".into(),
+            ValueProblem::ExceedsLimit {
+                value: format!("result of {result_bytes} bytes"),
+                limit: format!("{MAX_REPEAT_BYTES} byte"),
+            },
+        ));
     }
     Ok(Value::String(s.repeat(n as usize).into()))
 }
@@ -359,28 +352,13 @@ fn string_find(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeErro
 fn string_join(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     let s = recv(args, "join")?;
     arity(args, 1, "join")?;
-    let parts = match &args[1] {
-        Value::Array(parts) => parts,
-        other => {
-            return Err(RuntimeError::Message(format!(
-                "`String.join` expects an array of strings, got {}",
-                value_type_name(other)
-            )));
-        }
-    };
+    let parts = Args::new("String.join", args).string_array(1)?;
     let mut out = String::new();
     for (i, p) in parts.iter().enumerate() {
         if i > 0 {
             out.push_str(&s);
         }
-        match p {
-            Value::String(p) => out.push_str(&p),
-            _ => {
-                return Err(RuntimeError::Message(
-                    "`String.join` requires an array of strings".into(),
-                ));
-            }
-        }
+        out.push_str(p);
     }
     Ok(Value::String(out.into()))
 }
