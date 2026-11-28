@@ -13,9 +13,9 @@ use prima_runtime::{Evaluator, RuntimeError};
 fn int_arg(args: &[Value], fname: &str) -> Result<i64, RuntimeError> {
     match args.first() {
         Some(Value::Number(n)) => n.as_i64().ok_or_else(|| {
-            RuntimeError::Message(format!("`{fname}` expects an integer argument, got {n:?}"))
+            RuntimeError::Type(format!("`{fname}` expects an integer argument, got {n:?}"))
         }),
-        other => Err(RuntimeError::Message(format!(
+        other => Err(RuntimeError::Type(format!(
             "`{fname}` expects an integer argument, got {other:?}"
         ))),
     }

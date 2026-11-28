@@ -84,30 +84,32 @@ impl Evaluator {
                     return Err(unknown_function_error(env, &path_key(segments)));
                 }
             }
-            _ => return crate::error::err("invalid function call"),
+            _ => return crate::error::type_err("invalid function call"),
         };
         self.apply_function(&func, arg_values)
     }
 
     fn eval_taylor_call(&mut self, env: &EnvRef, args: &[Expr]) -> Result<Value, RuntimeError> {
         if args.len() != 4 {
-            return crate::error::err("`math::taylor` expects (f, x, x0, n)");
+            return crate::error::type_err("`math::taylor` expects (f, x, x0, n)");
         }
         let x = self.eval_var_symbol(env, &args[1])?;
         let at_value = self.eval_expr(env, &args[2])?;
         let at = self.to_expr_id(&at_value)?;
         let order_value = self.eval_expr(env, &args[3])?;
         let Value::Number(number) = order_value else {
-            return crate::error::err("`math::taylor` order must be a nonnegative integer");
+            return crate::error::type_err("`math::taylor` order must be a nonnegative integer");
         };
         let Some(integer) = number.as_bigint() else {
-            return crate::error::err("`math::taylor` order must be a nonnegative integer");
+            return crate::error::type_err("`math::taylor` order must be a nonnegative integer");
         };
         if integer < 0.into() {
-            return crate::error::err("`math::taylor` order must be a nonnegative integer");
+            return crate::error::type_err("`math::taylor` order must be a nonnegative integer");
         }
         let Some(order) = number.as_i64() else {
-            return crate::error::err("`math::taylor` order exceeds the supported iteration range");
+            return crate::error::type_err(
+                "`math::taylor` order exceeds the supported iteration range",
+            );
         };
         let variable = self.pool.symbol(x);
         let function = match &args[0].kind {
@@ -124,7 +126,7 @@ impl Evaluator {
         };
         let mut derivative = if let Some((params, body, function_env)) = function {
             if params.len() != 1 {
-                return crate::error::err(
+                return crate::error::type_err(
                     "`math::taylor` function must have exactly one parameter",
                 );
             }
@@ -141,7 +143,7 @@ impl Evaluator {
             self.check_cancelled()?;
             if k > 0 {
                 if !crate::diff::supports_derivative(self.pool, self.builtins, derivative) {
-                    return crate::error::err(
+                    return crate::error::type_err(
                         "`math::taylor` cannot differentiate an unsupported function",
                     );
                 }
@@ -179,7 +181,7 @@ impl Evaluator {
         match b {
             Builtin::Derivative | Builtin::Partial => {
                 if args.len() != 2 {
-                    return crate::error::err("`derivative`/`partial` expect (expr, var)");
+                    return crate::error::type_err("`derivative`/`partial` expect (expr, var)");
                 }
                 let expr = self.lower_symbolic(env, &args[0])?;
                 let x = self.eval_var_symbol(env, &args[1])?;
@@ -188,7 +190,7 @@ impl Evaluator {
             }
             Builtin::Grad => {
                 if args.len() != 1 {
-                    return crate::error::err("`grad` expects (expr)");
+                    return crate::error::type_err("`grad` expects (expr)");
                 }
                 let expr = self.lower_symbolic(env, &args[0])?;
                 let grads = crate::diff::grad(self.pool, self.builtins, expr);
@@ -200,7 +202,7 @@ impl Evaluator {
             }
             Builtin::Limit => {
                 if args.len() != 3 {
-                    return crate::error::err("`limit` expects (expr, var, value)");
+                    return crate::error::type_err("`limit` expects (expr, var, value)");
                 }
                 let expr = self.lower_symbolic(env, &args[0])?;
                 let x = self.eval_var_symbol(env, &args[1])?;
@@ -224,7 +226,7 @@ impl Evaluator {
         args: &[Expr],
     ) -> Result<Value, RuntimeError> {
         if args.len() != 1 {
-            return crate::error::err("`jit` expects a single function or expression");
+            return crate::error::type_err("`jit` expects a single function or expression");
         }
         // `jit(f)` where `f` is an MFn name.
         if let ExprKind::Path { segments } = &args[0].kind
@@ -274,9 +276,10 @@ impl Evaluator {
             let (dag, names) = self.body_dag(params, body, f_env)?;
             let tape =
                 crate::ad::Tape::build(self.pool, self.builtins, dag, &names).ok_or_else(|| {
-                    RuntimeError::Message(
-                        "`jit(grad(f))` requires a numeric-scalar function body".into(),
-                    )
+                    RuntimeError::ComputationFailed {
+                        operation: "jit(grad(f))".into(),
+                        detail: "requires a numeric-scalar function body".into(),
+                    }
                 })?;
             let id = crate::jit::register(crate::jit::JitCallable {
                 params: names,
@@ -336,7 +339,7 @@ impl Evaluator {
                 });
                 Ok(Value::JitFunction(n))
             }
-            _ => crate::error::err(
+            _ => crate::error::type_err(
                 "`jit` argument must be a function, a symbolic expression, or a `grad(...)` result",
             ),
         }
@@ -353,7 +356,7 @@ impl Evaluator {
         args: &[Expr],
     ) -> Result<Value, RuntimeError> {
         if args.len() < 2 {
-            return crate::error::err("`map`/`filter`/`reduce` expect (func, array[, init])");
+            return crate::error::type_err("`map`/`filter`/`reduce` expect (func, array[, init])");
         }
         let f = match &args[0].kind {
             ExprKind::Path { segments } if segments.len() == 1 => self
@@ -368,13 +371,15 @@ impl Evaluator {
             }
             .into(),
             _ => {
-                return crate::error::err(
+                return crate::error::type_err(
                     "`map`/`filter`/`reduce` first argument must be a function",
                 );
             }
         };
         let Value::Array(elems) = self.eval_expr(env, &args[1])? else {
-            return crate::error::err("`map`/`filter`/`reduce` second argument must be an array");
+            return crate::error::type_err(
+                "`map`/`filter`/`reduce` second argument must be an array",
+            );
         };
         let elems = elems.to_vec();
         match b {
@@ -391,14 +396,20 @@ impl Evaluator {
                     match self.apply_function(&f, vec![e.clone()])? {
                         Value::Bool(true) => out.push(e),
                         Value::Bool(false) => {}
-                        _ => return crate::error::err("`filter` predicate must return a boolean"),
+                        _ => {
+                            return crate::error::type_err(
+                                "`filter` predicate must return a boolean",
+                            );
+                        }
                     }
                 }
                 Ok(Value::Array(out.into()))
             }
             Builtin::Reduce => {
-                let init = args.get(2).ok_or_else(|| {
-                    RuntimeError::Message("`reduce` expects (func, array, init)".into())
+                let init = args.get(2).ok_or_else(|| RuntimeError::Arity {
+                    callable: "reduce".into(),
+                    expected: crate::error::Arity::Exact(3),
+                    got: args.len(),
                 })?;
                 let mut acc = self.eval_expr(env, init)?;
                 for e in elems {
@@ -496,7 +507,7 @@ impl Evaluator {
         args: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
         if args.len() != params.len() {
-            return crate::error::err(format!(
+            return crate::error::type_err(format!(
                 "expected {} arguments, got {}",
                 params.len(),
                 args.len()
@@ -520,11 +531,11 @@ impl Evaluator {
         match v {
             Value::Expr(id) => match self.pool.get(id) {
                 Some(ExprData::Symbol(s)) => Ok(s),
-                _ => crate::error::err("derivative variable must be a symbol"),
+                _ => crate::error::type_err("derivative variable must be a symbol"),
             },
             Value::Symbol(s) => Ok(SymbolId(s)),
             Value::String(name) => Ok(self.symbols.intern(&name)),
-            _ => crate::error::err("derivative variable must be a symbol"),
+            _ => crate::error::type_err("derivative variable must be a symbol"),
         }
     }
 

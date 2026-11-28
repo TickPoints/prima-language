@@ -17,30 +17,16 @@ use std::fs;
 use std::path::Path;
 
 use prima_core::{Number, Value, ValueKey};
+use prima_runtime::args::Args;
 use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
-    if args.len() == n {
-        Ok(())
-    } else {
-        Err(RuntimeError::Message(format!(
-            "`{fname}` expects {n} argument(s), got {}",
-            args.len()
-        )))
-    }
+    Args::new(fname, args).exact(n)
 }
 
 fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeError> {
-    match args.get(i) {
-        Some(Value::String(s)) => Ok(s.to_string()),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be a string, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Args::new(fname, args).string(i)
 }
 
 /// Extract a `Vec<Value>` snapshot from a `Value::Array` argument (type error otherwise).
@@ -231,7 +217,10 @@ fn json_parse(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError
 fn json_stringify(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     arity(args, 1, "io::json_stringify")?;
     let v = args[0].clone();
-    let j = value_to_json(&v).map_err(RuntimeError::Message)?;
+    let j = value_to_json(&v).map_err(|detail| RuntimeError::ComputationFailed {
+        operation: "io::json_stringify".into(),
+        detail,
+    })?;
     Ok(ok(Value::String(j.to_string().into())))
 }
 
@@ -251,7 +240,10 @@ fn write_json(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError
     arity(args, 2, "io::write_json")?;
     let path = string_arg(args, 0, "io::write_json")?;
     let v = args[1].clone();
-    let j = value_to_json(&v).map_err(RuntimeError::Message)?;
+    let j = value_to_json(&v).map_err(|detail| RuntimeError::ComputationFailed {
+        operation: "io::write_json".into(),
+        detail,
+    })?;
     Ok(match fs::write(&path, j.to_string()) {
         Ok(()) => ok(Value::Nil),
         Err(e) => err(format!("cannot write `{path}`: {e}")),

@@ -145,9 +145,12 @@ fn guarded_export(
         // The interpreter may have panicked mid-evaluation with the module cache holding a
         // half-updated state; drop it so the next call re-evaluates the file from scratch.
         FILE_CACHE.with(|c| *c.borrow_mut() = None);
-        Err(RuntimeError::Message(format!(
-            "internal panic in export `{name}`: {msg}"
-        )))
+        Err(RuntimeError::Internal {
+            problem: crate::error::InternalProblem::Panic {
+                export: name.to_string(),
+                message: msg.clone(),
+            },
+        })
     })
 }
 

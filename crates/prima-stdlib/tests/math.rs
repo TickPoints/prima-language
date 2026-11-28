@@ -237,8 +237,14 @@ fn math_factor_large_semiprime_uses_pollard_rho() {
 
 #[test]
 fn math_factor_rejects_non_positive() {
-    assert_eq!(eval_err("import math;\nmath::factor(0)").kind(), "Message");
-    assert_eq!(eval_err("import math;\nmath::factor(-7)").kind(), "Message");
+    assert_eq!(
+        eval_err("import math;\nmath::factor(0)").kind(),
+        "InvalidValue"
+    );
+    assert_eq!(
+        eval_err("import math;\nmath::factor(-7)").kind(),
+        "InvalidValue"
+    );
 }
 
 #[test]
@@ -313,11 +319,11 @@ fn math_mod_pow() {
 fn math_mod_pow_rejects_invalid() {
     assert_eq!(
         eval_err("import math;\nmath::mod_pow(2, -1, 5)").kind(),
-        "Message"
+        "InvalidValue"
     );
     assert_eq!(
         eval_err("import math;\nmath::mod_pow(2, 3, 0)").kind(),
-        "Message"
+        "InvalidValue"
     );
 }
 
@@ -465,6 +471,6 @@ fn math_continued_fraction() {
 fn math_continued_fraction_rejects_invalid_n() {
     assert_eq!(
         eval_err("import math;\nmath::continued_fraction(1.5, 0)").kind(),
-        "Message"
+        "ArgumentType"
     );
 }

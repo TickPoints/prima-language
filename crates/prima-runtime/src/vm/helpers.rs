@@ -8,6 +8,7 @@
 use prima_core::Value;
 use prima_syntax::ast::{Expr, ExprKind, Literal, Spanned, StringQuote, UnOp};
 
+use crate::error::RuntimeError;
 use crate::eval::{EnvRef, EvalBackend, Evaluator};
 
 /// The current `self` receiver value for the executing method (class instance id or builtin-class
@@ -21,9 +22,7 @@ pub(crate) fn current_self_value(
     if let Some(stack_id) = eval.self_stack.last().copied() {
         return Ok(Value::Class(stack_id));
     }
-    Err(crate::error::RuntimeError::Message(
-        "`self` outside of a method".into(),
-    ))
+    Err(crate::error::RuntimeError::SelfOutsideMethod)
 }
 
 /// Unary negation of a value, mirroring `eval_unary(UnOp::Neg, ...)`.
@@ -50,11 +49,13 @@ pub(crate) fn vm_index(
         }
         Value::Dict(d) => {
             let key = prima_core::ValueKey::from_value(&idx).ok_or_else(|| {
-                crate::error::RuntimeError::Message("dict key must be hashable".into())
+                crate::error::RuntimeError::Unhashable {
+                    role: crate::error::HashRole::DictKey,
+                }
             })?;
             d.get(&key)
                 .cloned()
-                .ok_or_else(|| crate::error::RuntimeError::Message("missing dict key".into()))
+                .ok_or_else(|| crate::error::RuntimeError::MissingKey)
         }
         Value::String(s) => {
             let nchars = s.chars().count();
@@ -72,10 +73,11 @@ pub(crate) fn vm_index(
                 ))
             })
         }
-        other => Err(crate::error::RuntimeError::Message(format!(
-            "cannot index {}",
-            crate::eval::value_type_name(&other)
-        ))),
+        other => Err(crate::error::RuntimeError::InvalidIndex {
+            problem: crate::error::IndexProblem::NotIndexable {
+                got: crate::eval::value_type_name(&other),
+            },
+        }),
     }
 }
 
@@ -105,15 +107,18 @@ pub(crate) fn vm_index_store(
         // only this binding — value semantics hold without a copy-on-write handle (spec §11.6).
         Value::Dict(d) => {
             let key = prima_core::ValueKey::from_value(&idx).ok_or_else(|| {
-                crate::error::RuntimeError::Message("dict key must be a hashable value".into())
+                crate::error::RuntimeError::Unhashable {
+                    role: crate::error::HashRole::DictKey,
+                }
             })?;
             d.insert(key, value);
             Ok(())
         }
-        other => Err(crate::error::RuntimeError::Message(format!(
-            "cannot index-assign {}",
-            crate::eval::value_type_name(other)
-        ))),
+        other => Err(crate::error::RuntimeError::InvalidIndex {
+            problem: crate::error::IndexProblem::NotAssignable {
+                got: crate::eval::value_type_name(other),
+            },
+        }),
     }
 }
 
@@ -121,14 +126,16 @@ pub(crate) fn vm_index_store(
 fn index_to_usize(
     _eval: &mut Evaluator,
     idx: &Value,
-    what: &str,
+    what: &'static str,
     len: usize,
 ) -> Result<usize, crate::error::RuntimeError> {
     match idx {
         Value::Number(n) => {
-            let i = n.as_i64().ok_or_else(|| {
-                crate::error::RuntimeError::Message(format!("{what} must be an integer"))
-            })?;
+            let i = n
+                .as_i64()
+                .ok_or_else(|| crate::error::RuntimeError::InvalidIndex {
+                    problem: crate::error::IndexProblem::NotInteger { what },
+                })?;
             Ok(if i < 0 {
                 len.checked_sub(i.unsigned_abs() as usize).ok_or_else(|| {
                     crate::error::RuntimeError::IndexOutOfBounds(format!(
@@ -139,9 +146,9 @@ fn index_to_usize(
                 i as usize
             })
         }
-        _ => Err(crate::error::RuntimeError::Message(format!(
-            "{what} must be an integer"
-        ))),
+        _ => Err(RuntimeError::InvalidIndex {
+            problem: crate::error::IndexProblem::NotInteger { what },
+        }),
     }
 }
 
@@ -158,17 +165,21 @@ pub(crate) fn vm_method_value(
     let span = prima_syntax::Span::new(0, 0);
     match &receiver {
         Value::Class(id) => {
-            let inst = eval.instances.get(id).cloned().ok_or_else(|| {
-                crate::error::RuntimeError::Message("unknown class instance".into())
-            })?;
+            let inst = eval
+                .instances
+                .get(id)
+                .cloned()
+                .ok_or_else(|| crate::error::RuntimeError::UnknownClassInstance)?;
             let def = eval.class_defs.get(&inst.class).cloned().ok_or_else(|| {
-                crate::error::RuntimeError::Message(format!("unknown class `{}`", inst.class))
+                crate::error::RuntimeError::UnknownClass {
+                    name: inst.class.clone(),
+                }
             })?;
             let method = def.methods.get(name).cloned().ok_or_else(|| {
-                crate::error::RuntimeError::Message(format!(
-                    "unknown method `{name}` on `{}`",
-                    def.name
-                ))
+                crate::error::RuntimeError::UnknownMethod {
+                    name: name.to_string(),
+                    class: def.name.clone(),
+                }
             })?;
             eval.call_method(&method, Value::Class(*id), args)
         }
@@ -193,10 +204,10 @@ pub(crate) fn vm_method_value(
                 backend,
             )
         }
-        other => Err(crate::error::RuntimeError::Message(format!(
-            "cannot call method `{name}` on {}",
-            crate::eval::value_type_name(other)
-        ))),
+        other => Err(crate::error::RuntimeError::NotMethodReceiver {
+            name: name.to_string(),
+            got: crate::eval::value_type_name(other),
+        }),
     }
 }
 

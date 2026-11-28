@@ -174,10 +174,10 @@ pub enum Op {
     MethodLocal { name: Reg, argc: u16, slot: Reg },
     /// Call a function name (const pool `Const::Name` index) with `argc` arguments pushed above it.
     CallName { name: Reg, argc: u16 },
-    /// Call a mutating `Array` method (spec §11.3) on an environment binding (a non-local receiver
-    /// name, const pool `Const::Name` index): the binding's array is mutated in place along the
-    /// scope chain, mirroring the AST's `mutate_array` path. `argc` arguments are on the stack.
-    MethodName { name: Reg, argc: u16 },
+    /// Call a mutating `Array` method (spec §11.3) on an environment binding: `receiver` is the
+    /// binding name (const pool `Const::Name` index) mutated in place along the scope chain,
+    /// `name` is the method name. `argc` arguments are on the stack.
+    MethodName { receiver: Reg, name: Reg, argc: u16 },
     /// Push a global/builtin name reference (const pool `Const::Name` index), resolved against the
     /// environment at runtime. Used for non-local symbols and builtins.
     LoadName(Reg),

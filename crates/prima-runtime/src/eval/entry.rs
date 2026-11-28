@@ -185,10 +185,10 @@ impl Evaluator {
             let leaked: &'static str = Box::leak(key.into_boxed_str());
             return Ok(Function::Native { name: leaked, call });
         }
-        Err(crate::error::coded(
-            "E0055",
-            format!("unregistered `@builtin` function `{name}`"),
-        ))
+        Err(RuntimeError::CompileDiagnostic {
+            code: "E0055",
+            message: format!("unregistered `@builtin` function `{name}`"),
+        })
     }
 
     /// Bind a `@builtin(ON)` fn declaration (spec §18.4) to its implementation:
@@ -207,18 +207,18 @@ impl Evaluator {
     ) -> Result<Function, RuntimeError> {
         if level == 0 {
             if !body.stmts.is_empty() {
-                return Err(crate::error::coded(
-                    "E0056",
-                    format!("`@builtin` function `{name}` must not have a body"),
-                ));
+                return Err(RuntimeError::CompileDiagnostic {
+                    code: "E0056",
+                    message: format!("`@builtin` function `{name}` must not have a body"),
+                });
             }
             return self.bind_builtin(name);
         }
         if body.stmts.is_empty() {
-            return Err(crate::error::coded(
-                "E0056",
-                format!("`@builtin(O{level})` function `{name}` must have a body"),
-            ));
+            return Err(RuntimeError::CompileDiagnostic {
+                code: "E0056",
+                message: format!("`@builtin(O{level})` function `{name}` must have a body"),
+            });
         }
         let native = crate::stdlib::get_impl(&self.builtin_key(name));
         Ok(Function::Layered {
@@ -341,10 +341,10 @@ impl Evaluator {
         self.push_module_config(root.program.config.as_ref())?;
         for stmt in &root.program.stmts {
             if let Flow::Return(_) = self.eval_stmt(env, stmt)? {
-                return Err(crate::error::coded(
-                    "E0080",
-                    "`return` outside of a function",
-                ));
+                return Err(RuntimeError::CompileDiagnostic {
+                    code: "E0080",
+                    message: ("`return` outside of a function").into(),
+                });
             }
         }
         Ok(())
@@ -356,7 +356,7 @@ impl Evaluator {
         if let Some(cfg) = &unit.program.config {
             for e in &cfg.entries {
                 if e.name.value == "domain" || e.name.value == "undefined_handling" {
-                    return Err(RuntimeError::Coded {
+                    return Err(RuntimeError::CompileDiagnostic {
                         code: "E0021",
                         message: format!(
                             "polluting config `{}` is only allowed in the entry module",
@@ -482,7 +482,7 @@ impl Evaluator {
                 items.insert(def.name.clone(), NamespaceItem::Class(def));
                 Ok(())
             }
-            _ => crate::error::err("`pub` only applies to `let`/`const`/`fn`/`class`"),
+            _ => crate::error::type_err("`pub` only applies to `let`/`const`/`fn`/`class`"),
         }
     }
 
@@ -504,9 +504,8 @@ impl Evaluator {
                         .get(&key)
                         .cloned()
                         .or_else(|| crate::stdlib::get_namespace(&key))
-                        .ok_or_else(|| RuntimeError::Coded {
-                            code: "R0008",
-                            message: format!("module `{key}` is not loaded"),
+                        .ok_or_else(|| {
+                            RuntimeError::RuntimeImport(format!("module `{key}` is not loaded"))
                         })?;
                     for item in items.values() {
                         if let NamespaceItem::Class(def) = item {
@@ -518,10 +517,10 @@ impl Evaluator {
                         .map(|a| a.value.clone())
                         .unwrap_or_else(|| key.clone());
                     if env.borrow_mut().set_module(&ns, items) {
-                        return Err(crate::error::coded(
-                            "E0031",
-                            format!("conflicting import: module `{ns}`"),
-                        ));
+                        return Err(RuntimeError::CompileDiagnostic {
+                            code: "E0031",
+                            message: format!("conflicting import: module `{ns}`"),
+                        });
                     }
                 }
                 ImportKind::From {
@@ -532,42 +531,38 @@ impl Evaluator {
                         .get(&key)
                         .cloned()
                         .or_else(|| crate::stdlib::get_namespace(&key))
-                        .ok_or_else(|| RuntimeError::Coded {
-                            code: "R0008",
-                            message: format!("module `{key}` is not loaded"),
+                        .ok_or_else(|| {
+                            RuntimeError::RuntimeImport(format!("module `{key}` is not loaded"))
                         })?;
                     for it in from_items {
                         match it {
                             ImportItem::Star => {
                                 for (name, item) in &module {
                                     if !bound.insert(name.clone()) {
-                                        return Err(crate::error::coded(
-                                            "E0031",
-                                            format!("conflicting import: `{name}`"),
-                                        ));
+                                        return Err(RuntimeError::CompileDiagnostic {
+                                            code: "E0031",
+                                            message: format!("conflicting import: `{name}`"),
+                                        });
                                     }
                                     self.bind_imported_item(env, name, item);
                                 }
                             }
                             ImportItem::Name { name, alias } => {
                                 let item = module.get(&name.value).cloned().ok_or_else(|| {
-                                    RuntimeError::Coded {
-                                        code: "R0008",
-                                        message: format!(
-                                            "module `{key}` has no public item `{}`",
-                                            name.value
-                                        ),
-                                    }
+                                    RuntimeError::RuntimeImport(format!(
+                                        "module `{key}` has no public item `{}`",
+                                        name.value
+                                    ))
                                 })?;
                                 let target = alias
                                     .as_ref()
                                     .map(|a| a.value.clone())
                                     .unwrap_or_else(|| name.value.clone());
                                 if !bound.insert(target.clone()) {
-                                    return Err(crate::error::coded(
-                                        "E0031",
-                                        format!("conflicting import: `{target}`"),
-                                    ));
+                                    return Err(RuntimeError::CompileDiagnostic {
+                                        code: "E0031",
+                                        message: format!("conflicting import: `{target}`"),
+                                    });
                                 }
                                 self.bind_imported_item(env, &target, &item);
                             }
@@ -612,10 +607,10 @@ impl Evaluator {
         self.push_module_config(program.config.as_ref())?;
         for stmt in &program.stmts {
             if let Flow::Return(_) = self.eval_stmt(env, stmt)? {
-                return Err(crate::error::coded(
-                    "E0080",
-                    "`return` outside of a function",
-                ));
+                return Err(RuntimeError::CompileDiagnostic {
+                    code: "E0080",
+                    message: ("`return` outside of a function").into(),
+                });
             }
         }
         Ok(())
@@ -695,12 +690,9 @@ impl Evaluator {
                             .map(|e| e.to_string())
                             .collect::<Vec<_>>()
                             .join(", ");
-                        RuntimeError::Coded {
-                            code: "R0008",
-                            message: format!(
-                                "embedded stdlib module `{key}` failed to parse: {details}"
-                            ),
-                        }
+                        RuntimeError::RuntimeImport(format!(
+                            "embedded stdlib module `{key}` failed to parse: {details}"
+                        ))
                     })?;
                     let unit = ModuleUnit {
                         path: path.clone(),
@@ -727,7 +719,7 @@ impl Evaluator {
                     embedded: false,
                 });
             } else {
-                return crate::error::err(
+                return crate::error::type_err(
                     "`import` requires running from a file (`prima run <file>`)",
                 );
             }
@@ -755,10 +747,10 @@ impl Evaluator {
                 match self.eval_stmt(env, stmt)? {
                     Flow::Continue => {}
                     Flow::Return(_) => {
-                        return Err(crate::error::coded(
-                            "E0080",
-                            "`return` outside of a function",
-                        ));
+                        return Err(RuntimeError::CompileDiagnostic {
+                            code: "E0080",
+                            message: ("`return` outside of a function").into(),
+                        });
                     }
                 }
             }

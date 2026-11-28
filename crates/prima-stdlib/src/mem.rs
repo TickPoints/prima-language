@@ -4,6 +4,7 @@
 //! the narrow `Evaluator::mem_arc_*` host interface, which owns the instance registry.
 
 use prima_core::Value;
+use prima_runtime::args::Args;
 use prima_runtime::{Evaluator, RuntimeError, builtin};
 
 /// Register the `mem` `@builtin` implementations (spec §18.4). Keys are `"<Class>::<method>"`
@@ -16,13 +17,13 @@ pub fn register() {
 
 /// Exactly one receiver argument.
 fn receiver<'a>(args: &'a [Value], method: &str) -> Result<&'a Value, RuntimeError> {
-    match args {
-        [receiver] => Ok(receiver),
-        _ => Err(RuntimeError::Message(format!(
-            "`{method}` expects no arguments besides the receiver, got {}",
-            args.len().saturating_sub(1)
-        ))),
-    }
+    let Some(receiver) = args.first() else {
+        return Err(RuntimeError::MissingReceiver {
+            callable: method.into(),
+        });
+    };
+    Args::new(method, args).exact_after_receiver(0)?;
+    Ok(receiver)
 }
 
 fn clone(ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {

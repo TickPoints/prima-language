@@ -7,18 +7,13 @@
 
 use nalgebra::{DMatrix, DVector};
 use prima_core::{Number, Real, Value};
+use prima_runtime::args::Args;
 use prima_runtime::builtin;
+use prima_runtime::error::ValueProblem;
 use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
-    if args.len() == n {
-        Ok(())
-    } else {
-        Err(RuntimeError::Message(format!(
-            "`{fname}` expects {n} argument(s), got {}",
-            args.len()
-        )))
-    }
+    Args::new(fname, args).exact(n)
 }
 
 /// Register the `linalg` `@builtin` implementations (spec §18.4 / appendix B.2). Each `@builtin`
@@ -164,20 +159,10 @@ fn as_vector(v: &Value, fname: &str) -> Result<DVector<f64>, RuntimeError> {
 
 /// Parse a positive integer dimension argument (rows/cols/order).
 fn dim_arg(args: &[Value], i: usize, fname: &str) -> Result<usize, RuntimeError> {
-    match args.get(i) {
-        Some(Value::Number(n)) => match usize::try_from(n.as_u64().unwrap_or(u64::MAX)) {
-            Ok(x) if x >= 1 => Ok(x),
-            _ => Err(RuntimeError::Message(format!(
-                "`{fname}` dimension {i} must be a positive integer, got {n}"
-            ))),
-        },
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` dimension {i} must be an integer, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    let n = Args::new(fname, args).i64(i)?;
+    usize::try_from(n).ok().filter(|&x| x >= 1).ok_or_else(|| {
+        RuntimeError::argument_type(fname.into(), i, "a positive integer", n.to_string())
+    })
 }
 
 fn require_square(m: &DMatrix<f64>, fname: &str) -> Result<(), RuntimeError> {
@@ -220,9 +205,13 @@ fn matrix_norm(m: &DMatrix<f64>, p: f64, fname: &str) -> Result<f64, RuntimeErro
             .map(|r| (0..m.ncols()).map(|c| m[(r, c)].abs()).sum::<f64>())
             .fold(0.0_f64, f64::max))
     } else {
-        Err(RuntimeError::Message(format!(
-            "`{fname}`: unsupported p-norm p={p}; supported: 1, 2, inf"
-        )))
+        Err(RuntimeError::invalid(
+            fname.into(),
+            ValueProblem::Unsupported {
+                got: format!("p={p}"),
+                supported: "1, 2, inf",
+            },
+        ))
     }
 }
 
@@ -235,9 +224,13 @@ fn vector_norm(v: &DVector<f64>, p: f64, fname: &str) -> Result<f64, RuntimeErro
     } else if p.is_infinite() && p.is_sign_positive() {
         Ok(v.iter().map(|x| x.abs()).fold(0.0_f64, f64::max))
     } else {
-        Err(RuntimeError::Message(format!(
-            "`{fname}`: unsupported p-norm p={p}; supported: 1, 2, inf"
-        )))
+        Err(RuntimeError::invalid(
+            fname.into(),
+            ValueProblem::Unsupported {
+                got: format!("p={p}"),
+                supported: "1, 2, inf",
+            },
+        ))
     }
 }
 
@@ -321,12 +314,7 @@ fn rank(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 fn norm(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
-    if !(1..=2).contains(&args.len()) {
-        return Err(RuntimeError::Message(format!(
-            "`linalg::norm` expects 1 or 2 argument(s), got {}",
-            args.len()
-        )));
-    }
+    Args::new("linalg::norm", args).one_of(&[1, 2])?;
     let p = match args.get(1) {
         None => 2.0,
         Some(Value::Number(n)) => n.to_f64_lossy(),
@@ -551,11 +539,12 @@ fn lstsq(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
         .copied()
         .fold(0.0_f64, f64::max);
     let eps = max_sv * (a.nrows().max(a.ncols()) as f64) * f64::EPSILON * 10.0;
-    let pinv = a
-        .clone()
-        .svd(true, true)
-        .pseudo_inverse(eps)
-        .map_err(|e| RuntimeError::Message(format!("`linalg::lstsq` failed: {e}")))?;
+    let pinv = a.clone().svd(true, true).pseudo_inverse(eps).map_err(|e| {
+        RuntimeError::ComputationFailed {
+            operation: "linalg::lstsq".into(),
+            detail: e.to_string(),
+        }
+    })?;
     let x = pinv * b;
     Ok(rhs_solution(&x, &rhs))
 }

@@ -9,24 +9,7 @@ use std::path::{Path, PathBuf};
 use prima_syntax::ast::{Import, ImportKind, Program};
 use prima_syntax::parse;
 
-use crate::error::RuntimeError;
-
-/// A module-load I/O failure (`R0007`): the file/directory could not be accessed or read (spec appendix C.2).
-fn io_err(message: impl Into<String>) -> RuntimeError {
-    RuntimeError::Coded {
-        code: "R0007",
-        message: message.into(),
-    }
-}
-
-/// A module-resolution/parse failure (`R0008`): missing module, import cycle, or a module that
-/// fails to parse (spec appendix C.2).
-fn import_err(message: impl Into<String>) -> RuntimeError {
-    RuntimeError::Coded {
-        code: "R0008",
-        message: message.into(),
-    }
-}
+use crate::error::{ModuleImportError, ModuleIoError, ModuleIoTarget, RuntimeError};
 
 /// Compilation unit (spec §15.3): one `.pra` file = one module body.
 #[derive(Debug)]
@@ -68,11 +51,8 @@ impl ModuleGraph {
     /// Returns an `Err(RuntimeError)` coded `R0007` (I/O access/read failure) or `R0008` (missing
     /// module / import cycle / parse failure) per spec appendix C.2.
     pub fn load(root_file: &Path) -> Result<ModuleGraph, RuntimeError> {
-        let root_file = fs::canonicalize(root_file).map_err(|e| {
-            io_err(format!(
-                "cannot access root module `{}`: {e}",
-                root_file.display()
-            ))
+        let root_file = fs::canonicalize(root_file).map_err(|cause| {
+            ModuleIoError::new(ModuleIoTarget::AccessRoot(root_file.to_owned()), cause)
         })?;
         let mut loader = Loader::default();
         let root = loader.load_module(Vec::new(), &root_file)?;
@@ -99,30 +79,31 @@ struct Loader {
 
 impl Loader {
     fn load_module(&mut self, path: Vec<String>, file: &Path) -> Result<ModuleUnit, RuntimeError> {
-        let file = fs::canonicalize(file)
-            .map_err(|e| io_err(format!("cannot access module `{}`: {e}", file.display())))?;
+        let file = fs::canonicalize(file).map_err(|cause| {
+            ModuleIoError::new(ModuleIoTarget::AccessFile(file.to_owned()), cause)
+        })?;
 
         if let Some(idx) = self.stack.iter().position(|(_, f)| *f == file) {
-            return Err(import_err(self.cycle_error(idx)));
+            return Err(ModuleImportError::Cycle {
+                chain: self.cycle_chain(idx),
+            }
+            .into());
         }
 
         let label = display_path(&path, &file);
-        let src = fs::read_to_string(&file).map_err(|e| {
-            io_err(format!(
-                "cannot read module `{label}` (`{}`): {e}",
-                file.display()
-            ))
+        let src = fs::read_to_string(&file).map_err(|cause| {
+            ModuleIoError::new(
+                ModuleIoTarget::ReadFile {
+                    module: label.clone(),
+                    path: file.clone(),
+                },
+                cause,
+            )
         })?;
-        let program = parse(&src).map_err(|errs| {
-            let details = errs
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            import_err(format!(
-                "module `{label}` (`{}`) failed to parse: {details}",
-                file.display()
-            ))
+        let program = parse(&src).map_err(|diagnostics| ModuleImportError::ParseFile {
+            module: label,
+            path: file.clone(),
+            diagnostics,
         })?;
 
         let dir = file
@@ -136,11 +117,14 @@ impl Loader {
             let key = segments.join("::");
             match resolve_import(dir, &segments) {
                 Resolution::File(resolved) => {
-                    let target = fs::canonicalize(&resolved).map_err(|e| {
-                        io_err(format!(
-                            "cannot access module `{key}` (`{}`): {e}",
-                            resolved.display()
-                        ))
+                    let target = fs::canonicalize(&resolved).map_err(|cause| {
+                        ModuleIoError::new(
+                            ModuleIoTarget::AccessImport {
+                                module: key,
+                                path: resolved,
+                            },
+                            cause,
+                        )
                     })?;
                     if !self.done.contains(&target) {
                         let unit = self.load_module(segments.clone(), &target)?;
@@ -161,16 +145,11 @@ impl Loader {
                     if !self.done_embedded.contains(&key) {
                         let src = crate::stdlib::get_module_source(&key)
                             .expect("embedded stdlib source present at resolution time");
-                        let program = parse(src).map_err(|errs| {
-                            let details = errs
-                                .iter()
-                                .map(|e| e.to_string())
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            import_err(format!(
-                                "embedded stdlib module `{key}` failed to parse: {details}"
-                            ))
-                        })?;
+                        let program =
+                            parse(src).map_err(|diagnostics| ModuleImportError::ParseEmbedded {
+                                module: key.clone(),
+                                diagnostics,
+                            })?;
                         let file = embedded_file(&path);
                         let unit = ModuleUnit {
                             path,
@@ -200,12 +179,11 @@ impl Loader {
                     });
                 }
                 Resolution::None => {
-                    return Err(import_err(format!(
-                        "module `{key}` not found relative to `{}` (tried `{}.pra` and `{}/main.pra`)",
-                        dir.display(),
-                        segments.join("/"),
-                        segments.join("/")
-                    )));
+                    return Err(ModuleImportError::Missing {
+                        directory: dir.to_owned(),
+                        segments,
+                    }
+                    .into());
                 }
             }
         }
@@ -220,14 +198,14 @@ impl Loader {
         })
     }
 
-    /// Build the cycle error message, e.g. `import cycle: a -> a::b -> a`.
-    fn cycle_error(&self, idx: usize) -> String {
+    /// Module chain of the detected import cycle, e.g. `a -> a::b -> a`.
+    fn cycle_chain(&self, idx: usize) -> Vec<String> {
         let mut chain: Vec<String> = self.stack[idx..]
             .iter()
             .map(|(p, f)| display_path(p, f))
             .collect();
         chain.push(display_path(&self.stack[idx].0, &self.stack[idx].1));
-        format!("import cycle: {}", chain.join(" -> "))
+        chain
     }
 }
 
@@ -400,6 +378,15 @@ mod tests {
         let root = write(tmp.dir(), "main.pra", "import nope\n");
 
         let err = ModuleGraph::load(&root).unwrap_err();
+        assert_eq!(err.code(), "R0008");
+        assert_eq!(
+            err,
+            crate::error::ModuleImportError::Missing {
+                directory: tmp.dir().to_path_buf(),
+                segments: vec!["nope".into()],
+            }
+            .into()
+        );
         let err = err.to_string();
         assert!(err.contains("nope"), "unexpected error: {err}");
         assert!(err.contains("nope.pra"), "unexpected error: {err}");
@@ -413,6 +400,14 @@ mod tests {
         write(tmp.dir(), "b.pra", "import a\n");
 
         let err = ModuleGraph::load(&root).unwrap_err();
+        assert_eq!(err.code(), "R0008");
+        assert_eq!(
+            err,
+            crate::error::ModuleImportError::Cycle {
+                chain: ["a", "b", "a"].map(str::to_owned).to_vec(),
+            }
+            .into()
+        );
         let err = err.to_string();
         assert!(err.contains("import cycle"), "unexpected error: {err}");
         assert!(err.contains("a"), "unexpected error: {err}");
@@ -519,5 +514,88 @@ mod tests {
             "duplicate embedded imports must dedup to a single dependency"
         );
         assert!(g.root.imports.iter().all(|i| i.embedded));
+    }
+
+    #[test]
+    fn missing_root_preserves_io_source() {
+        use crate::error::ModuleIoTarget;
+        use std::error::Error;
+
+        let tmp = TempDir::new("missing-root");
+        let path = tmp.dir().join("not_there.pra");
+        let error = ModuleGraph::load(&path).unwrap_err();
+        let RuntimeError::ModuleIo(io) = &error else {
+            panic!("{error:?}")
+        };
+        assert_eq!(io.target, ModuleIoTarget::AccessRoot(path.clone()));
+        assert_eq!(io.cause.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(error.code(), "R0007");
+        assert_eq!(error, error.clone());
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "cannot access root module `{}`: {}",
+                path.display(),
+                io.cause
+            )
+        );
+        assert_eq!(error.source().unwrap().to_string(), io.cause.to_string());
+    }
+
+    #[test]
+    fn malformed_module_preserves_parser_diagnostics() {
+        use crate::error::ModuleImportError;
+
+        let tmp = TempDir::new("malformed");
+        let src = "let x = ;";
+        let root = write(tmp.dir(), "main.pra", "import malformed_typed_dep;");
+        let file = write(tmp.dir(), "malformed_typed_dep.pra", src);
+        let expected = parse(src).unwrap_err();
+        assert!(!expected.is_empty());
+        let error = ModuleGraph::load(&root).unwrap_err();
+        assert_eq!(error.code(), "R0008");
+        assert_eq!(
+            error,
+            ModuleImportError::ParseFile {
+                module: "malformed_typed_dep".into(),
+                path: abs(&file),
+                diagnostics: expected.clone(),
+            }
+            .into()
+        );
+        let message = error.to_string();
+        assert!(message.contains("failed to parse"));
+        assert!(
+            message.ends_with(
+                &expected
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        );
+    }
+
+    #[test]
+    fn malformed_embedded_module_is_not_shadowed_by_disk() {
+        const NAME: &str = "typed_broken_embedded_dep";
+        const SRC: &str = "let x = ;";
+        crate::stdlib::register_module_source(NAME, SRC);
+        let tmp = TempDir::new("malformed-embedded");
+        let root = write(tmp.dir(), "main.pra", &format!("import {NAME};"));
+        write(tmp.dir(), &format!("{NAME}.pra"), "let x = 1;");
+        let error = ModuleGraph::load(&root).unwrap_err();
+        assert_eq!(error.code(), "R0008");
+        assert_eq!(
+            error,
+            crate::error::ModuleImportError::ParseEmbedded {
+                module: NAME.into(),
+                diagnostics: parse(SRC).unwrap_err(),
+            }
+            .into()
+        );
+        assert!(error.to_string().starts_with(&format!(
+            "embedded stdlib module `{NAME}` failed to parse: "
+        )));
     }
 }

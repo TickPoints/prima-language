@@ -10,24 +10,28 @@ use prima_runtime::{Evaluator, RuntimeError, value_type_name};
 fn array_copy(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     match args.first() {
         Some(Value::Array(a)) => Ok(Value::Array(a.clone())),
-        Some(other) => Err(RuntimeError::Message(format!(
-            "`Array.copy` expects an array receiver, got {}",
-            value_type_name(other)
-        ))),
-        None => Err(RuntimeError::Message(
-            "`Array.copy` missing receiver".into(),
+        Some(other) => Err(RuntimeError::receiver_type(
+            "Array.copy".into(),
+            "an array",
+            value_type_name(other),
         )),
+        None => Err(RuntimeError::MissingReceiver {
+            callable: "Array.copy".into(),
+        }),
     }
 }
 
 fn dict_copy(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     match args.first() {
         Some(Value::Dict(d)) => Ok(Value::Dict(d.clone())),
-        Some(other) => Err(RuntimeError::Message(format!(
-            "`Dict.copy` expects a dict receiver, got {}",
-            value_type_name(other)
-        ))),
-        None => Err(RuntimeError::Message("`Dict.copy` missing receiver".into())),
+        Some(other) => Err(RuntimeError::receiver_type(
+            "Dict.copy".into(),
+            "a dict",
+            value_type_name(other),
+        )),
+        None => Err(RuntimeError::MissingReceiver {
+            callable: "Dict.copy".into(),
+        }),
     }
 }
 
@@ -38,22 +42,34 @@ fn set_symmetric_difference(_ev: &mut Evaluator, args: &[Value]) -> Result<Value
                 a.symmetric_difference(b).cloned().collect();
             Ok(Value::Set(Box::new(out)))
         }
-        _ => Err(RuntimeError::Message(
-            "`Set.symmetric_difference` expects a set receiver and a set argument".into(),
+        (Some(Value::Set(_)), Some(other)) => Err(RuntimeError::argument_type(
+            "Set.symmetric_difference".into(),
+            1,
+            "a set",
+            value_type_name(other),
         )),
+        (Some(other), _) => Err(RuntimeError::receiver_type(
+            "Set.symmetric_difference".into(),
+            "a set",
+            value_type_name(other),
+        )),
+        (None, _) => Err(RuntimeError::MissingReceiver {
+            callable: "Set.symmetric_difference".into(),
+        }),
     }
 }
 
 fn char_is_digit(_ev: &mut Evaluator, args: &[Value]) -> Result<Value, RuntimeError> {
     match args.first() {
         Some(Value::Char(c)) => Ok(Value::Bool(c.is_ascii_digit())),
-        Some(other) => Err(RuntimeError::Message(format!(
-            "`Char.is_digit` expects a char receiver, got {}",
-            value_type_name(other)
-        ))),
-        None => Err(RuntimeError::Message(
-            "`Char.is_digit` missing receiver".into(),
+        Some(other) => Err(RuntimeError::receiver_type(
+            "Char.is_digit".into(),
+            "a char",
+            value_type_name(other),
         )),
+        None => Err(RuntimeError::MissingReceiver {
+            callable: "Char.is_digit".into(),
+        }),
     }
 }
 

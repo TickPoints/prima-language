@@ -5,42 +5,20 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use prima_core::{Number, Real, Value};
+use prima_runtime::args::Args;
 use prima_runtime::builtin;
 use prima_runtime::{Evaluator, RuntimeError};
 
 fn arity(args: &[Value], n: usize, fname: &str) -> Result<(), RuntimeError> {
-    if args.len() == n {
-        Ok(())
-    } else {
-        Err(RuntimeError::Message(format!(
-            "`{fname}` expects {n} argument(s), got {}",
-            args.len()
-        )))
-    }
+    Args::new(fname, args).exact(n)
 }
 
 fn number_arg(args: &[Value], i: usize, fname: &str) -> Result<Number, RuntimeError> {
-    match args.get(i) {
-        Some(Value::Number(n)) => Ok(n.clone()),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be a number, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Ok(Args::new(fname, args).number(i)?.clone())
 }
 
 fn string_arg(args: &[Value], i: usize, fname: &str) -> Result<String, RuntimeError> {
-    match args.get(i) {
-        Some(Value::String(s)) => Ok(s.to_string()),
-        Some(other) => Err(RuntimeError::Type(format!(
-            "`{fname}` argument {i} must be a string, got {other:?}"
-        ))),
-        None => Err(RuntimeError::Message(format!(
-            "`{fname}` missing argument {i}"
-        ))),
-    }
+    Args::new(fname, args).string(i)
 }
 
 /// Register the `time` `@builtin` implementations (spec §18.4 / §18.3). Each `@builtin`

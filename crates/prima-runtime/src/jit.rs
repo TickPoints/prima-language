@@ -172,13 +172,12 @@ fn number_result(x: f64) -> Value {
 /// Call a registered `JitFunction` handle with already-evaluated numeric arguments. Dispatch order:
 /// compiled native function → reverse-mode tape → symbolic `expressions` → interpreted `fallback`.
 pub fn call(ev: &mut Evaluator, id: u32, args: Vec<Value>) -> Result<Value, RuntimeError> {
-    let callable = lookup(id)
-        .ok_or_else(|| RuntimeError::Message(format!("unknown JIT function handle `{id}`")))?;
+    let callable = lookup(id).ok_or_else(|| RuntimeError::UnknownJitFunction { id })?;
     let inputs = numeric_inputs(&args).ok_or_else(|| {
-        RuntimeError::Message("JIT function arguments must be numeric (non-complex) values".into())
+        RuntimeError::Type("JIT function arguments must be numeric (non-complex) values".into())
     })?;
     if inputs.len() != callable.params.len() {
-        return crate::error::err(format!(
+        return crate::error::type_err(format!(
             "expected {} arguments, got {}",
             callable.params.len(),
             inputs.len()
@@ -222,13 +221,13 @@ pub fn call(ev: &mut Evaluator, id: u32, args: Vec<Value>) -> Result<Value, Runt
         // (`Rc<RefCell<Env>>`); running it inside a `parfor` worker task would be a cross-thread
         // data race, so it is refused with an actionable message (spec §17.2).
         if in_parfor_task() {
-            return crate::error::err(
+            return crate::error::type_err(
                 "JIT fallback is not available inside parfor; provide a compilable function",
             );
         }
         return ev.apply_jit_fallback(params, body, env, args);
     }
-    crate::error::err(format!("JIT function `{}` has no executable form", id))
+    crate::error::type_err(format!("JIT function `{}` has no executable form", id))
 }
 
 /// Evaluate a symbolic gradient/expression DAG numerically at `inputs` by substituting each parameter
@@ -251,7 +250,10 @@ fn eval_symbolic(
     let simp = simplify(pool, builtins, cur);
     prima_core::collapse::collapse_value(pool, builtins, &Value::Expr(simp))
         .map(|n| n.to_f64_lossy())
-        .ok_or_else(|| RuntimeError::Message("JIT expression did not collapse to a number".into()))
+        .ok_or_else(|| RuntimeError::ComputationFailed {
+            operation: "jit".into(),
+            detail: "expression did not collapse to a number".into(),
+        })
 }
 
 #[cfg(test)]

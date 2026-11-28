@@ -34,6 +34,42 @@ fn json_diagnostics_are_ndjson_on_stderr() {
 }
 
 #[test]
+fn runtime_io_error_keeps_cli_diagnostic_shape() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("main.pra"), "import typed_bad_io_dep;").unwrap();
+    std::fs::write(dir.path().join("typed_bad_io_dep.pra"), [0xff]).unwrap();
+    let text = prima()
+        .current_dir(dir.path())
+        .args(["--color", "never", "run", "main.pra"])
+        .output()
+        .unwrap();
+    let json = prima()
+        .current_dir(dir.path())
+        .args(["--json", "run", "main.pra"])
+        .output()
+        .unwrap();
+    assert_eq!(text.status.code(), Some(1));
+    assert_eq!(json.status.code(), Some(1));
+    let diagnostic: serde_json::Value = serde_json::from_slice(&json.stderr).unwrap();
+    let message = diagnostic["message"].as_str().unwrap();
+    assert!(message.starts_with("cannot read module `typed_bad_io_dep` ("));
+    assert_eq!(
+        diagnostic,
+        serde_json::json!({
+            "code": "R0007", "severity": "error", "message": message,
+            "spans": [], "notes": [], "help": null,
+        })
+    );
+    assert_eq!(
+        String::from_utf8(text.stderr)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        [format!("error[R0007]: {message}")]
+    );
+}
+
+#[test]
 fn color_never_emits_no_ansi_escapes() {
     let output = prima()
         .args(["--color", "never", "run", "examples/broken.pra"])

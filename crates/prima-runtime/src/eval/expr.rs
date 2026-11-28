@@ -33,9 +33,10 @@ fn enter_eval_depth() -> Result<EvalDepthGuard, RuntimeError> {
     EXPR_DEPTH.with(|d| {
         let n = d.get() + 1;
         if n > MAX_EVAL_DEPTH {
-            return Err(RuntimeError::Message(
-                "expression nesting is too deep to evaluate".into(),
-            ));
+            return Err(RuntimeError::LimitExceeded {
+                what: "expression nesting",
+                detail: "is too deep to evaluate".into(),
+            });
         }
         d.set(n);
         Ok(EvalDepthGuard)
@@ -67,7 +68,9 @@ impl Evaluator {
                     if let Some(v) = env_r.get_value(name) {
                         Ok(v)
                     } else if env_r.get_func(name).is_some() {
-                        crate::error::err(format!("function `{name}` cannot be used as a value"))
+                        crate::error::type_err(format!(
+                            "function `{name}` cannot be used as a value"
+                        ))
                     } else {
                         Ok(Value::Expr(self.pool.symbol(self.symbols.intern(name))))
                     }
@@ -77,13 +80,15 @@ impl Evaluator {
                     let item = &segments[segments.len() - 1].value;
                     match env.borrow().lookup_module_item(&ns, item) {
                         Some(NamespaceItem::Val(v)) => Ok(v),
-                        Some(NamespaceItem::Func(_)) => crate::error::err(format!(
+                        Some(NamespaceItem::Func(_)) => crate::error::type_err(format!(
                             "function `{item}` cannot be used as a value"
                         )),
-                        Some(NamespaceItem::Class(_)) => {
-                            crate::error::err(format!("class `{item}` cannot be used as a value"))
+                        Some(NamespaceItem::Class(_)) => crate::error::type_err(format!(
+                            "class `{item}` cannot be used as a value"
+                        )),
+                        None => {
+                            crate::error::type_err(format!("unknown module item `{ns}::{item}`"))
                         }
-                        None => crate::error::err(format!("unknown module item `{ns}::{item}`")),
                     }
                 }
             }
@@ -95,7 +100,7 @@ impl Evaluator {
                 } else if let Some(v) = self.self_values.last() {
                     Ok(v.clone())
                 } else {
-                    Err(RuntimeError::Message("`self` outside of a method".into()))
+                    Err(RuntimeError::SelfOutsideMethod)
                 }
             }
             ExprKind::Call { callee, args } => self.eval_call(env, callee, args),
@@ -138,7 +143,7 @@ impl Evaluator {
                     Value::Option(None) => {
                         Err(RuntimeError::Propagate(Box::new(Value::Option(None))))
                     }
-                    other => crate::error::err(format!(
+                    other => crate::error::type_err(format!(
                         "`?` expects a `Result` or `Option`, got {}",
                         value_type_name(&other)
                     )),
@@ -153,9 +158,10 @@ impl Evaluator {
                 let mut d: HashMap<ValueKey, Value> = HashMap::new();
                 for (k, v) in entries {
                     let kv = self.eval_expr(env, k)?;
-                    let key = ValueKey::from_value(&kv).ok_or_else(|| {
-                        RuntimeError::Message("dict key must be a hashable value".into())
-                    })?;
+                    let key =
+                        ValueKey::from_value(&kv).ok_or_else(|| RuntimeError::Unhashable {
+                            role: crate::error::HashRole::DictKey,
+                        })?;
                     d.insert(key, self.eval_expr(env, v)?);
                 }
                 Ok(Value::Dict(Box::new(d)))
@@ -164,8 +170,8 @@ impl Evaluator {
                 let mut s: HashSet<ValueKey> = HashSet::new();
                 for it in items {
                     let v = self.eval_expr(env, it)?;
-                    let key = ValueKey::from_value(&v).ok_or_else(|| {
-                        RuntimeError::Message("set element must be a hashable value".into())
+                    let key = ValueKey::from_value(&v).ok_or_else(|| RuntimeError::Unhashable {
+                        role: crate::error::HashRole::SetElement,
                     })?;
                     s.insert(key);
                 }
@@ -176,17 +182,21 @@ impl Evaluator {
                 output,
                 clauses,
             } => self.eval_comprehension(env, *kind, output, clauses),
-            ExprKind::KeyValue { .. } => crate::error::err("internal error: stray key-value node"),
+            ExprKind::KeyValue { .. } => {
+                crate::error::type_err("internal error: stray key-value node")
+            }
             ExprKind::Tuple(items) => {
                 let vals: Result<Vec<Value>, RuntimeError> =
                     items.iter().map(|it| self.eval_expr(env, it)).collect();
                 Ok(Value::Tuple(vals?.into()))
             }
             ExprKind::Lambda { .. } => {
-                crate::error::err("lambda must be assigned to a variable to be callable")
+                crate::error::type_err("lambda must be assigned to a variable to be callable")
             }
             ExprKind::Match { scrutinee, arms } => self.eval_match(env, scrutinee, arms),
-            ExprKind::Custom(_) => crate::error::err("`custom` config block is not valid here"),
+            ExprKind::Custom(_) => {
+                crate::error::type_err("`custom` config block is not valid here")
+            }
         }
     }
 
@@ -202,7 +212,7 @@ impl Evaluator {
             ExprKind::Path { segments } => self
                 .resolve_func(env, segments)
                 .ok_or_else(|| unknown_function_error(env, &path_key(segments)))?,
-            _ => return crate::error::err("`@.` right-hand side must be a function"),
+            _ => return crate::error::type_err("`@.` right-hand side must be a function"),
         };
         if matches!(v, Value::Array(_)) {
             self.broadcast_call(&func, vec![v], &[0])
@@ -230,8 +240,8 @@ impl Evaluator {
             CompKind::Set => {
                 let mut s: HashSet<ValueKey> = HashSet::new();
                 for v in values {
-                    let key = ValueKey::from_value(&v).ok_or_else(|| {
-                        RuntimeError::Message("set element must be a hashable value".into())
+                    let key = ValueKey::from_value(&v).ok_or_else(|| RuntimeError::Unhashable {
+                        role: crate::error::HashRole::SetElement,
                     })?;
                     s.insert(key);
                 }
@@ -243,9 +253,10 @@ impl Evaluator {
                     let Value::Tuple(pair) = v else {
                         unreachable!("dict comprehension leaf emits a key/value pair")
                     };
-                    let key = ValueKey::from_value(&pair[0]).ok_or_else(|| {
-                        RuntimeError::Message("dict key must be a hashable value".into())
-                    })?;
+                    let key =
+                        ValueKey::from_value(&pair[0]).ok_or_else(|| RuntimeError::Unhashable {
+                            role: crate::error::HashRole::DictKey,
+                        })?;
                     d.insert(key, pair[1].clone());
                 }
                 Ok(Value::Dict(Box::new(d)))
@@ -268,7 +279,7 @@ impl Evaluator {
                 if kind == CompKind::Dict {
                     // A Dict comprehension's output is the internal `key: value` node (spec §4.6).
                     let ExprKind::KeyValue { key, value } = &output.kind else {
-                        return crate::error::err(
+                        return crate::error::type_err(
                             "dict comprehension output must be a `key: value` pair",
                         );
                     };
@@ -295,7 +306,7 @@ impl Evaluator {
                     let ok = match self.eval_expr(env, cond)? {
                         Value::Bool(b) => b,
                         _ => {
-                            return crate::error::err(
+                            return crate::error::type_err(
                                 "comprehension `if` condition must be a boolean",
                             );
                         }
@@ -323,7 +334,7 @@ impl Evaluator {
             Value::Set(s) => Ok(self.sorted_set_values(s)),
             Value::String(s) => Ok(s.chars().map(Value::Char).collect()),
             Value::Tuple(items) => Ok(items.to_vec()),
-            other => crate::error::err(format!("not iterable: {}", value_type_name(other))),
+            other => crate::error::type_err(format!("not iterable: {}", value_type_name(other))),
         }
     }
 
@@ -336,23 +347,31 @@ impl Evaluator {
             Literal::Integer(s) => {
                 let i = s
                     .parse::<BigInt>()
-                    .map_err(|_| RuntimeError::Message("invalid integer literal".into()))?;
+                    .map_err(|_| RuntimeError::InvalidLiteral {
+                        kind: crate::error::LiteralKind::Integer,
+                    })?;
                 Ok(Value::Number(Number::from_bigint(i)))
             }
             Literal::Hex(s) => {
-                let i = BigInt::parse_bytes(&s.as_bytes()[2..], 16)
-                    .ok_or_else(|| RuntimeError::Message("invalid hex literal".into()))?;
+                let i = BigInt::parse_bytes(&s.as_bytes()[2..], 16).ok_or_else(|| {
+                    RuntimeError::InvalidLiteral {
+                        kind: crate::error::LiteralKind::Hex,
+                    }
+                })?;
                 Ok(Value::Number(Number::from_bigint(i)))
             }
             Literal::Binary(s) => {
-                let i = BigInt::parse_bytes(&s.as_bytes()[2..], 2)
-                    .ok_or_else(|| RuntimeError::Message("invalid binary literal".into()))?;
+                let i = BigInt::parse_bytes(&s.as_bytes()[2..], 2).ok_or_else(|| {
+                    RuntimeError::InvalidLiteral {
+                        kind: crate::error::LiteralKind::Binary,
+                    }
+                })?;
                 Ok(Value::Number(Number::from_bigint(i)))
             }
             Literal::Float(s) => {
-                let f = s
-                    .parse::<f64>()
-                    .map_err(|_| RuntimeError::Message("invalid float literal".into()))?;
+                let f = s.parse::<f64>().map_err(|_| RuntimeError::InvalidLiteral {
+                    kind: crate::error::LiteralKind::Float,
+                })?;
                 Ok(Value::Number(Number::from(f)))
             }
             Literal::String { value, .. } => Ok(Value::String(value.clone().into())),
@@ -443,7 +462,7 @@ impl Evaluator {
                             BinOp::Div => self.pool.div2(a_id, b_id),
                             BinOp::Pow => self.pool.pow2(a_id, b_id),
                             BinOp::Mod => {
-                                return crate::error::err("`%` requires numeric operands");
+                                return crate::error::type_err("`%` requires numeric operands");
                             }
                             _ => unreachable!(),
                         };
@@ -456,12 +475,12 @@ impl Evaluator {
                 (Value::Bool(x), Value::Bool(y)) => {
                     Ok(Value::Bool(if op == BinOp::And { x && y } else { x || y }))
                 }
-                _ => crate::error::err("`&&`/`||` require boolean operands"),
+                _ => crate::error::type_err("`&&`/`||` require boolean operands"),
             },
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                 self.eval_compare(op, a, b)
             }
-            _ => crate::error::err("operator not supported"),
+            _ => crate::error::type_err("operator not supported"),
         }
     }
 
@@ -473,22 +492,22 @@ impl Evaluator {
                 elems.with(|items| items.iter().any(|e| self.value_eq(&a, e))),
             )),
             Value::Dict(d) => {
-                let key = ValueKey::from_value(&a).ok_or_else(|| {
-                    RuntimeError::Message("membership key must be a hashable value".into())
+                let key = ValueKey::from_value(&a).ok_or_else(|| RuntimeError::Unhashable {
+                    role: crate::error::HashRole::MembershipKey,
                 })?;
                 Ok(Value::Bool(d.contains_key(&key)))
             }
             Value::Set(s) => {
-                let key = ValueKey::from_value(&a).ok_or_else(|| {
-                    RuntimeError::Message("membership element must be a hashable value".into())
+                let key = ValueKey::from_value(&a).ok_or_else(|| RuntimeError::Unhashable {
+                    role: crate::error::HashRole::MembershipElement,
                 })?;
                 Ok(Value::Bool(s.contains(&key)))
             }
             Value::String(s) => match a {
                 Value::String(x) => Ok(Value::Bool(s.contains(x.as_ref()))),
-                _ => crate::error::err("`in` on a string requires a string operand"),
+                _ => crate::error::type_err("`in` on a string requires a string operand"),
             },
-            other => crate::error::err(format!(
+            other => crate::error::type_err(format!(
                 "`in` requires a collection, got {}",
                 value_type_name(&other)
             )),
@@ -503,7 +522,7 @@ impl Evaluator {
         b: Value,
     ) -> Result<Value, RuntimeError> {
         let (Value::Set(x), Value::Set(y)) = (a, b) else {
-            return crate::error::err("set operator requires two sets");
+            return crate::error::type_err("set operator requires two sets");
         };
         let out: std::collections::HashSet<ValueKey> = match op {
             BinOp::Union => x.union(&y).cloned().collect(),
@@ -571,12 +590,13 @@ impl Evaluator {
             .overloads
             .get(&overload_key(class, op))
             .cloned()
-            .ok_or_else(|| {
-                RuntimeError::Message(format!("no `{op:?}` overload registered for `{class}`"))
+            .ok_or_else(|| RuntimeError::NoOverload {
+                operation: format!("{op:?}"),
+                operand: class.to_string(),
             })?;
         match self.current_config().overload_policy {
             OverloadPolicy::Deny => {
-                return crate::error::err(format!(
+                return crate::error::type_err(format!(
                     "operator overload for `{class}` is denied by `overload_policy`"
                 ));
             }
@@ -610,7 +630,7 @@ impl Evaluator {
                     {
                         return Ok(v);
                     }
-                    return crate::error::err("division by zero");
+                    return crate::error::type_err("division by zero");
                 }
                 let r = x / y;
                 // `fraction := false` (spec §13.3): the division result drops to F64.
@@ -622,7 +642,7 @@ impl Evaluator {
             }
             BinOp::Pow => self.eval_pow(x, y),
             BinOp::Mod => Ok(Value::Number(number_mod(&x, &y)?)),
-            _ => crate::error::err("arithmetic operator required"),
+            _ => crate::error::type_err("arithmetic operator required"),
         }
     }
 
@@ -654,7 +674,7 @@ impl Evaluator {
         // Preserve the symbolic form (spec §8.3 levels 0/2). Complex operands have no symbolic
         // node (`ExprPool::try_number`), so report a clear error instead of panicking.
         let (Some(a), Some(b)) = (self.pool.try_number(&x), self.pool.try_number(&y)) else {
-            return crate::error::err(
+            return crate::error::type_err(
                 "this power has no symbolic representation (complex operands are not supported here)",
             );
         };
@@ -703,7 +723,7 @@ impl Evaluator {
                 return Ok(Value::Bool(match op {
                     BinOp::Eq => eq,
                     BinOp::Ne => !eq,
-                    _ => return crate::error::err("cannot order arrays"),
+                    _ => return crate::error::type_err("cannot order arrays"),
                 }));
             }
             (Value::Dict(x), Value::Dict(y)) => {
@@ -711,7 +731,7 @@ impl Evaluator {
                 return Ok(Value::Bool(match op {
                     BinOp::Eq => eq,
                     BinOp::Ne => !eq,
-                    _ => return crate::error::err("cannot order dicts"),
+                    _ => return crate::error::type_err("cannot order dicts"),
                 }));
             }
             (Value::Set(_), Value::Set(_)) => {
@@ -719,7 +739,7 @@ impl Evaluator {
                 return Ok(Value::Bool(match op {
                     BinOp::Eq => eq,
                     BinOp::Ne => !eq,
-                    _ => return crate::error::err("cannot order sets"),
+                    _ => return crate::error::type_err("cannot order sets"),
                 }));
             }
             _ => {}
@@ -736,7 +756,7 @@ impl Evaluator {
                     (Number::Real(Real::F64(x)), Number::Real(Real::F64(y))) => x.partial_cmp(&y),
                     _ => None,
                 }
-                .ok_or_else(|| RuntimeError::Message("cannot compare these numbers".into()))?
+                .ok_or_else(|| RuntimeError::UncomparableNumbers)?
             }
             (Value::String(x), Value::String(y)) => {
                 return Ok(Value::Bool(match op {
@@ -756,7 +776,7 @@ impl Evaluator {
                     _ => false,
                 }));
             }
-            _ => return crate::error::err("cannot compare values"),
+            _ => return crate::error::type_err("cannot compare values"),
         };
         let b = match op {
             BinOp::Eq => ord == Ordering::Equal,
@@ -783,7 +803,7 @@ impl Evaluator {
                     {
                         return self.overload_dispatch(&class, ImplOp::Neg, v, vec![]);
                     }
-                    return crate::error::err("cannot negate a class instance");
+                    return crate::error::type_err("cannot negate a class instance");
                 }
                 match v {
                     Value::Number(n) => Ok(Value::Number(-n)),
@@ -793,7 +813,9 @@ impl Evaluator {
                             .iter()
                             .map(|e| match e {
                                 Value::Number(n) => Ok(Value::Number(-n)),
-                                _ => crate::error::err("cannot negate a non-numeric array element"),
+                                _ => crate::error::type_err(
+                                    "cannot negate a non-numeric array element",
+                                ),
                             })
                             .collect();
                         Ok(Value::Array(out?.into()))
@@ -803,12 +825,12 @@ impl Evaluator {
                         let simp = self.simplify_current(node);
                         Ok(self.value_from_expr(simp))
                     }
-                    _ => crate::error::err("cannot negate this value"),
+                    _ => crate::error::type_err("cannot negate this value"),
                 }
             }
             UnOp::Not => match v {
                 Value::Bool(b) => Ok(Value::Bool(!b)),
-                _ => crate::error::err("`!` requires a boolean"),
+                _ => crate::error::type_err("`!` requires a boolean"),
             },
             UnOp::Pos => Ok(v),
         }
